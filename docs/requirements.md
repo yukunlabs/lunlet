@@ -99,6 +99,7 @@ Every product capability must be specified by a user story and its acceptance cr
 - Plans, source headers, and test references must map implementation and verification to those IDs. When implementation starts, maintain an `Implementation evidence` entry under each affected story linking source entry points, tests, and verification results. Evidence must be updated when behavior, code locations, or criteria change.
 - Missing, unknown, unconfirmed, or contradictory requirements block the affected code change. Referencing an ID alone is insufficient: review must check that the actual behavior and verification match the cited criteria. Follow-up requirements changes must assess linked code and tests before implementation resumes.
 - Each story belongs to exactly one outcome-based Epic; shared dependencies link to the owning story rather than duplicating its behavior. Epic grouping does not authorize new functionality. Keep story IDs and acceptance-criterion IDs stable. Do not renumber or reuse them when reordering or retiring requirements. Record replacements explicitly so existing code and test references remain understandable.
+- Product page linkage: a story the product page presents declares `Product page: #section`. The site build refuses a page section that presents a story that is not `Confirmed`, and refuses to build while a confirmed story's declared section does not present it; the page's facts (agents, messengers, skins, macOS target) are read from the sources, and its pictures carry a manifest of the sources they were rendered from (`scripts/check_site_assets.py`). A story therefore reaches the page in the same change that confirms it, or the build says what is missing.
 - Feedback intake: record new owner feedback as TODOs by default rather than immediately investigating or implementing it. Bugs are priority 1; new features are priority 2. Priority orders the backlog, not permission to start. Resume the selected work when the owner explicitly requests execution; keep first-release publication gates separate from feature scheduling.
 
 ## Proposed Codex setup constraint
@@ -120,7 +121,6 @@ Work that is not finished or not yet accepted. Confirmed behavior not listed her
 - Release decisions still open: the download and support links on the published product page; ZIP or DMG packaging, supported architectures, version and tag rules, release checks and draft-release review; an owner-generated EdDSA update key, the appcast's published URL and release notes per version. No certificate purchase, release, hosted site or paid service is authorized by this list.
 - Open question: whether a card's reply window should end only when the Mac unlocks, rather than after ten minutes while it stays locked (AC-05.09).
 - TODO (bug, priority 1): The weekly limit chart's observed line keeps only each day's last reading, so a chart with readings from one or two days shows a single point; draw the recorded readings within the shown days, keeping the per-day reduction only where it is needed for older history (US-33 / AC-33.09; the Codex chart shares the code). Not started.
-- TODO (feature, priority 2): Keep the product page in step with the product automatically (US-28 / AC-28.02): page sections declare the stories they show and CI rejects a section for an unconfirmed story; the page's facts (agents, channels, skins, macOS target, release link) are generated from the sources at build time; the stills and film carry a manifest of their render inputs so CI fails when the interface changed without a re-render, with a frozen synthetic clock so an unchanged interface renders identical bytes; the release workflow publishes the page from the released commit instead of a manual dispatch. Not started.
 - Question and approval classification (US-02 / AC-02.03, AC-02.05): pending ordinary questions and execution approvals are not yet classified from session records; no such state is inferred until they are. Not started.
 - Phone-reply switch and initial-state cards (US-05 / AC-05.08, AC-05.02): the Settings switch that allows phone replies and the cards for sessions already waiting or idle when delivery begins are not built; replies currently follow the locked-Mac window and card lifetime alone. Not started.
 - Answering a session's question from the phone (US-07 / AC-07.01 through AC-07.05, US-09 / AC-09.01): question cards, question provenance, the original-CLI answer path and the approval notice that points back to the Mac are not built; the completion-card follow-up (US-08) is the only live input path. Not started.
@@ -132,6 +132,8 @@ Outcome: Notice what is happening, inspect the correct conversation, and return 
 ### US-02: Automatically see all active sessions
 
 Status: Confirmed.
+
+Product page: #hero.
 
 **As a developer, I want Lunlet to discover and monitor all observable local Codex sessions, so that I do not need to register each session or switch between terminals to check progress.**
 
@@ -183,6 +185,8 @@ Design note: a Superset organization without a database holds no binding, and th
 
 Status: Confirmed.
 
+Product page: #island.
+
 **As a developer, I want brief task-start and task-completion cues in the notch-inspired panel while I am using my Mac, so that I can notice activity without switching terminals.**
 
 A task event here refers to a Codex turn, not each tool call or shell command. Finishing a turn does not mean that the whole task is complete or that the session has ended.
@@ -232,6 +236,8 @@ Design note: Codex's marked runtime-context records, such as environment context
 
 Status: Confirmed. First-release phase A: local session observation, recorded usage, locked completion notifications, provider selection and Overview. Plan percentages and reset times come from a reversible Claude Code status-line connection that Lunlet adds automatically while Claude Code is selected; Settings › Agents explains it and can disconnect it for good, and the card's Add status line button reconnects. The card uses remaining allowance, with the weekly estimate on hover and in VoiceOver; the account line shows the email and plan Claude Code caches locally (AC-33.11), and model-specific limits remain unknown. Claude phone replies are later scope. Depends on EPIC-02 for usage presentation, EPIC-03 for notification delivery and US-19 for provider selection and Overview.
 
+Product page: #glance.
+
 **As a developer who uses both Codex and Claude Code, I want Lunlet to observe my local Claude Code sessions alongside Codex, so that I can follow both agents and their recorded usage in one panel and be notified when either finishes while I am away.**
 
 Acceptance criteria:
@@ -269,6 +275,8 @@ Outcome: Judge remaining account allowance and local consumption using reported 
 ### US-04: Understand account limits and session usage
 
 Status: Confirmed.
+
+Product page: #limits.
 
 **As a developer, I want to see trustworthy limits and usage with their source and freshness, so that I can judge whether my work can continue.**
 
@@ -360,6 +368,8 @@ Implementation: [registration state machine](../Sources/LunletFeishu/Registratio
 
 Status: Confirmed.
 
+Product page: #away.
+
 **As a developer, I want to select one supported communication channel in Settings, so that Lunlet sends notifications and supported replies through my preferred service.**
 
 Acceptance criteria:
@@ -392,6 +402,8 @@ Implementation: [Connection readiness](../Sources/LunletDesktop/FeishuSetupModel
 
 Status: Confirmed.
 
+Product page: #away.
+
 **As a developer, I want mobile continuation to cover all active sessions and keep the Mac reachable, so that I can step away without configuring individual sessions or power settings.**
 
 Acceptance criteria:
@@ -414,6 +426,8 @@ Implementation: [owned idle-sleep assertion](../Sources/LunletDesktop/IdleSleepA
 ### US-06: Receive concise, actionable notifications
 
 Status: Confirmed.
+
+Product page: #away.
 
 **As a developer, I want short Feishu summaries when work finishes, fails, or needs me, so that I can decide what to do next without reading the full conversation.**
 
@@ -453,6 +467,8 @@ The [callback decoder](../Sources/LunletFeishu/CardCallback.swift), [typed form 
 
 Status: Confirmed.
 
+Product page: #away.
+
 **As a developer, I want to add a follow-up instruction after a turn finishes, so that I can move the unfinished task forward in the same conversation.**
 
 Acceptance criteria:
@@ -470,6 +486,8 @@ The [continuation gate](../Sources/LunletCore/ContinuationGate.swift) and [core 
 ### US-09: Keep execution approvals on the Mac
 
 Status: Confirmed.
+
+Product page: #away.
 
 **As a developer, I want execution approvals to remain on my computer, so that limited mobile continuation does not broaden the agent's authority.**
 
@@ -525,6 +543,8 @@ The [card router](../Sources/LunletFeishu/CardActionRouter.swift) requires fresh
 
 Status: Confirmed. Depends on US-20 for the paired private chat, US-08 and US-10 for the continuation and receipt rules, and US-05 for the locked-Mac reply window.
 
+Product page: #away.
+
 Acceptance criteria:
 
 - **AC-36.01**: **Given** Slack or Telegram is the selected channel, the Mac is confirmed locked and an eligible Codex turn finishes, **When** the notice is sent, **Then** it ends with a reply button that opens the reply box (Telegram) or one line inviting a reply in its thread (Slack) within the reply window; a Claude Code notice, a child task or an ineligible session carries no such line.
@@ -555,6 +575,8 @@ Implementation: [Native categorized preferences](../Sources/LunletDesktop/Prefer
 
 Status: Confirmed.
 
+Product page: #yours.
+
 **As a developer, I want to adjust official notch skin colors in Settings using a macOS-style color control, so that its appearance suits my preferences.**
 
 Acceptance criteria:
@@ -570,6 +592,8 @@ Implementation: [Native RGB and continuous color controls](../Sources/LunletDesk
 ### US-17: Choose and supply a custom notch skin
 
 Status: Confirmed.
+
+Product page: #yours.
 
 **As a developer, I want to select a built-in notch skin or import my own through configuration, so that I can personalize Lunlet without editing or rebuilding its source code.**
 
@@ -598,6 +622,8 @@ Design note: panel pages use four text roles — title 13 pt semibold, primary 1
 
 Status: Confirmed.
 
+Product page: #yours.
+
 **As a developer, I want to choose a standard right-side macOS menu-bar entry instead of the notch widget, so that I can use Lunlet in the presentation mode I prefer.**
 
 Acceptance criteria:
@@ -611,6 +637,8 @@ Implementation: [Entry controller](../Sources/LunletDesktop/NotchEntryController
 ### US-19: Select supported coding agents and see a combined overview
 
 Status: Confirmed.
+
+Product page: #glance.
 
 **As a developer, I want to choose which supported coding agents appear in Settings, so that I can monitor my selected tools together without unrelated providers cluttering the interface.**
 
@@ -716,6 +744,8 @@ Outcome: Understand the product, obtain a verifiable release and its usage terms
 
 Status: Confirmed.
 
+Product page: #film.
+
 **As a prospective user, I want a polished single-page product introduction hosted through GitHub, so that I can understand Lunlet and see how it works before downloading it.**
 
 - **AC-28.01**: **Given** the product page, **When** I visit it, **Then** it presents the selected Lunlet identity, core benefits, supported capabilities, installation requirements, and a download link to the corresponding GitHub Release.
@@ -723,11 +753,13 @@ Status: Confirmed.
 - **AC-28.03**: **Given** the free hosting constraint, **When** the page is published, **Then** its hosting and repository visibility are explicitly chosen to fit GitHub Free, and the page remains readable on desktop/mobile and with reduced motion.
 - **AC-28.04**: **Given** the first public source preview, **When** someone opens the README or product page, **Then** a captioned, click-to-play product video uses only synthetic content to explain local observation, usage, locked completion notices and one reply that continues the same session; it never autoplays or implies unaccepted transport behavior, and it shows the real app's notch entry, panel and motion rather than slides. Until such a film exists, the README shows synthetic screenshots of the real interface.
 
-Implementation: [Product page source](../website/index.html), [native-asset builder](../scripts/build_site.py), [configuration tests](../scripts/test_site.py), [manual Pages workflow](../.github/workflows/pages.yml), [film render](../Tests/LunletDesktopTests/ProductFilmRenderTests.swift), [script](../scripts/render-film.sh), [MP4](../website/video/lunlet-walkthrough.mp4), [captions](../website/video/lunlet-captions.vtt), [poster](../website/video/lunlet-poster.jpg), [film scenery](../Tests/LunletDesktopTests/ProductFilmScenery.swift), [still render](../Tests/LunletDesktopTests/SiteAssetRenderTests.swift), [still script](../scripts/render-site-assets.sh).
+Implementation: [Product page source](../website/index.html), [native-asset builder](../scripts/build_site.py), [configuration tests](../scripts/test_site.py), [manual Pages workflow](../.github/workflows/pages.yml), [film render](../Tests/LunletDesktopTests/ProductFilmRenderTests.swift), [script](../scripts/render-film.sh), [MP4](../website/video/lunlet-walkthrough.mp4), [captions](../website/video/lunlet-captions.vtt), [poster](../website/video/lunlet-poster.jpg), [film scenery](../Tests/LunletDesktopTests/ProductFilmScenery.swift), [still render](../Tests/LunletDesktopTests/SiteAssetRenderTests.swift), [still script](../scripts/render-site-assets.sh), [render manifest check](../scripts/check_site_assets.py), [page publication workflow](../.github/workflows/pages.yml).
 
 ### US-27: Download a versioned macOS release from GitHub
 
 Status: Confirmed.
+
+Product page: #availability.
 
 **As a developer, I want a clearly versioned Lunlet download on GitHub, so that I can install and update it without compiling the source myself.**
 

@@ -3,9 +3,14 @@
 # Refs: US-28, AC-28.01, AC-28.03, AC-28.04; US-27, AC-27.04.
 name: Publish product page
 
-# Publishing remains an explicit owner action after the public repository and URLs are reviewed.
+# The page is published from the commit that changed the product: every push to main, every published full
+# release (whose download it then links), and a manual dispatch. Nothing else is published and no credential is used.
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+  release:
+    types: [published]
 
 permissions:
   contents: read
@@ -18,7 +23,9 @@ concurrency:
 
 jobs:
   publish:
-    if: github.event.repository.private == false && github.ref == 'refs/heads/main'
+    if: >-
+      github.event.repository.private == false
+      && (github.ref == 'refs/heads/main' || (github.event_name == 'release' && !github.event.release.prerelease))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:
@@ -29,16 +36,29 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Check page sources
+      # The download link follows the latest published full release, whatever triggered this run, so the page never
+      # offers an unreleased download and never loses the link after a later push.
+      - name: Find the latest published release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          python3 scripts/test_site.py
-          python3 scripts/build_site.py --output .tmp/pages
+          tag=$(gh release list --exclude-drafts --exclude-pre-releases --limit 1 --json tagName --jq '.[0].tagName // empty')
+          printf 'tag=%s\n' "$tag" >> "$GITHUB_OUTPUT"
+      - name: Check page sources
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          python3 -m unittest discover -s scripts -p test_site.py
+          python3 scripts/check_site_assets.py
+          python3 scripts/build_site.py --output .tmp/pages ${RELEASE_TAG:+--release-tag "$RELEASE_TAG"}
       - name: Configure Pages
         uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
       - name: Upload the built page
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: .tmp/pages
-      - name: Publish after the owner dispatches this workflow
+      - name: Publish the page
         id: deployment
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

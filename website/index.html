@@ -6,7 +6,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Lunlet is a quiet macOS companion for the Codex and Claude Code sessions already running on your Mac: their state, their limits, and a short notice on your own messenger while you are away.">
+  <meta name="description" content="Lunlet is a quiet macOS companion for the {{agents}} sessions already running on your Mac: their state, their limits, and a short notice on your own messenger while you are away.">
   <meta name="color-scheme" content="light dark">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; media-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'">
   <title>Lunlet — A little closer to your flow</title>
@@ -22,8 +22,8 @@
     <nav aria-label="Main navigation"><a href="#glance">Overview</a><a href="#film">Film</a><a href="#away">Away</a><a href="#availability">Availability</a><a data-link="repositoryURL" hidden>Source</a></nav>
   </header>
   <main id="main">
-    <section class="hero">
-      <p class="eyebrow">For Codex and Claude Code on macOS</p>
+    <section class="hero" id="hero" data-stories="US-02 US-19 US-13">
+      <p class="eyebrow">For {{agents}} on macOS</p>
       <h1>A little closer<br>to your flow.</h1>
       <p class="lede">Lunlet sits beside your Mac's notch and keeps the coding sessions already running on your Mac in view: what each one is doing, how much of each plan is left, and a quiet signal when a turn ends.</p>
       <div class="actions"><a class="button primary" href="#film">Watch the film</a><a class="button" data-link="repositoryURL" hidden>View the source</a></div>
@@ -33,10 +33,10 @@
       </figure>
     </section>
 
-    <section class="feature" id="glance">
+    <section class="feature" id="glance" data-stories="US-19 US-33">
       <div class="intro reveal">
         <p class="eyebrow">Overview</p>
-        <h2>Both agents, one glance.</h2>
+        <h2>{{agentsLead}}, one glance.</h2>
         <p>Each agent's limits stay apart. Today's and the week's tokens add up across them, and one chart shows the days.</p>
       </div>
       <figure class="single reveal">
@@ -44,19 +44,19 @@
       </figure>
     </section>
 
-    <section class="feature dark" id="limits">
+    <section class="feature dark" id="limits" data-stories="US-04 US-33">
       <div class="intro reveal">
         <p class="eyebrow">Limits and usage</p>
         <h2>Know what is left.</h2>
         <p>Codex shows its weekly allowance, credits and reset times. Claude Code shows its session and weekly limits and today's tokens. Cost is an estimate at API prices, never a bill.</p>
       </div>
       <div class="pair reveal">
-        <figure><img src="assets/panel-codex.jpg" width="1688" height="1384" loading="lazy" decoding="async" alt="The Codex page: a Pro account with 69% of the week left, credits, reset credits and three sessions, one waiting for approval on the Mac"><figcaption>Codex</figcaption></figure>
-        <figure><img src="assets/panel-claude.jpg" width="1688" height="1384" loading="lazy" decoding="async" alt="The Claude Code page: a Max account's session and weekly limits, today's tokens by kind, and three sessions"><figcaption>Claude Code</figcaption></figure>
+        <figure data-agent="codex"><img src="assets/panel-codex.jpg" width="1688" height="1384" loading="lazy" decoding="async" alt="The Codex page: a Pro account with 69% of the week left, credits, reset credits and three sessions, one waiting for approval on the Mac"><figcaption>Codex</figcaption></figure>
+        <figure data-agent="claude"><img src="assets/panel-claude.jpg" width="1688" height="1384" loading="lazy" decoding="async" alt="The Claude Code page: a Max account's session and weekly limits, today's tokens by kind, and three sessions"><figcaption>Claude Code</figcaption></figure>
       </div>
     </section>
 
-    <section class="feature" id="island">
+    <section class="feature" id="island" data-stories="US-13">
       <div class="intro reveal">
         <p class="eyebrow">Task cues</p>
         <h2>A short island.</h2>
@@ -67,7 +67,7 @@
       </figure>
     </section>
 
-    <section class="feature film" id="film">
+    <section class="feature film" id="film" data-stories="US-28">
       <div class="intro reveal">
         <p class="eyebrow">One minute</p>
         <h2>See it move.</h2>
@@ -80,18 +80,14 @@
       </video>
     </section>
 
-    <section class="feature dark" id="away">
+    <section class="feature dark" id="away" data-stories="US-05 US-06 US-08 US-09 US-20 US-36">
       <div class="intro reveal">
         <p class="eyebrow">Away from your Mac</p>
         <h2>Step away.<br>Stay in the loop.</h2>
-        <p>Lock your Mac and go. When a turn finishes, Lunlet sends a short notice to your own Feishu or Lark, Slack or Telegram bot. One reply, the way that messenger takes it, continues that same Codex session. Approvals always stay on your Mac.</p>
+        <p>Lock your Mac and go. When a turn finishes, Lunlet sends a short notice to your own {{channels}} bot. One reply, the way that messenger takes it, continues that same Codex session. Approvals always stay on your Mac.</p>
       </div>
       <div class="channels reveal">
-        <div class="segmented" role="tablist" aria-label="Messenger">
-          <button type="button" role="tab" id="tab-feishu" aria-selected="true" aria-controls="panel-feishu">Feishu</button>
-          <button type="button" role="tab" id="tab-slack" aria-selected="false" tabindex="-1" aria-controls="panel-slack">Slack</button>
-          <button type="button" role="tab" id="tab-telegram" aria-selected="false" tabindex="-1" aria-controls="panel-telegram">Telegram</button>
-        </div>
+        <div class="segmented" role="tablist" aria-label="Messenger">{{tabs}}</div>
         <div class="panels">
         <div class="panel" role="tabpanel" id="panel-feishu" aria-labelledby="tab-feishu">
           <ol class="phones">
@@ -121,25 +117,25 @@
       </div>
     </section>
 
-    <section class="feature" id="yours">
+    <section class="feature" id="yours" data-stories="US-17 US-16 US-21">
       <div class="intro reveal">
         <p class="eyebrow">Skins</p>
         <h2>Make it yours.</h2>
-        <p>Vine or red lanterns, your own accent color, or a declarative skin you import. On a Mac without a notch, the lun·let lettering lives in the menu bar.</p>
+        <p>Choose {{skins}}, tune the accent color, or import a declarative skin of your own. On a Mac without a notch, the lun·let lettering lives in the menu bar.</p>
       </div>
       <div class="strips reveal">
-        <figure><img src="assets/notch.png" width="1156" height="196" loading="lazy" decoding="async" alt="The vine skin: lun and let lettering beside the notch, joined by two strands that show each agent's weekly allowance"><figcaption>Vine</figcaption></figure>
-        <figure><img src="assets/notch-lanterns.png" width="1156" height="196" loading="lazy" decoding="async" alt="The red lanterns skin: warm lettering and a string of lanterns under the notch, lit as far as the allowance goes"><figcaption>Red lanterns</figcaption></figure>
+        <figure data-skin="vine"><img src="assets/notch-vine.png" width="1156" height="196" loading="lazy" decoding="async" alt="The vine skin: lun and let lettering beside the notch, joined by two strands that show each agent's weekly allowance"><figcaption>Vine</figcaption></figure>
+        <figure data-skin="lantern"><img src="assets/notch-lantern.png" width="1156" height="196" loading="lazy" decoding="async" alt="The red lanterns skin: warm lettering and a string of lanterns under the notch, lit as far as the allowance goes"><figcaption>Red lanterns</figcaption></figure>
       </div>
     </section>
 
-    <section class="availability" id="availability">
+    <section class="availability" id="availability" data-stories="US-27 US-28">
       <div class="intro reveal">
         <p class="eyebrow">Availability</p>
         <h2>Made for macOS.<br>Built one step at a time.</h2>
       </div>
       <div class="columns reveal">
-        <div><h3>Source preview</h3><p>Codex and Claude Code observation, limits and usage work locally; build Lunlet from source. macOS 14 is the deployment target, and on-device validation currently covers macOS 27 on Apple silicon.</p></div>
+        <div><h3>Source preview</h3><p>Codex and Claude Code observation, limits and usage work locally; build Lunlet from source. macOS {{macos}} is the deployment target, and on-device validation currently covers macOS 27 on Apple silicon.</p></div>
         <div><h3>Verified so far</h3><p>Read-only observation of locally owned Codex and Claude Code records. Locked-Mac notices and one reply per notice are verified on Feishu, Telegram and Slack. Some client workflows still need on-device validation.</p></div>
         <div><h3>Not in the first release</h3><p id="release-status">No public macOS download yet; a signed package needs signing and installation checks first. No new mobile conversations, SSH, remote-host discovery or general computer control.</p><a class="button primary" data-link="releaseURL" hidden>Download on GitHub</a></div>
       </div>

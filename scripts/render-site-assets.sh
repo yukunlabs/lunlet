@@ -4,10 +4,16 @@
 # Refs: US-28, AC-28.02, AC-28.04.
 # Renders every product picture in docs/assets/screenshots from Lunlet's real views with synthetic data
 # (SiteAssetRenderTests); the README and the product page show these files. Nothing is recorded from the screen.
-# Usage: scripts/render-site-assets.sh
+# The stills' manifest records the sources they were drawn from; when it already matches, nothing is rendered.
+# Usage: scripts/render-site-assets.sh [--force]
 set -eu
 
 cd "$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+
+if [ "${1:-}" != "--force" ] && python3 scripts/check_site_assets.py --stills --quiet; then
+    echo "render-site-assets: the stills already match the current sources (pass --force to render them again)"
+    exit 0
+fi
 
 stills=$(mktemp -d "${TMPDIR:-/tmp}/lunlet-stills.XXXXXX")
 trap 'rm -rf "$stills"' EXIT
@@ -19,12 +25,16 @@ fi
 
 out=docs/assets/screenshots
 mkdir -p "$out"
-# Interface-only pictures stay PNG; pictures of the synthetic display carry its wallpaper, so they ship as JPEG.
-for name in notch notch-lanterns phone-feishu-notice phone-feishu-replied phone-feishu-delivered phone-slack-notice \
-            phone-slack-replied phone-slack-delivered phone-telegram-notice phone-telegram-replied phone-telegram-delivered; do
-    cp "$stills/$name.png" "$out/$name.png"
+# The render names each picture after the sources' own identifiers (agents, skins, messengers); pictures that are no
+# longer rendered leave with it. Interface-only pictures stay PNG; pictures of the synthetic display carry its
+# wallpaper, so they ship as JPEG.
+find "$out" -maxdepth 1 \( -name '*.png' -o -name '*.jpg' \) -delete
+for still in "$stills"/*.png; do
+    name=$(basename "$still" .png)
+    case "$name" in
+        hero-overview|cue-island|panel-*) sips -s format jpeg -s formatOptions 84 "$still" --out "$out/$name.jpg" >/dev/null ;;
+        *) cp "$still" "$out/$name.png" ;;
+    esac
 done
-for name in hero-overview cue-island panel-codex panel-overview panel-claude; do
-    sips -s format jpeg -s formatOptions 84 "$stills/$name.png" --out "$out/$name.jpg" >/dev/null
-done
+python3 scripts/check_site_assets.py --stills --write
 ls -l "$out"
