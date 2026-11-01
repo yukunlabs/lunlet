@@ -120,24 +120,12 @@ if [ "$lunlet_preview" = false ]; then
         exit 2
     fi
 fi
-# Sign inside out with one identity: Sparkle's helpers as Sparkle documents for apps outside the sandbox, then its
-# framework, then the app. Normal builds add the hardened runtime to every signature, and a secure timestamp when a
-# certificate signs; an ad hoc signature has nothing to timestamp.
-lunlet_sign() {
-    if [ "$lunlet_preview" = true ]; then
-        codesign --force --sign "$lunlet_signing_identity" "$@"
-    elif [ "$lunlet_signing_identity" = - ]; then
-        codesign --force --options runtime --sign - "$@"
-    else
-        codesign --force --options runtime --timestamp --sign "$lunlet_signing_identity" "$@"
-    fi
-}
-lunlet_sparkle="$lunlet_bundle/Contents/Frameworks/Sparkle.framework"
-lunlet_sign "$lunlet_sparkle/Versions/B/XPCServices/Installer.xpc"
-lunlet_sign --preserve-metadata=entitlements "$lunlet_sparkle/Versions/B/XPCServices/Downloader.xpc"
-lunlet_sign "$lunlet_sparkle/Versions/B/Autoupdate"
-lunlet_sign "$lunlet_sparkle/Versions/B/Updater.app"
-lunlet_sign "$lunlet_sparkle"
-lunlet_sign --identifier com.lunlet "$lunlet_bundle"
-codesign --verify --deep --strict "$lunlet_bundle"
+# Sign inside out with one identity (scripts/sign-app.sh). Only a certificate-signed build gets the hardened runtime:
+# an ad hoc signature has no team identifier, and the runtime's library validation would refuse the embedded
+# Sparkle framework at launch.
+if [ "$lunlet_preview" = true ]; then lunlet_sign_mode=--preview
+elif [ "$lunlet_signing_identity" = - ]; then lunlet_sign_mode=--unsigned
+else lunlet_sign_mode=--signed
+fi
+scripts/sign-app.sh "$lunlet_sign_mode" "$lunlet_signing_identity" "$lunlet_bundle"
 printf '%s\n' "$lunlet_bundle"

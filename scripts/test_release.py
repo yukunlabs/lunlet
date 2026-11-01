@@ -5,6 +5,7 @@
 # Refs: US-35, AC-35.01, AC-35.03, AC-35.04.
 import os
 import plistlib
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -81,10 +82,50 @@ class ReleaseBoundaryTests(unittest.TestCase):
             self.assertEqual(result.returncode, 2)
             self.assertIn('Development previews cannot become public release artifacts', result.stderr)
         script = (ROOT / "scripts/package-release.sh").read_text()
-        # The unsigned mode accepts only an ad hoc signature without a certificate and records it as such.
+        # The unsigned mode accepts only an ad hoc signature without a certificate and records it as such; an ad hoc
+        # candidate with the hardened runtime could not load its own frameworks, so it is refused, while a
+        # certificate-signed candidate still needs the runtime for notarization.
         self.assertIn("'^Signature=adhoc$'", script)
         self.assertIn("ad hoc (unsigned preview)", script)
         self.assertIn("none (unsigned preview", script)
+        self.assertIn("must not use the hardened runtime", script)
+        self.assertIn("The candidate requires hardened runtime", script)
+
+    def test_ad_hoc_signed_app_can_load_its_embedded_framework(self):
+        # An ad hoc signature carries no team identifier, so the hardened runtime's library validation refuses the
+        # app's own embedded framework at launch (dyld: different Team IDs). Found on 2026-11-01 when the first
+        # unsigned candidate crashed at launch on the owner's Mac. Previews and the unsigned preview release sign
+        # without the runtime; this launches a synthetic app signed by the real signing script (AC-27.03, AC-27.05).
+        cc = shutil.which("cc")
+        if cc is None:
+            self.skipTest("no C compiler")
+        with tempfile.TemporaryDirectory(prefix="lunlet-release-test-") as temporary:
+            directory = Path(temporary)
+            app = directory / "Lunlet.app"
+            version = app / "Contents/Frameworks/Helper.framework/Versions/A"
+            (version / "Resources").mkdir(parents=True)
+            (app / "Contents/MacOS").mkdir(parents=True)
+            (directory / "helper.c").write_text("int helper(void) { return 0; }\n")
+            (directory / "main.c").write_text("int helper(void);\nint main(void) { return helper(); }\n")
+            subprocess.run([cc, "-dynamiclib", "-install_name", "@rpath/Helper.framework/Versions/A/Helper",
+                            "-o", str(version / "Helper"), str(directory / "helper.c")], check=True)
+            subprocess.run([cc, "-o", str(app / "Contents/MacOS/Lunlet"), str(directory / "main.c"), str(version / "Helper"),
+                            "-Wl,-rpath,@executable_path/../Frameworks"], check=True)
+            with (version / "Resources/Info.plist").open("wb") as file:
+                plistlib.dump({"CFBundleIdentifier": "com.lunlet.tests.helper", "CFBundleExecutable": "Helper",
+                               "CFBundlePackageType": "FMWK"}, file)
+            os.symlink("A", version.parent / "Current")
+            os.symlink("Versions/Current/Helper", version.parent.parent / "Helper")
+            with (app / "Contents/Info.plist").open("wb") as file:
+                plistlib.dump({"CFBundleIdentifier": "com.lunlet.tests.signing", "CFBundleExecutable": "Lunlet",
+                               "CFBundlePackageType": "APPL"}, file)
+            for mode in ["--unsigned", "--preview"]:
+                with self.subTest(mode=mode):
+                    signed = subprocess.run([str(ROOT / "scripts/sign-app.sh"), mode, "-", str(app)],
+                                            capture_output=True, text=True, timeout=60)
+                    self.assertEqual(signed.returncode, 0, signed.stderr)
+                    launched = subprocess.run([str(app / "Contents/MacOS/Lunlet")], capture_output=True, text=True, timeout=10)
+                    self.assertEqual(launched.returncode, 0, launched.stderr)
 
     def test_normal_build_needs_both_update_settings_well_formed_before_running_swift(self):
         identity = {"LUNLET_CODE_SIGN_IDENTITY": "Synthetic Identity"}
