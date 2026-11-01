@@ -179,6 +179,8 @@ final class FilmWindow: NSWindow {
     let macLock: CGImage, phoneLock: CGImage, phoneBanner: CGImage, phoneChat: CGImage, phoneChatReplied: CGImage, phoneChatDelivered: CGImage
     /// The completion card SessionCard renders for the ending's turn, open and after the reply was delivered.
     let card: FilmNoticeCard, cardDelivered: FilmNoticeCard
+    /// The finished turn the notice describes, and the owner's reply to it.
+    let notice: SessionSnapshot, replyText: String
     /// What the entry shows: both agents' allowances and the sessions' compact status.
     let allowances: [AgentAllowance], sessionStatus: CompactSessionStatus
     private let hosts: [Page: FilmPageHost]
@@ -389,6 +391,7 @@ final class FilmWindow: NSWindow {
         let deliveredCard = try FilmNoticeCard(SessionCard.render(notice, reply: capability,
                                                                   replyState: .finished(.delivered, replyText), now: filmTime, locale: Locale(identifier: "en_US")))
         card = noticeCard; cardDelivered = deliveredCard
+        self.notice = notice; self.replyText = replyText
         phoneBanner = await snapshot(FilmPhoneBanner(title: "Lunlet · Turn finished", detail: noticeCard.title + " · " + noticeCard.subtitle),
                                      FilmPhone.banner.size)
         phoneChat = await snapshot(FilmPhoneChat(card: noticeCard, avatar: appIcon, time: "4:52", stamp: "Today 4:52 PM"),

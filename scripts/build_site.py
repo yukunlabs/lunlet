@@ -45,7 +45,9 @@ def load_config(path):
 
 
 SCREENSHOTS = ("hero-overview.jpg", "panel-overview.jpg", "panel-codex.jpg", "panel-claude.jpg", "cue-island.jpg",
-               "phone-notice.png", "phone-replied.png", "phone-delivered.png", "notch.png", "notch-lanterns.png")
+               "notch.png", "notch-lanterns.png") + tuple(
+    "phone-" + channel + "-" + state + ".png"
+    for channel in ("feishu", "slack", "telegram") for state in ("notice", "replied", "delivered"))
 
 
 def referenced_files(page):

@@ -592,12 +592,14 @@ struct FilmPhoneBanner: View {
 }
 
 /// The bot chat: a neutral messenger in Lunlet's palette with the completion card and, once sent, the owner's reply.
-struct FilmPhoneChat: View {
-    let card: FilmNoticeCard
+/// A messenger's chat with the Lunlet bot: status bar, the chat header, the day stamp, then the channel's own
+/// messages. Generic chrome; no messenger's artwork.
+struct FilmChatScreen<Content: View>: View {
+    let subtitle: String
     let avatar: CGImage
     let time: String
     let stamp: String
-    var outgoing: String? = nil
+    @ViewBuilder let content: Content
     var body: some View {
         ZStack(alignment: .top) {
             FilmInk.swiftUI(0x14121c)
@@ -617,34 +619,53 @@ struct FilmPhoneChat: View {
                                 .padding(.horizontal, 6).padding(.vertical, 2)
                                 .background(Capsule().fill(FilmInk.swiftUI(FilmInk.lavender, 0.18)))
                         }
-                        Text("Your Feishu bot").font(.system(size: 12.5)).foregroundStyle(.white.opacity(0.55))
+                        Text(subtitle).font(.system(size: 12.5)).foregroundStyle(.white.opacity(0.55))
                     }
                     Spacer()
                 }
                 .padding(.horizontal, 16).frame(height: 58)
                 Rectangle().fill(.white.opacity(0.08)).frame(height: 1)
                 Text(stamp).font(.system(size: 12.5)).foregroundStyle(.white.opacity(0.5)).padding(.top, 18)
-                HStack(alignment: .top, spacing: 10) {
-                    Image(decorative: avatar, scale: 1).resizable().frame(width: 38, height: 38).clipShape(Circle())
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Lunlet").font(.system(size: 13)).foregroundStyle(.white.opacity(0.55))
-                        FilmNoticeCardView(card: card)
-                    }
-                }
-                .padding(.horizontal, 14).padding(.top, 12)
-                if let outgoing {
-                    // The owner's reply, sent from the card's box, as the messenger echoes it.
-                    HStack {
-                        Spacer(minLength: 70)
-                        Text(outgoing).font(.system(size: 16.5)).foregroundStyle(FilmInk.swiftUI(0x1a1726))
-                            .padding(.horizontal, 14).padding(.vertical, 10)
-                            .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(FilmInk.swiftUI(FilmInk.lavender)))
-                    }
-                    .padding(.horizontal, 14).padding(.top, 10)
-                }
+                content
                 Spacer()
                 Capsule().fill(.white.opacity(0.75)).frame(width: 134, height: 5).padding(.bottom, 9)
             }
+        }
+    }
+}
+
+/// The owner's own message, as a messenger echoes it on the right.
+struct FilmOutgoingBubble: View {
+    let text: String
+    var body: some View {
+        HStack {
+            Spacer(minLength: 70)
+            Text(text).font(.system(size: 16.5)).foregroundStyle(FilmInk.swiftUI(0x1a1726))
+                .padding(.horizontal, 14).padding(.vertical, 10)
+                .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(FilmInk.swiftUI(FilmInk.lavender)))
+        }
+        .padding(.horizontal, 14).padding(.top, 10)
+    }
+}
+
+/// The Feishu chat: the notice card, and the owner's reply once it left the card's box.
+struct FilmPhoneChat: View {
+    let card: FilmNoticeCard
+    let avatar: CGImage
+    let time: String
+    let stamp: String
+    var outgoing: String? = nil
+    var body: some View {
+        FilmChatScreen(subtitle: "Your Feishu bot", avatar: avatar, time: time, stamp: stamp) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(decorative: avatar, scale: 1).resizable().frame(width: 38, height: 38).clipShape(Circle())
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Lunlet").font(.system(size: 13)).foregroundStyle(.white.opacity(0.55))
+                    FilmNoticeCardView(card: card)
+                }
+            }
+            .padding(.horizontal, 14).padding(.top, 12)
+            if let outgoing { FilmOutgoingBubble(text: outgoing) }
         }
     }
 }

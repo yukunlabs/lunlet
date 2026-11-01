@@ -132,6 +132,28 @@ h2 { font-size: clamp(36px, 5.6vw, 66px); line-height: 1.04; letter-spacing: -.0
   box-shadow: var(--shadow);
 }
 
+/* Messenger tabs */
+.channels { text-align: center; }
+.segmented { display: inline-flex; gap: 4px; padding: 4px; border-radius: 999px; background: rgba(255, 255, 255, .08); margin: 0 auto clamp(32px, 4vw, 48px); }
+.segmented [role="tab"] {
+  border: 0;
+  background: none;
+  color: var(--dark-muted);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  padding: 8px 18px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background .25s ease, color .25s ease;
+}
+.segmented [role="tab"]:hover { color: var(--dark-ink); }
+.segmented [role="tab"][aria-selected="true"] { background: #fff; color: #1a1424; box-shadow: 0 1px 6px rgba(0, 0, 0, .3); }
+.segmented [role="tab"]:focus-visible { outline: 3px solid #c7b6f5; outline-offset: 2px; }
+.panels { display: grid; }
+.panel { grid-area: 1 / 1; text-align: left; transition: opacity .4s ease; }
+.panel.is-hidden { opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .3s ease, visibility 0s linear .3s; }
+
 /* Phones */
 .phones { list-style: none; margin: 0 auto; padding: 0; max-width: 1040px; display: grid; grid-template-columns: repeat(3, 1fr); gap: clamp(16px, 3vw, 36px); }
 .phones li { text-align: center; }
@@ -174,7 +196,7 @@ h2 { font-size: clamp(36px, 5.6vw, 66px); line-height: 1.04; letter-spacing: -.0
 @media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
 @media (prefers-reduced-motion: reduce) {
   .motion .reveal { opacity: 1; transform: none; transition: none; }
-  .button { transition: none; }
+  .button, .panel, .panel.is-hidden, .segmented [role="tab"] { transition: none; }
 }
 
 /* Narrow screens */

@@ -71,7 +71,7 @@
       <div class="intro reveal">
         <p class="eyebrow">One minute</p>
         <h2>See it move.</h2>
-        <p>A silent, captioned film rendered from Lunlet's own views on a synthetic Mac: the notch, a task cue, the panel, then the notice on a phone and the reply that continues the session. Playback starts only when you choose it.</p>
+        <p>A silent, captioned film rendered from Lunlet's own views on a synthetic Mac: the notch, a task cue, the panel, then the notice on a phone (Feishu) and the reply that continues the session. Playback starts only when you choose it.</p>
       </div>
       <video class="product-film reveal" controls playsinline preload="none" poster="video/lunlet-poster.jpg" aria-label="Lunlet product walkthrough with captions">
         <source src="video/lunlet-walkthrough.mp4" type="video/mp4">
@@ -84,14 +84,41 @@
       <div class="intro reveal">
         <p class="eyebrow">Away from your Mac</p>
         <h2>Step away.<br>Stay in the loop.</h2>
-        <p>Lock your Mac and go. When a turn finishes, Lunlet sends a short notice to your own Feishu or Lark, Slack or Telegram bot. One reply continues that same Codex session. Approvals always stay on your Mac.</p>
+        <p>Lock your Mac and go. When a turn finishes, Lunlet sends a short notice to your own Feishu or Lark, Slack or Telegram bot. One reply, the way that messenger takes it, continues that same Codex session. Approvals always stay on your Mac.</p>
       </div>
-      <ol class="phones reveal">
-        <li><img src="assets/phone-notice.png" width="1116" height="2024" loading="lazy" decoding="async" alt="A phone showing the Lunlet bot chat: a card titled Codex succeeded for lunlet-site, with what you asked, the agent's answer, and an open reply box"><span><b>1</b> The notice, with a reply box</span></li>
-        <li><img src="assets/phone-replied.png" width="1116" height="2024" loading="lazy" decoding="async" alt="The same card after a reply was typed and sent: the box is disabled, the card shows Replied, and the reply appears as a sent message"><span><b>2</b> Your reply, sent</span></li>
-        <li><img src="assets/phone-delivered.png" width="1116" height="2024" loading="lazy" decoding="async" alt="The card rewritten as delivered: Codex is continuing on your Mac"><span><b>3</b> Delivered to the session</span></li>
-      </ol>
-      <p class="note reveal">Shown on Feishu. Slack and Telegram carry the same notice and reply.</p>
+      <div class="channels reveal">
+        <div class="segmented" role="tablist" aria-label="Messenger">
+          <button type="button" role="tab" id="tab-feishu" aria-selected="true" aria-controls="panel-feishu">Feishu</button>
+          <button type="button" role="tab" id="tab-slack" aria-selected="false" tabindex="-1" aria-controls="panel-slack">Slack</button>
+          <button type="button" role="tab" id="tab-telegram" aria-selected="false" tabindex="-1" aria-controls="panel-telegram">Telegram</button>
+        </div>
+        <div class="panels">
+        <div class="panel" role="tabpanel" id="panel-feishu" aria-labelledby="tab-feishu">
+          <ol class="phones">
+          <li><img src="assets/phone-feishu-notice.png" width="1116" height="2024" loading="lazy" decoding="async" alt="A phone showing the Lunlet bot chat on Feishu: a card titled Codex succeeded for lunlet-site, with what you asked, the agent's answer, and an open reply box"><span><b>1</b> The card, with its reply box</span></li>
+          <li><img src="assets/phone-feishu-replied.png" width="1116" height="2024" loading="lazy" decoding="async" alt="The same card after a reply was typed and sent: the box is disabled, the card shows Sending, and the reply appears as a sent message"><span><b>2</b> Your reply, sent from the box</span></li>
+          <li><img src="assets/phone-feishu-delivered.png" width="1116" height="2024" loading="lazy" decoding="async" alt="The card rewritten as Replied and Delivered: Codex is continuing on your Mac"><span><b>3</b> Delivered to the session</span></li>
+          </ol>
+          <p class="note">A Feishu or Lark card. Type in its box and send; the card is rewritten in place as the reply moves.</p>
+        </div>
+        <div class="panel" role="tabpanel" id="panel-slack" aria-labelledby="tab-slack" hidden>
+          <ol class="phones">
+          <li><img src="assets/phone-slack-notice.png" width="1116" height="2024" loading="lazy" decoding="async" alt="A phone showing the Lunlet app's message on Slack: Codex succeeded · lunlet-site, the quoted request, the answer, and a line inviting a reply in the thread"><span><b>1</b> The notice, with a thread hint</span></li>
+          <li><img src="assets/phone-slack-replied.png" width="1116" height="2024" loading="lazy" decoding="async" alt="The notice's thread with one reply, Add a regression test for the wrapping, and the notice now reading Received, sending to Codex"><span><b>2</b> Your reply, in its thread</span></li>
+          <li><img src="assets/phone-slack-delivered.png" width="1116" height="2024" loading="lazy" decoding="async" alt="The notice updated to Delivered: Codex is continuing on your Mac, above the reply in its thread"><span><b>3</b> Delivered to the session</span></li>
+          </ol>
+          <p class="note">A Block Kit message from your Slack app. Reply in its thread; Lunlet updates the message as the reply moves.</p>
+        </div>
+        <div class="panel" role="tabpanel" id="panel-telegram" aria-labelledby="tab-telegram" hidden>
+          <ol class="phones">
+          <li><img src="assets/phone-telegram-notice.png" width="1116" height="2024" loading="lazy" decoding="async" alt="A phone showing the Lunlet bot's message on Telegram: Codex succeeded · lunlet-site, the quoted request and the answer, with a Reply to continue button under it"><span><b>1</b> The notice, with a Reply button</span></li>
+          <li><img src="assets/phone-telegram-replied.png" width="1116" height="2024" loading="lazy" decoding="async" alt="The notice edited to Received, the bot's prompt Reply to this message to continue Codex, and the owner's reply quoting that prompt"><span><b>2</b> Your reply to the prompt</span></li>
+          <li><img src="assets/phone-telegram-delivered.png" width="1116" height="2024" loading="lazy" decoding="async" alt="The notice edited to Delivered: Codex is continuing on your Mac, above the prompt and the reply"><span><b>3</b> Delivered to the session</span></li>
+          </ol>
+          <p class="note">One message from your Telegram bot. Tap Reply to continue and answer the prompt; the message is edited as the reply moves.</p>
+        </div>
+        </div>
+      </div>
     </section>
 
     <section class="feature" id="yours">

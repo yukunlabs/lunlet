@@ -103,6 +103,12 @@ class ProductSiteTests(unittest.TestCase):
                 self.assertTrue((output / path).is_file(), path)
             self.assertNotIn('src="http', page)
             self.assertNotIn('srcset=', page)
+            # One messenger at a time: three tabs, each panel with that channel's three phones (AC-36.01, AC-36.03).
+            self.assertEqual(page.count('role="tab"'), 3)
+            self.assertEqual(page.count('role="tabpanel"'), 3)
+            for channel in ("feishu", "slack", "telegram"):
+                panel = re.search(r'<div class="panel" role="tabpanel" id="panel-' + channel + r'".*?</div>\s*</div>', page, re.S).group(0)
+                self.assertEqual(panel.count('src="assets/phone-' + channel + '-'), 3)
             with self.assertRaises(FileExistsError):
                 build(output)
 
