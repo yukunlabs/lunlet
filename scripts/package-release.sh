@@ -74,7 +74,14 @@ else
     lunlet_signing_label='Developer ID Application'
     lunlet_notarization_label='stapled ticket validated'
 fi
-if ! printf '%s\n' "$lunlet_signature" | /usr/bin/grep -Eq '^CodeDirectory .*flags=.*runtime'; then
+# The hardened runtime belongs to certificate-signed candidates only: notarization needs it, while an ad hoc
+# signature has no team identifier and the runtime's library validation would refuse the embedded Sparkle framework
+# at launch (found on the first unsigned candidate, 2026-11-01).
+if printf '%s\n' "$lunlet_signature" | /usr/bin/grep -Eq '^CodeDirectory .*flags=.*runtime'; then
+    if [ "$lunlet_unsigned" = 1 ]; then
+        printf '%s\n' 'An ad hoc signed candidate must not use the hardened runtime: it could not load its own frameworks.' >&2; exit 2
+    fi
+elif [ "$lunlet_unsigned" != 1 ]; then
     printf '%s\n' 'The candidate requires hardened runtime.' >&2; exit 2
 fi
 lunlet_archs=$(/usr/bin/lipo -archs "$lunlet_app/Contents/MacOS/Lunlet")
