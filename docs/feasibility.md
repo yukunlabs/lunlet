@@ -20,7 +20,7 @@ Validation order: (1) terminal-independent identification and continuation of ex
 | [Desktop interface](#desktop-interface) | Native notch/menu entry, panel, cues, Settings, skins and colors with native-window tests | Physical pointer, focus, appearance and multi-display acceptance |
 | [Diagnostics, signing and credential storage](#diagnostics-signing-and-credential-storage) | Minimal unified logging; signature-gated Keychain access; previews re-own the saved item after authorization | Credential continuity across Developer ID-signed updates |
 | [Performance and resources](#performance-and-resources) | Opt-in synthetic probe within engineering targets | Real-discovery, uncached, signed full-app energy and responsiveness |
-| [Release preparation and repository hygiene](#release-preparation-and-repository-hygiene) | Source published; CI, packaging, product page and provenance prepared; no signed download | Signing/notarization, clean-machine installation and release decisions |
+| [Release preparation and repository hygiene](#release-preparation-and-repository-hygiene) | Source published; CI, packaging (including the unsigned preview mode), product page and provenance prepared; no download yet | Clean-machine installation and release decisions; signing/notarization deferred by owner decision |
 
 ## Codex session observation
 
@@ -198,7 +198,7 @@ Validation order: (1) terminal-independent identification and continuation of ex
 
 ### Open gates
 
-- Credential continuity across two Developer ID-signed versions on a clean Mac, and access to legacy entries under a changed signed identity; with a Team ID, the data-protection keychain with an access group is an option to evaluate.
+- Credential continuity across two Developer ID-signed versions on a clean Mac, and access to legacy entries under a changed signed identity; with a Team ID, the data-protection keychain with an access group is an option to evaluate. Deferred with signing itself (owner decision 2026-11-01): the unsigned preview re-owns the saved item after one authorization click per update, which the clean-machine update test confirms.
 - Opt-in diagnostics checks on the device.
 
 ## Performance and resources
@@ -230,7 +230,7 @@ Validation order: (1) terminal-independent identification and continuation of ex
 ### Open gates
 
 - Owner decisions: final artwork, branding and privacy-claim review; release and product-page destinations; Developer Program membership; the optional support destination and recipient. The 0BSD license, yukunlabs copyright identity and SPDX metadata are present, pending final publication review.
-- Developer ID signing, notarization, an EdDSA update key, a published appcast and a real update between two signed versions on a clean Mac; browser visual, responsive and keyboard acceptance of the product page.
+- An EdDSA update key, a published appcast and a real update between two versions on a clean Mac, with the first-open steps and the one authorization click of an unsigned preview recorded; Developer ID signing and notarization deferred by owner decision; keyboard acceptance of the product page.
 
 ## Assisted acceptance checklist
 

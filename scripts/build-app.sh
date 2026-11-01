@@ -35,9 +35,13 @@ if [ "$lunlet_preview" = true ]; then
     # saved Feishu enrollment stays readable without a Keychain prompt; without one it
     # is signed ad hoc, and each build needs Authorize access once.
     if [ -z "$lunlet_signing_identity" ]; then lunlet_signing_identity=-; fi
+elif [ "$lunlet_signing_identity" = - ] && [ "${LUNLET_RELEASE_UNSIGNED:-}" = 1 ]; then
+    # The unsigned preview release (owner decision 2026-11-01): a release build signed ad hoc, so macOS asks to allow it
+    # on first open and each update asks once to authorize the saved bot connection. Its notes must say so (AC-27.05).
+    printf '%s\n' 'Building an unsigned preview release; its notes must state the first-open steps and the authorization click after each update.' >&2
 elif [ -z "$lunlet_signing_identity" ] || [ "$lunlet_signing_identity" = - ]; then
     printf '%s\n' 'A normal Lunlet build requires a certificate signing identity.' >&2
-    printf '%s\n' 'Set LUNLET_CODE_SIGN_IDENTITY, or use --preview for a development build with explicit owner authorization for saved Feishu access.' >&2
+    printf '%s\n' 'Set LUNLET_CODE_SIGN_IDENTITY (or LUNLET_CODE_SIGN_IDENTITY=- with LUNLET_RELEASE_UNSIGNED=1 for an unsigned preview release), or use --preview for a development build with explicit owner authorization for saved Feishu access.' >&2
     exit 2
 fi
 # Release builds take the owner's update feed and public EdDSA key from the environment, both or neither. Keys are
@@ -117,10 +121,13 @@ if [ "$lunlet_preview" = false ]; then
     fi
 fi
 # Sign inside out with one identity: Sparkle's helpers as Sparkle documents for apps outside the sandbox, then its
-# framework, then the app. Normal builds add the hardened runtime and a secure timestamp to every signature.
+# framework, then the app. Normal builds add the hardened runtime to every signature, and a secure timestamp when a
+# certificate signs; an ad hoc signature has nothing to timestamp.
 lunlet_sign() {
     if [ "$lunlet_preview" = true ]; then
         codesign --force --sign "$lunlet_signing_identity" "$@"
+    elif [ "$lunlet_signing_identity" = - ]; then
+        codesign --force --options runtime --sign - "$@"
     else
         codesign --force --options runtime --timestamp --sign "$lunlet_signing_identity" "$@"
     fi
