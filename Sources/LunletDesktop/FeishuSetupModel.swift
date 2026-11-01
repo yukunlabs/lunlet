@@ -188,6 +188,10 @@ import LunletSecureStorage
         if needsAuthorization(error) {
             return "This build needs your permission to read the saved Feishu connection. The connection itself is intact."
         }
+        if (error as? SecureStorageFailure)?.unreadableOnThisMac == true {
+            return "The saved Feishu connection cannot be opened on this Mac; it may have been copied from another Mac "
+                + "or user account. Remove it and connect again."
+        }
         return "Lunlet could not \(operation) on this Mac. Feishu is unavailable. Try again after the storage issue is resolved."
     }
 

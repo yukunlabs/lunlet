@@ -240,7 +240,7 @@ struct PreferencesPane: View {
                      help: "Their licenses, including those of the code Sparkle bundles, and Lunlet's notices ship inside "
                         + "the application bundle.")
                 fact("Privacy", "Runs on this Mac with no analytics. Credentials stay on this Mac in a file only your user "
-                     + "can read; notices go only to the channel you set up.")
+                     + "can read, sealed for this Mac; notices go only to the channel you set up.")
             }
             .font(Font.subheadline)
             // Present only in a configured release build (AC-35.03, AC-35.04).

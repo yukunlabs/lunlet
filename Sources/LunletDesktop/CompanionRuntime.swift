@@ -183,6 +183,7 @@ import SwiftUI
         if preferences.value.sessionProviders.contains(.claude) { claudeHistory.refreshIfNeeded() }
         claudeLimits.setActive(preferences.value.sessionProviders.contains(.claude))
         setupLoading = Task { await setup.load() }
+        botSetup.sealSavedConnections()
     }
 
     public func showPanel() {

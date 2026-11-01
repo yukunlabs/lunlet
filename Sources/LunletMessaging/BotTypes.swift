@@ -4,7 +4,7 @@
 import Foundation
 import LunletCore
 
-public enum BotChannel: String, Codable, Sendable { case slack, telegram }
+public enum BotChannel: String, CaseIterable, Codable, Sendable { case slack, telegram }
 
 public struct BotCredentials: Codable, Sendable, CustomStringConvertible, CustomDebugStringConvertible {
     public let channel: BotChannel
