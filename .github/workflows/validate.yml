@@ -31,10 +31,24 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Record toolchain and resolve the pinned dependencies
+      - name: Record the toolchain
+        id: toolchain
         run: |
           swift --version
           sw_vers
+          printf 'swift=%s\n' "$(swift --version 2>&1 | head -n 1 | tr -c 'A-Za-z0-9.\n' '-')" >> "$GITHUB_OUTPUT"
+      # The build directory is restored from the nearest cache for this toolchain and dependency set, so a run
+      # rebuilds only what changed; every successful run saves its own entry. Nothing secret lives in .build.
+      - name: Restore the Swift build directory
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .build
+          key: swift-build-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.swift }}-${{ hashFiles('Package.swift', 'Package.resolved') }}-${{ hashFiles('Sources/**', 'Tests/**') }}
+          restore-keys: |
+            swift-build-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.swift }}-${{ hashFiles('Package.swift', 'Package.resolved') }}-
+            swift-build-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.swift }}-
+      - name: Resolve the pinned dependencies
+        run: |
           swift package resolve --disable-keychain
           git diff --exit-code -- Package.resolved
       - name: Verify application modules
