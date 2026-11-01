@@ -35,6 +35,11 @@ import SwiftUI
     private var active = false, closed = false, watching = false
     private var operation: Task<Void, Never>?
     private var rerun = false
+    /// Counts status-line changes; a read that started before a change is stale and never overwrites its result.
+    private var generation = 0
+    /// True from the end of a change until the read that follows it lands, so `isChanging` never clears while the
+    /// published connection, limits and account still mix the states before and after the change.
+    private var settlingChange = false
     private var watch: DispatchSourceFileSystemObject?
     private var debounce: Task<Void, Never>?
     /// Connects automatically while Claude Code is selected, unless the owner disconnected it (AC-33.08).
@@ -87,14 +92,14 @@ import SwiftUI
     private func read(updatingScript: Bool = false) {
         guard !closed else { return }
         guard operation == nil else { rerun = true; return }
-        let service = service, reader = reader, date = now()
+        let service = service, reader = reader, date = now(), started = generation
         operation = Task { [weak self] in
             let result = await Task.detached(priority: .utility) { () -> Read in
                 if updatingScript { try? service.updateInstalledScript() }
                 return Read(connection: Self.connection { try service.state() }, limits: Result { try reader.read(now: date) },
                             account: ClaudeAccountProfile.read(home: service.home))
             }.value
-            self?.finish(result)
+            self?.finish(result, from: started)
         }
     }
 
@@ -130,9 +135,11 @@ import SwiftUI
         let account: ClaudeAccountProfile?
     }
 
-    private func finish(_ result: Read) {
+    private func finish(_ result: Read, from started: Int) {
         operation = nil
         guard !closed else { return }
+        // A change landed while this read was in flight: its picture of the status line is stale, so read again.
+        guard started == generation else { rerun = false; read(); return }
         connection = result.connection
         if account != result.account { account = result.account }
         switch result.limits {
@@ -142,6 +149,7 @@ import SwiftUI
         if watching, active, connection == .connected, watch == nil { startWatching() }
         if automaticPending, connection == .connected { addedAutomatically = true }
         automaticPending = false
+        if settlingChange { settlingChange = false; isChanging = false }
         connectAutomaticallyIfNeeded()
         if rerun { rerun = false; read() }
     }
@@ -157,14 +165,16 @@ import SwiftUI
 
     private func change(_ action: @escaping @Sendable (ClaudeStatusLineConnection) throws -> ClaudeStatusLineState) {
         guard !closed, !isChanging else { return }
-        isChanging = true; actionIssue = nil
+        isChanging = true; actionIssue = nil; generation += 1
         let service = service
         Task { [weak self] in
             let outcome = await Task.detached(priority: .userInitiated) { () -> Result<ClaudeStatusLineState, Error> in
                 Result { try action(service) }
             }.value
             guard let self, !self.closed else { return }
-            self.isChanging = false
+            // The change reports the state it left behind, so the connection never lags the file it describes; the
+            // change counts as in progress until the read that refreshes limits and account has landed too.
+            if case .success(let state) = outcome { self.connection = Self.connection { state } }
             if case .failure(let error) = outcome {
                 // An automatic attempt that fails stays quiet; the card keeps its own Add status line button.
                 if self.automaticPending { self.automaticPending = false } else {
@@ -172,6 +182,7 @@ import SwiftUI
                 }
             }
             // Settings acts on Claude Code's configuration whether or not Claude Code is a selected agent.
+            self.settlingChange = true
             self.read()
         }
     }

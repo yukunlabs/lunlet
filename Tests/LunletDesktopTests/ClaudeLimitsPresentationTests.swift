@@ -170,6 +170,9 @@ import LunletCore
         relaunched.setActive(false)
         try await ClaudeLimitsFixture.settle(relaunched) { fixture.settings == "{\n  \"theme\": \"dark\"\n}\n" && !relaunched.isChanging }
         #expect(fixture.settings == "{\n  \"theme\": \"dark\"\n}\n")
+        // The moment a change is over, the published connection already describes the file it left behind; it never
+        // lags behind until a later read lands (AC-33.08).
+        #expect(relaunched.connection == .notConnected)
         relaunched.setActive(true)
         try await ClaudeLimitsFixture.settle(relaunched) { relaunched.connection == .connected && !relaunched.isChanging }
         #expect(fixture.settings?.contains("\"statusLine\"") == true)
