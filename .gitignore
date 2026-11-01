@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 yukunlabs
+# SPDX-License-Identifier: 0BSD
 # macOS
 .DS_Store
 
@@ -7,6 +9,9 @@
 !.env.example
 *.pem
 *.key
+*.p12
+*.cer
+*.mobileprovision
 
 # Swift / Xcode
 .build/
@@ -18,3 +23,7 @@ xcuserdata/
 # Local generated content
 *.log
 .tmp/
+
+# Python verification tools
+__pycache__/
+*.py[cod]

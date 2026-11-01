@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-FileCopyrightText: 2026 yukunlabs -->
+<!-- SPDX-License-Identifier: 0BSD -->
+<!-- Refs: US-01, AC-01.01; US-03, AC-03.04; US-12, AC-12.04. -->
+<!-- Refs: US-35, AC-35.01, AC-35.03, AC-35.04. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key><string>Lunlet</string>
+    <key>CFBundleIdentifier</key><string>com.lunlet</string>
+    <key>CFBundleIconFile</key><string>Lunlet.icns</string>
+    <key>CFBundleName</key><string>Lunlet</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleShortVersionString</key><string>0.1.0</string>
+    <key>CFBundleVersion</key><string>1</string>
+    <key>LSMinimumSystemVersion</key><string>14.0</string>
+    <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
+    <key>LSUIElement</key><true/>
+    <key>NSHumanReadableCopyright</key><string>© 2026 yukunlabs</string>
+    <key>NSPrincipalClass</key><string>NSApplication</string>
+    <!-- Sparkle policy: daily checks on without a permission prompt, no system profile, and nothing downloads or
+         installs until the owner chooses Install. Only normal builds receive SUFeedURL and SUPublicEDKey. -->
+    <key>SUAllowsAutomaticUpdates</key><false/>
+    <key>SUEnableAutomaticChecks</key><true/>
+    <key>SUEnableSystemProfiling</key><false/>
+</dict>
+</plist>

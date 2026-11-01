@@ -1,0 +1,89 @@
+#!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 yukunlabs
+# SPDX-License-Identifier: 0BSD
+# Refs: US-28, AC-28.01, AC-28.02, AC-28.03, AC-28.04; US-30, AC-30.01, AC-30.02, AC-30.03.
+"""Build a dependency-free, local-only product page from reviewed project assets."""
+import argparse
+import json
+import re
+import shutil
+from pathlib import Path
+from urllib.parse import urlsplit
+
+ROOT = Path(__file__).resolve().parent.parent
+FIELDS = {"schemaVersion", "repositoryURL", "releaseURL", "supportURL"}
+
+
+def load_config(path):
+    data = json.loads(path.read_text())
+    if not isinstance(data, dict) or data.get("schemaVersion") != 1 or set(data) - FIELDS:
+        raise ValueError("Unsupported website configuration")
+    result = {}
+    for key in FIELDS - {"schemaVersion"}:
+        value = data.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, str) or len(value) > 2048 or any(ord(char) < 33 for char in value):
+            raise ValueError("Invalid website destination: " + key)
+        url = urlsplit(value)
+        if url.scheme != "https" or not url.hostname or url.username or url.password or url.port not in (None, 443):
+            raise ValueError("Website destinations require HTTPS without credentials")
+        if key in {"repositoryURL", "releaseURL"}:
+            pattern = r"/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)"
+            if key == "releaseURL":
+                pattern += r"/releases(?:/latest|/tag/v[0-9A-Za-z.+-]+)?"
+            match = re.fullmatch(pattern + r"/?", url.path)
+            if url.hostname != "github.com" or match is None or any(not part.strip(".") for part in match.groups()):
+                raise ValueError("Use the actual GitHub repository or release destination")
+        result[key] = value
+    if "repositoryURL" in result and "releaseURL" in result:
+        source = urlsplit(result["repositoryURL"]).path.strip("/").split("/")[:2]
+        release = urlsplit(result["releaseURL"]).path.strip("/").split("/")[:2]
+        if [part.lower() for part in source] != [part.lower() for part in release]:
+            raise ValueError("Source and download destinations must use the same GitHub repository")
+    return result
+
+
+def native_artwork():
+    source = (ROOT / "Sources/LunletDesktop/VineGeometry.swift").read_text()
+    artwork = {}
+    for key in ("leftInk", "rightInk", "body"):
+        found = re.search(r'static let ' + key + r' = "([^"\n]+)"', source)
+        if found is None:
+            raise ValueError("Native artwork format changed: " + key)
+        artwork[key] = found.group(1)
+    palette = (ROOT / "Sources/LunletDesktop/AllowancePalette.swift").read_text()
+    stops = re.findall(r'\((\d+), \[(0x[0-9a-f]+), (0x[0-9a-f]+), (0x[0-9a-f]+)\]\)', palette)
+    if len(stops) != 4:
+        raise ValueError("Native allowance palette format changed")
+    artwork["palette"] = [[int(row[0]), [int(color, 16) for color in row[1:]]] for row in stops]
+    return artwork
+
+
+def build(output, config_path=None):
+    config = load_config(config_path or ROOT / "website/config.json")
+    artwork = native_artwork()
+    # Build into a new directory, so no unrelated files can enter the deployment.
+    output.mkdir(parents=True, exist_ok=False)
+    for name in ("index.html", "style.css", "app.js"):
+        shutil.copyfile(ROOT / "website" / name, output / name)
+    (output / "video").mkdir()
+    for name in ("lunlet-walkthrough.mp4", "lunlet-poster.jpg", "lunlet-captions.vtt"):
+        shutil.copyfile(ROOT / "website/video" / name, output / "video" / name)
+    (output / "assets").mkdir()
+    shutil.copyfile(ROOT / "docs/assets/branding/lunlet-app-icon.png", output / "assets/lunlet-app-icon.png")
+    for name, global_name, data in [("site-config.js", "LUNLET_SITE_CONFIG", config), ("artwork.js", "LUNLET_ARTWORK", artwork)]:
+        encoded = json.dumps(data, ensure_ascii=True, sort_keys=True).replace("<", "\\u003c")
+        (output / name).write_text("window." + global_name + " = " + encoded + ";\n")
+    (output / ".nojekyll").touch()
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output", type=Path, default=ROOT / ".tmp/site", help="A new, empty output directory")
+    options = parser.parse_args()
+    try:
+        build(options.output)
+    except (ValueError, OSError) as error:
+        parser.exit(1, str(error) + "\n")
+    print(options.output.resolve())

@@ -1,0 +1,4 @@
+# SPDX-FileCopyrightText: 2026 yukunlabs
+# SPDX-License-Identifier: 0BSD
+# Refs: US-34, AC-34.01.
+blank_issues_enabled: false

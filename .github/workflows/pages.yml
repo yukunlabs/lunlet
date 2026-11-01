@@ -1,0 +1,44 @@
+# SPDX-FileCopyrightText: 2026 yukunlabs
+# SPDX-License-Identifier: 0BSD
+# Refs: US-28, AC-28.01, AC-28.03, AC-28.04; US-27, AC-27.04.
+name: Publish product page
+
+# Publishing remains an explicit owner action after the public repository and URLs are reviewed.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.event.repository.private == false && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Check out reviewed source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check page sources
+        run: |
+          python3 scripts/test_site.py
+          python3 scripts/build_site.py --output .tmp/pages
+      - name: Configure Pages
+        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      - name: Upload the built page
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: .tmp/pages
+      - name: Publish after the owner dispatches this workflow
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

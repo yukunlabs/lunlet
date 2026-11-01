@@ -1,0 +1,7 @@
+# Lunlet identity
+
+[Application icon](lunlet-app-icon.png) is the first-release design: full-moon lettering, three stars, moon-white relief, and a soft blue-to-purple background, which the desktop interface extends. Design-iteration numbers are not product versions or UI labels.
+
+Keep the hardware notch unchanged. Connected pearl-blue lun / let lettering flanks the real notch without a black backing. Sparse shoots emerge from the letters and join a slightly thicker, gently spiraling lower vine. Both words respond with coordinated one-shot motion; placement is independent of animation transforms. The outer vine is the same weekly remaining allowance as the expanded bar, with shared colors and proportional 20%/40%/60%/80% marks. Use a native translucent frosted panel with system typography, compact session content, and iris accents. Reduce Motion stops decorative motion; Reduce Transparency uses an opaque adaptive surface.
+
+The icon is generated artwork: the project owner produced it with an AI image generator and adopted it as the project's own artwork. It is packaged as `Resources/Lunlet.icns` at standard macOS sizes, and `lunlet-app-icon.png` is its source. The native entry's lettering and vine are independently drawn vectors in `Sources/LunletDesktop/VineGeometry.swift`; the application uses system typography and native vector rendering rather than a packaged lettering bitmap. No third-party icon pack, font or animation code is bundled. The source render retains its original background and shadow; further optical refinement remains deferred.

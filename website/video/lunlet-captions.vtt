@@ -1,0 +1,50 @@
+WEBVTT
+
+NOTE
+SPDX-FileCopyrightText: 2026 yukunlabs
+SPDX-License-Identifier: 0BSD
+
+00:00:00.600 --> 00:00:03.600
+Lunlet sits beside your Mac's notch while your coding agents work.
+
+00:00:04.300 --> 00:00:06.800
+Each vine strand shows one agent's weekly allowance left.
+
+00:00:07.400 --> 00:00:11.800
+When a turn starts or finishes, a short island grows from the notch.
+
+00:00:13.200 --> 00:00:17.000
+Open the panel right after, and it shows that conversation.
+
+00:00:18.600 --> 00:00:22.600
+Hover the limits for the weekly trend, an estimate range and daily usage.
+
+00:00:23.600 --> 00:00:26.700
+The Overview keeps each agent's limits apart and adds up recorded usage.
+
+00:00:26.800 --> 00:00:30.000
+Hover a day for each agent's tokens. Cost is an API-price estimate, never a bill.
+
+00:00:30.300 --> 00:00:34.400
+Claude Code shows its session and weekly limits, today's tokens and its sessions.
+
+00:00:34.800 --> 00:00:37.200
+Click anywhere else, and it folds back into the notch.
+
+00:00:37.800 --> 00:00:40.400
+Send the next prompt, and the island shows the new turn has started.
+
+00:00:40.900 --> 00:00:43.500
+Lock your Mac and step away while the turn keeps running.
+
+00:00:44.900 --> 00:00:47.500
+When it finishes, Lunlet sends a short notice to your own Feishu, Slack or Telegram bot.
+
+00:00:48.400 --> 00:00:52.200
+The notice names the project, the agent and the session, with a summary and a reply box.
+
+00:00:52.600 --> 00:00:56.300
+One reply from your phone continues that same session. Approvals always stay on your Mac.
+
+00:00:57.200 --> 00:00:59.000
+Lunlet — A little closer to your flow

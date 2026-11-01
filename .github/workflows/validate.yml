@@ -1,0 +1,50 @@
+# SPDX-FileCopyrightText: 2026 yukunlabs
+# SPDX-License-Identifier: 0BSD
+# Refs: US-27, AC-27.02, AC-27.03; US-28, AC-28.02, AC-28.03; US-10, AC-10.04; US-11, AC-11.05.
+# Refs: US-02, AC-02.01, AC-02.05.
+name: Validate
+
+# Local preparation only. No automatic publication, signed artifacts or credentials.
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    # Standard runners are free for public repositories. In a private repository only an
+    # explicit manual run consumes the account's included macOS minutes; pushes and pull
+    # requests stay local until the minute/storage budget is reviewed.
+    if: github.event.repository.private == false || github.event_name == 'workflow_dispatch'
+    runs-on: macos-26
+    timeout-minutes: 15
+    steps:
+      - name: Check out the selected revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Record toolchain and resolve the pinned dependencies
+        run: |
+          swift --version
+          sw_vers
+          swift package resolve --disable-keychain
+          git diff --exit-code -- Package.resolved
+      - name: Verify application modules
+        run: scripts/test-core.sh all
+      - name: Verify requirements and product-page sources
+        run: |
+          python3 scripts/test_traceability.py
+          python3 scripts/check_traceability.py
+          python3 -m unittest discover -s scripts -p test_site.py
+          python3 -m unittest discover -s scripts -p test_release.py
+          node --check website/app.js
+          python3 scripts/build_site.py
+          git diff --check

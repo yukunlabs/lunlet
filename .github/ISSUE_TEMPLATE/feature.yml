@@ -1,0 +1,28 @@
+# SPDX-FileCopyrightText: 2026 yukunlabs
+# SPDX-License-Identifier: 0BSD
+# Refs: US-34, AC-34.01.
+name: Feature request
+description: Propose a user outcome for Lunlet
+title: "[Feature] "
+body:
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Who needs this, and why?
+      description: Describe the user goal and benefit. An Issue does not confirm a product story.
+    validations:
+      required: true
+  - type: textarea
+    id: scenario
+    attributes:
+      label: Example scenario
+      description: What would the user do, and what result would show this works?
+    validations:
+      required: true
+  - type: textarea
+    id: boundaries
+    attributes:
+      label: Relevant boundaries
+      description: Mention affected agents, macOS versions, messaging channels, privacy or approval rules.
+    validations:
+      required: false
