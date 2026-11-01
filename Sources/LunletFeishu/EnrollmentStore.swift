@@ -18,14 +18,96 @@ public extension EnrollmentStoring {
     func authorizeSavedEnrollment() async throws -> FeishuEnrollment? { try await load() }
 }
 
-/// Encodes the Feishu registration record on top of the shared secure item store.
-public struct EnrollmentStore: EnrollmentStoring {
-    private struct Record: Codable, Sendable {
-        let applicationID: String
-        let ownerID: String
-        let secret: String
-        let isLark: Bool
+/// The enrollment record both stores keep: the registration fields, never a tenant binding.
+struct EnrollmentRecord: Codable, Sendable {
+    let applicationID: String
+    let ownerID: String
+    let secret: String
+    let isLark: Bool
+
+    static func encode(_ enrollment: FeishuEnrollment) throws -> Data {
+        let record = EnrollmentRecord(applicationID: enrollment.applicationID, ownerID: enrollment.scannedOwnerID,
+                                      secret: enrollment.secret, isLark: enrollment.isLark)
+        let data = try JSONEncoder().encode(record)
+        guard data.count <= 65_536 else { throw SecureStorageFailure(status: errSecParam) }
+        return data
     }
+    static func decode(_ data: Data?) throws -> FeishuEnrollment? {
+        guard let data else { return nil }
+        guard data.count <= 65_536, let record = try? JSONDecoder().decode(EnrollmentRecord.self, from: data),
+              !record.applicationID.isEmpty, !record.ownerID.isEmpty, !record.secret.isEmpty else {
+            throw SecureStorageFailure(status: errSecDecode)
+        }
+        return FeishuEnrollment(applicationID: record.applicationID, scannedOwnerID: record.ownerID,
+                                secret: record.secret, isLark: record.isLark)
+    }
+}
+
+/// The Feishu enrollment in Lunlet's user-only credential file: the store every build uses since 2026-11-01, so
+/// an update of an unsigned build never asks the owner to authorize access again (AC-01.02).
+public struct FileEnrollmentStore: EnrollmentStoring {
+    public static let service = "com.lunlet.feishu"
+    private let items: CredentialFileStore
+
+    public init(directory: URL = CredentialFileStore.standardDirectory) {
+        items = CredentialFileStore(service: Self.service, directory: directory)
+    }
+    public func save(_ enrollment: FeishuEnrollment) async throws {
+        let data = try EnrollmentRecord.encode(enrollment)
+        try await items.perform(.storageSave) { try $0.save(data) }
+    }
+    public func load() async throws -> FeishuEnrollment? {
+        try await items.perform(.storageLoad) { try EnrollmentRecord.decode($0.load()) }
+    }
+    public func remove() async throws {
+        try await items.perform(.storageRemove) { try $0.remove() }
+    }
+}
+
+/// The file store, with an enrollment an earlier build saved in the Keychain moved into it on first use: silently
+/// when this build may still read that item, otherwise through the owner's Authorize access action, once; the
+/// Keychain item is removed after the move. A build without a certificate has no Keychain access and simply has no
+/// earlier enrollment to move.
+public struct MigratingEnrollmentStore: EnrollmentStoring {
+    private let file: any EnrollmentStoring
+    private let legacy: any EnrollmentStoring
+
+    public static func standard() -> MigratingEnrollmentStore {
+        MigratingEnrollmentStore(file: FileEnrollmentStore(), legacy: EnrollmentStore())
+    }
+    public init(file: any EnrollmentStoring, legacy: any EnrollmentStoring) { self.file = file; self.legacy = legacy }
+
+    public func load() async throws -> FeishuEnrollment? {
+        if let current = try await file.load() { return current }
+        return try await move { try await legacy.load() }
+    }
+    public func authorizeSavedEnrollment() async throws -> FeishuEnrollment? {
+        if let current = try await file.load() { return current }
+        return try await move { try await legacy.authorizeSavedEnrollment() }
+    }
+    public func save(_ enrollment: FeishuEnrollment) async throws {
+        try await file.save(enrollment)
+        await forgetLegacy()
+    }
+    public func remove() async throws {
+        try await file.remove()
+        await forgetLegacy()
+    }
+    private func move(_ read: () async throws -> FeishuEnrollment?) async throws -> FeishuEnrollment? {
+        let saved: FeishuEnrollment?
+        do { saved = try await read() } catch EnrollmentIdentityFailure.certificateRequired { return nil }
+        guard let saved else { return nil }
+        try await file.save(saved)
+        await forgetLegacy()
+        return saved
+    }
+    /// A Keychain item that cannot be removed silently is left alone; it is never read again once the file exists.
+    private func forgetLegacy() async { try? await legacy.remove() }
+}
+
+/// Encodes the Feishu registration record on top of the shared Keychain item store. Kept for a release with a stable
+/// signing identity and as the source of enrollments saved before the credential file.
+public struct EnrollmentStore: EnrollmentStoring {
 
     private let items: SecureItemStore
 
@@ -45,17 +127,12 @@ public struct EnrollmentStore: EnrollmentStoring {
 
     /// Registration credentials are pending setup, not a verified tenant binding.
     public func save(_ enrollment: FeishuEnrollment) async throws {
-        let record = Record(applicationID: enrollment.applicationID, ownerID: enrollment.scannedOwnerID,
-                            secret: enrollment.secret, isLark: enrollment.isLark)
-        try await items.perform(.storageSave) { access in
-            let data = try JSONEncoder().encode(record)
-            guard data.count <= 65_536 else { throw SecureStorageFailure(status: errSecParam) }
-            try access.save(data)
-        }
+        let data = try EnrollmentRecord.encode(enrollment)
+        try await items.perform(.storageSave) { try $0.save(data) }
     }
 
     public func load() async throws -> FeishuEnrollment? {
-        try await items.perform(.storageLoad) { try Self.decode($0.load()) }
+        try await items.perform(.storageLoad) { try EnrollmentRecord.decode($0.load()) }
     }
 
     /// Called only by the owner's explicit authorization action. Background
@@ -65,7 +142,7 @@ public struct EnrollmentStore: EnrollmentStoring {
     public func authorizeSavedEnrollment() async throws -> FeishuEnrollment? {
         try await items.perform(.storageLoad, interactionAllowed: true) { access in
             let data = try access.load()
-            let enrollment = try Self.decode(data)
+            let enrollment = try EnrollmentRecord.decode(data)
             if let data, enrollment != nil { try access.reown(data) }
             return enrollment
         }
@@ -73,15 +150,5 @@ public struct EnrollmentStore: EnrollmentStoring {
 
     public func remove() async throws {
         try await items.perform(.storageRemove) { try $0.remove() }
-    }
-
-    private static func decode(_ data: Data?) throws -> FeishuEnrollment? {
-        guard let data else { return nil }
-        guard data.count <= 65_536, let record = try? JSONDecoder().decode(Record.self, from: data),
-              !record.applicationID.isEmpty, !record.ownerID.isEmpty, !record.secret.isEmpty else {
-            throw SecureStorageFailure(status: errSecDecode)
-        }
-        return FeishuEnrollment(applicationID: record.applicationID, scannedOwnerID: record.ownerID,
-                                secret: record.secret, isLark: record.isLark)
     }
 }

@@ -31,7 +31,7 @@ Reference: [Telegram Bot API](https://core.telegram.org/bots/api).
 
 ## Saved access and recovery
 
-Tokens and paired recipients are stored in macOS Keychain, separately for each service; exported settings contain only the selected channel. Background reads stay silent. Only Authorize access may open a system access prompt. Development previews may require the owner to authorize each changing build; normal distribution still requires stable certificate signing.
+Tokens and paired recipients are stored on this Mac in `~/Library/Application Support/com.lunlet/credentials`, one file per service that only your user account can read; exported settings contain only the selected channel. Updates and rebuilds never ask for authorization. A connection that an earlier build saved in the Keychain is moved into the file on first use; if that build may not read it silently, Authorize access moves it once and the Keychain item is removed.
 
 Check authorization validates the saved bot identity without sending a message. Global Refresh includes this check for the selected sender. Disconnect stops notifications and removes only that local saved connection; the provider application remains yours.
 

@@ -188,7 +188,8 @@ Validation order: (1) terminal-independent identification and continuation of ex
 ### Current state
 
 - Diagnostics use native macOS unified logging under subsystem `com.lunlet`, with typed metadata and no arbitrary strings, plus the bounded local error file of AC-14.07; there are no clear controls, report export or telemetry (US-14). A refused reply logs `sessionInput rejected` with the refusal's reason and the refusing stage; a live-binding refusal also logs `sessionBinding rejected` naming the failed check, and a live session that becomes unverifiable logs `sessionObservation uncertain`.
-- Bundle, signing and log identifiers use `com.lunlet`; new Keychain writes use `com.lunlet.feishu`, and the previous service string is used only for fallback reads and explicit removal.
+- Credentials live in `~/Library/Application Support/com.lunlet/credentials/<service>.json`, one file per former Keychain service, in a directory created with mode 0700 and files written with mode 0600 from their first byte and moved into place atomically; a file found wider than user-only is narrowed before it is read, and files over 64 KB are refused. Decided on 2026-11-01 so that updates of an unsigned build never ask for authorization (see the spike below). Any process running as the user can read these files, as it can read Codex's own credential file.
+- Bundle, signing and log identifiers use `com.lunlet`. The Keychain store remains in the code for a later signed release and as the source of credentials saved before the file: on first use they are moved into the file, silently when the build may still read them and otherwise through Authorize access once, and the Keychain item is then removed. New Keychain writes, when that store is used, go to `com.lunlet.feishu`; the previous service string is used only for fallback reads and explicit removal.
 - The store checks its own signature before any credential operation and uses a serialized, scoped legacy no-interaction policy. Normal builds require `LUNLET_CODE_SIGN_IDENTITY`; previews may be signed with a local development certificate or ad hoc, read silently and prompt only from the owner's Authorize access action, after which the saved item is re-created under the running build so relaunches of that binary stay silent.
 
 ### Verified
@@ -199,7 +200,7 @@ Validation order: (1) terminal-independent identification and continuation of ex
 
 ### Open gates
 
-- Credential continuity across two Developer ID-signed versions on a clean Mac, and access to legacy entries under a changed signed identity; with a Team ID, the data-protection keychain with an access group is an option to evaluate. Deferred with signing itself (owner decision 2026-11-01): the unsigned preview re-owns the saved item after one authorization click per update, which the clean-machine update test confirms.
+- Credential continuity across a real update on a clean Mac now means the credential file surviving the update untouched, which the clean-machine update test confirms. Keychain continuity across two Developer ID-signed versions, and the data-protection keychain with an access group, are evaluated only if a signed release returns to the Keychain store.
 - Opt-in diagnostics checks on the device.
 
 ## Performance and resources
@@ -231,7 +232,7 @@ Validation order: (1) terminal-independent identification and continuation of ex
 ### Open gates
 
 - Owner decisions: final artwork, branding and privacy-claim review; release and product-page destinations; Developer Program membership; the optional support destination and recipient. The 0BSD license, yukunlabs copyright identity and SPDX metadata are present, pending final publication review.
-- An EdDSA update key, a published appcast and a real update between two versions on a clean Mac, with the first-open steps and the one authorization click of an unsigned preview recorded; Developer ID signing and notarization deferred by owner decision; keyboard acceptance of the product page.
+- An EdDSA update key, a published appcast and a real update between two versions on a clean Mac, with the first-open steps of an unsigned preview recorded and the saved bot connection confirmed intact afterwards; Developer ID signing and notarization deferred by owner decision; keyboard acceptance of the product page.
 
 ## Assisted acceptance checklist
 

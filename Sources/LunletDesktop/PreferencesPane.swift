@@ -239,8 +239,8 @@ struct PreferencesPane: View {
                 fact("Includes", "SwiftProtobuf · Apache-2.0\nSparkle · MIT",
                      help: "Their licenses, including those of the code Sparkle bundles, and Lunlet's notices ship inside "
                         + "the application bundle.")
-                fact("Privacy", "Runs on this Mac with no analytics. Credentials stay in Keychain; notices go only to the "
-                     + "channel you set up.")
+                fact("Privacy", "Runs on this Mac with no analytics. Credentials stay on this Mac in a file only your user "
+                     + "can read; notices go only to the channel you set up.")
             }
             .font(Font.subheadline)
             // Present only in a configured release build (AC-35.03, AC-35.04).

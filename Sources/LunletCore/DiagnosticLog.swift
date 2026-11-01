@@ -14,7 +14,7 @@ public struct DiagnosticOperation: Sendable {
 }
 
 public enum DiagnosticComponent: String, Sendable {
-    case app, feishu, slack, telegram, codex, claude, continuation, keychain, power, updates
+    case app, feishu, slack, telegram, codex, claude, continuation, keychain, credentials, power, updates
 }
 public enum DiagnosticEvent: String, Sendable {
     case startup, shutdown, sessionObservation, registration, authentication, endpointDiscovery, connection, reconnect

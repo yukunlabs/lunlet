@@ -57,7 +57,7 @@ fi
 lunlet_signature=$(/usr/bin/codesign -d --verbose=4 "$lunlet_app" 2>&1)
 if [ "$lunlet_unsigned" = 1 ]; then
     # An unsigned preview is exactly an ad hoc signature: no certificate, no team, no notarization to validate. Its
-    # release notes carry the first-open steps and the authorization click after each update (AC-27.05).
+    # release notes carry the first-open steps (AC-27.05).
     if ! printf '%s\n' "$lunlet_signature" | /usr/bin/grep -q '^Signature=adhoc$' ||
        printf '%s\n' "$lunlet_signature" | /usr/bin/grep -q '^Authority='; then
         printf '%s\n' 'An unsigned preview release must carry an ad hoc signature and no certificate.' >&2; exit 2

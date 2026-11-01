@@ -35,7 +35,7 @@ import LunletSecureStorage
     private var revision = UUID()
     private var closed = false
 
-    init(storeFactory: @escaping @Sendable (BotChannel) throws -> any ChannelCredentialStoring = { ChannelCredentialStore(channel: $0) },
+    init(storeFactory: @escaping @Sendable (BotChannel) throws -> any ChannelCredentialStoring = { MigratingChannelCredentialStore.standard(channel: $0) },
          clientFactory: @escaping @Sendable (BotCredentials) -> any ChannelBotClient = BotClientFactory.client) {
         self.storeFactory = storeFactory; self.clientFactory = clientFactory
     }

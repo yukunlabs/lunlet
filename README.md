@@ -41,7 +41,7 @@ scripts/build-app.sh --preview
 open .tmp/Lunlet.app
 ```
 
-`--preview` produces an ad hoc–signed build for your own Mac. Because a preview is identified by its binary, macOS asks you to authorize access to the saved bot connection once after each build that changed code (Settings › Authorize access); relaunching the same build does not ask again. The downloadable preview is also signed ad hoc, so macOS asks to allow it on first open and asks once to authorize the saved bot connection after each update; a Developer ID-signed release would keep that access across updates and is a later step. See [release preparation](docs/releases.md). To connect a messaging bot, follow [messaging setup](docs/messaging.md).
+`--preview` produces an ad hoc–signed build for your own Mac. The downloadable preview is also signed ad hoc, so macOS asks to allow it on first open; updates ask for nothing, because your bot connection is kept in a file only your user can read rather than in the Keychain. A Developer ID-signed, notarized release is a later step. See [release preparation](docs/releases.md). To connect a messaging bot, follow [messaging setup](docs/messaging.md).
 
 ## Privacy
 
@@ -50,7 +50,7 @@ open .tmp/Lunlet.app
 - A completion notice, sent only while the Mac is locked and a bot is paired, goes through that messaging provider to your private chat. It carries the project, agent and session title, an excerpt of your latest request (about 140 characters) and the agent's final reply, shortened only to fit the messenger. Secret-looking values and hidden reasoning are removed and home folders shortened, but no filter catches everything; tool output and the rest of the conversation are never sent.
 - Codex limits come from Codex's own account interface on this Mac. Claude Code limits come only from Lunlet's status line in Claude Code, added while Claude Code is selected and removed, restoring your previous one, when you turn Claude Code off; the account email and plan come from Claude Code's local profile. Lunlet never reads Claude Code login credentials.
 - A reply from Feishu, Slack or Telegram is passed to that session's own Codex with `codex queue` and only after Lunlet confirms the session is still open and idle; the session keeps its sandbox and approval settings. The reply text is briefly visible to your other processes as a command argument.
-- Messaging credentials are stored in the macOS Keychain.
+- Messaging credentials are stored on your Mac in `~/Library/Application Support/com.lunlet/credentials`, in files only your user account can read (not in the Keychain, so updates never ask for authorization); any program running as you could read them, as it could read Codex's own credential file.
 - Errors are also kept in a small local log at `~/Library/Logs/Lunlet` (no content or identifiers, at most about 512 KB, never uploaded); Settings › About shows it in Finder.
 - Release builds check for updates about once a day with [Sparkle](https://sparkle-project.org); the request identifies only Lunlet's and Sparkle's versions, with no system profile, and nothing is downloaded until you choose Install. Turn the checks off in Settings › About. `--preview` builds never check.
 

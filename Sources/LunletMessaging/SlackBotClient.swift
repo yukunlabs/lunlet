@@ -145,6 +145,19 @@ public actor SlackBotClient: ChannelReplyClient {
             if let socketFactory { socket = try await socketFactory(endpoint) }
             else { socket = try await http.openSocket(endpoint) }
             pairingSocket = socket
+            // The socket this attempt opened closes with the attempt however it ends: the pairing's own close or its
+            // expiry may have run while the socket was still being opened, and must not leave it behind (AC-12.02).
+            do { try await listenForPairing(on: socket, challenge, identity: identity, id: id, seen: &seenEnvelopes) }
+            catch { pairingSocket = nil; await socket.close(); throw error }
+            if let binding = pairingResult { pairingResult = nil; return binding }
+        }
+        throw BotChannelFailure.unavailable
+    }
+    /// The binding `listenForPairing` found, handed back outside its closing scope.
+    private var pairingResult: BotBinding?
+
+    private func listenForPairing(on socket: any ChannelSocket, _ challenge: PairingChallenge, identity: Prepared, id: UUID,
+                                  seen seenEnvelopes: inout Set<String>) async throws {
             try ensurePairing(challenge, id: id)
             let hello = try Self.object(await socket.receive())
             guard hello["type"] as? String == "hello",
@@ -159,7 +172,7 @@ public actor SlackBotClient: ChannelReplyClient {
                     guard let reason = frame["reason"] as? String,
                           ["warning", "refresh_requested"].contains(reason) else { throw BotChannelFailure.unavailable }
                     await closePairingSocket(id)
-                    break
+                    return
                 }
                 guard let envelope = frame["envelope_id"] as? String, !envelope.isEmpty, envelope.utf8.count <= 256,
                       !envelope.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains) else {
@@ -184,12 +197,11 @@ public actor SlackBotClient: ChannelReplyClient {
                       let timestamp = event["ts"] as? String, let seconds = Self.timestamp(timestamp),
                       seconds >= floor(challenge.createdAt.timeIntervalSince1970), seconds <= now().timeIntervalSince1970 else { continue }
                 try ensurePairing(challenge, id: id)
-                return BotBinding(channel: .slack, botID: identity.identity.id, botName: identity.identity.name,
-                                  ownerID: user, chatID: channel, workspaceID: identity.identity.workspaceID,
-                                  applicationID: identity.identity.applicationID)
+                pairingResult = BotBinding(channel: .slack, botID: identity.identity.id, botName: identity.identity.name,
+                                           ownerID: user, chatID: channel, workspaceID: identity.identity.workspaceID,
+                                           applicationID: identity.identity.applicationID)
+                return
             }
-        }
-        throw BotChannelFailure.unavailable
     }
 
     public func sendCompletion(_ snapshot: SessionSnapshot, binding: BotBinding, reply: NoticeReplyState?) async throws -> BotMessageReceipt {
