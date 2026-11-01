@@ -126,7 +126,8 @@ def main(argv=None):
         failed = failed or severity == "error"
         if not options.quiet:
             # The GitHub Actions annotation form is also a plain readable line locally.
-            print("::" + severity + " file=" + kind["manifest"] + "::The " + kind["name"] + " were rendered from other sources; run "
+            print("::" + severity + " file=" + kind["manifest"] + "::The " + kind["name"] + (" were" if kind is STILLS else " was")
+                  + " rendered from other sources; run "
                   + kind["render"] + " and commit the result. " + "; ".join(stale[:12])
                   + (" (and " + str(len(stale) - 12) + " more)" if len(stale) > 12 else ""))
     return 1 if failed else 0

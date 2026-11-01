@@ -62,9 +62,12 @@ struct PanelStyleTests {
     // AC-01.08, AC-20.02: the footer names the state in words and only a verified delivery looks successful.
     @Test func connectionWordsNeverClaimAnUnverifiedConnection() {
         let all: [CompletionDeliveryStatus] = [.unavailable, .ready, .sending, .delivered, .failed]
-        #expect(all.filter { $0.tone == .success } == [.delivered])
-        #expect(all.allSatisfy { !$0.word.localizedCaseInsensitiveContains("connected") || $0 == .unavailable })
-        #expect(CompletionDeliveryStatus.ready.symbol != "circle.dotted" && CompletionDeliveryStatus.failed.tone == .failure)
+        let successes = all.filter { $0.tone == .success }
+        #expect(successes == [.delivered])
+        let sayingConnected = all.filter { $0.word.localizedCaseInsensitiveContains("connected") }
+        #expect(sayingConnected.allSatisfy { $0 == .unavailable })
+        #expect(CompletionDeliveryStatus.ready.symbol != "circle.dotted")
+        #expect(CompletionDeliveryStatus.failed.tone == .failure)
     }
 
     // AC-23.03: a compact age only from a source-reported time.

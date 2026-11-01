@@ -5,7 +5,7 @@
 // Refs: US-02, AC-02.03, AC-02.05, AC-02.08; US-04, AC-04.11, AC-04.13.
 // Refs: US-02, AC-02.07.
 // Refs: US-20, AC-20.03, AC-20.05, AC-20.06.
-// Refs: US-22, AC-22.01, AC-22.02.
+// Refs: US-22, AC-22.01, AC-22.02; US-12, AC-12.04; US-14, AC-14.01.
 // Refs: US-17, AC-17.01, AC-17.02, AC-17.04.
 // Refs: US-18, AC-18.01; US-20, AC-20.01, AC-20.02; US-25, AC-25.02; US-26, AC-26.01.
 // Refs: US-06, AC-06.01, AC-06.05; US-05, AC-05.06.
@@ -221,28 +221,37 @@ import SwiftUI
         updater?.willPresent = nil
         entry.shutdown()
         panel.shutdown(); usageHover.shutdown(); claudeUsageHover.shutdown()
-        // Each finished stage is logged by number, so a quit that stalls names the cleanup it waited on (AC-14.01).
+        // Each stage is logged by number as it finishes, or as `uncertain` with `timeout` when it overran its bound,
+        // so a quit never waits on a provider or a socket and the log names the cleanup that stalled (AC-12.04,
+        // AC-14.01). An overrunning stage keeps finishing in the background while the next one starts.
         let operation = DiagnosticOperation()
-        func reached(_ stage: Int) {
-            DiagnosticLog.record(.shutdown, component: .app, outcome: .processing, operation: operation, code: stage)
+        func stage(_ number: Int, _ body: @escaping @MainActor () async -> Void) async {
+            let work = Task { await body() }
+            let finished = await BoundedWait.settle(work, limit: Self.shutdownStageLimit)
+            DiagnosticLog.record(.shutdown, component: .app, outcome: finished ? .processing : .uncertain, operation: operation,
+                                 reason: finished ? nil : .timeout, code: number)
         }
         let task = Task {
-            setupLoading?.cancel(); await setupLoading?.value; setupLoading = nil
-            availabilityRefresh?.cancel(); await availabilityRefresh?.value; availabilityRefresh = nil
-            reached(1)
-            await observation.shutdown(); reached(2)
+            await stage(1) {
+                self.setupLoading?.cancel(); await self.setupLoading?.value; self.setupLoading = nil
+                self.availabilityRefresh?.cancel(); await self.availabilityRefresh?.value; self.availabilityRefresh = nil
+            }
+            await stage(2) { await self.observation.shutdown() }
             setup.checkAuthorizationAction = nil
-            await botSetup.shutdown(); savedBotEnrollment = nil; reached(3)
-            await notifications.shutdown(); savedEnrollment = nil; reached(4)
+            await stage(3) { await self.botSetup.shutdown(); self.savedBotEnrollment = nil }
+            await stage(4) { await self.notifications.shutdown(); self.savedEnrollment = nil }
             sessions.shutdown()
             cues.shutdown()
-            await away.shutdown(); reached(5)
-            await usage.shutdown(); reached(6)
-            await history.shutdown(); await claudeHistory.shutdown(); reached(7)
-            await claudeLimits.shutdown(); reached(8)
-            await setup.shutdown(); reached(9)
+            await stage(5) { await self.away.shutdown() }
+            await stage(6) { await self.usage.shutdown() }
+            await stage(7) { await self.history.shutdown(); await self.claudeHistory.shutdown() }
+            await stage(8) { await self.claudeLimits.shutdown() }
+            await stage(9) { await self.setup.shutdown() }
         }
         closing = task
         await task.value
     }
+    /// A cleanup stage's share of the quit. Nine stages never reach the application's termination watchdog together
+    /// unless several stall at once, and one stalled stage delays the quit by this much, not indefinitely.
+    private static let shutdownStageLimit: Duration = .seconds(2)
 }

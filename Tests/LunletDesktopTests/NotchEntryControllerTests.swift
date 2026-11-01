@@ -107,7 +107,8 @@ import LunletCore
         #expect(abs(window.frame.midX - notch.midX) < 1)
         #expect(window.frame.width == notch.width + 104)
         let mark = try #require(window.contentView as? LettermarkView)
-        #expect(mark.layer?.sublayers?.filter { $0.name == "lun" || $0.name == "let" }.count == 2)
+        let words = mark.layer?.sublayers?.filter { $0.name == "lun" || $0.name == "let" } ?? []
+        #expect(words.count == 2)
         companion.entryHoverChanged(true, on: screen)
         available = false; entry.refresh()
         try await Task.sleep(for: .milliseconds(300))
