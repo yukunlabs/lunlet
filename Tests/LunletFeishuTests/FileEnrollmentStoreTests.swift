@@ -47,10 +47,11 @@ struct FileEnrollmentStoreTests {
         #expect(try await store.load() == replacement)
         try await store.remove()
         #expect(try await store.load() == nil)
-        // The file holds the record, nothing else, under the Keychain service's name.
+        // The file is the sealed envelope under the Keychain service's name; the secret is not in it in the clear.
         try await store.save(enrollment)
         let saved = try Data(contentsOf: directory.appendingPathComponent(FileEnrollmentStore.service + ".json"))
-        #expect(String(decoding: saved, as: UTF8.self).contains("\"secret\":\"synthetic-secret\""))
+        #expect(!String(decoding: saved, as: UTF8.self).contains("synthetic-secret"))
+        #expect((try JSONSerialization.jsonObject(with: saved) as? [String: Any])?["format"] as? String == "com.lunlet.credential-envelope")
     }
 
     @Test func aReadableKeychainEnrollmentMovesIntoTheFileSilentlyAndOnce() async throws {

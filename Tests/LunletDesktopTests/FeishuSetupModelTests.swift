@@ -187,6 +187,20 @@ private actor DeniedEnrollmentStorage: EnrollmentStoring {
     }
 }
 
+// A credential file sealed for another Mac or user account (AC-01.02) is not an access denial: no Authorize access,
+// and the message names removal and a new connection as the way out.
+@Test @MainActor func aFileSealedElsewhereIsReportedAsUnreadableHereNotAsAccessDenied() async {
+    let storage = DeniedEnrollmentStorage(status: -26275)  // errSecDecode
+    let model = FeishuSetupModel(store: storage)
+    await model.load()
+    guard case .failed(let message) = model.state else { Issue.record("An unreadable file stays unavailable"); return }
+    #expect(message.contains("cannot be opened on this Mac"))
+    #expect(message.contains("connect again"))
+    #expect(!model.accessRequired)
+    #expect(model.retryTitle == "Try again")
+    await model.shutdown()
+}
+
 
 private actor DelayedDeniedStorage: EnrollmentStoring {
     private(set) var loads = 0

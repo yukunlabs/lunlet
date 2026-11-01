@@ -5,14 +5,19 @@ import Foundation
 import LunletCore
 import Security
 
-/// Credentials in a file only the current user can read, under Lunlet's Application Support directory.
+/// Credentials in a file only the current user can read, under Lunlet's Application Support directory, sealed
+/// with a key bound to this Mac and user account (`CredentialBinding`).
 ///
 /// Chosen over the Keychain on 2026-11-01 for the unsigned preview release: the Keychain pins an item to the code
 /// hash of the build that saved it, so every update of an unsigned build would ask the owner to authorize access
-/// again, while a user-only file follows the user. Any process running as that user can read the file, as it can
-/// read Codex's own credential file; the Keychain store stays available for a release with a stable signing identity.
+/// again, while a user-only file follows the user. The sealing keeps tokens out of copies, backups and scans; a
+/// process running as that user can still derive the key, as it can read Codex's own credential file. The
+/// Keychain store stays available for a release with a stable signing identity.
 public struct CredentialFileStore: Sendable {
+    /// The largest payload a caller may save.
     public static let maximumBytes = 65_536
+    /// The largest file that is read: a sealed payload of `maximumBytes` with its header, and nothing larger.
+    public static let maximumFileBytes = 131_072
     /// `~/Library/Application Support/com.lunlet/credentials`, created with user-only permissions on first save.
     public static var standardDirectory: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -20,10 +25,12 @@ public struct CredentialFileStore: Sendable {
     }
     let directory: URL
     let service: String
+    let binding: CredentialBinding
 
-    public init(service: String, directory: URL = CredentialFileStore.standardDirectory) {
+    public init(service: String, directory: URL = CredentialFileStore.standardDirectory,
+                binding: CredentialBinding = .machine) {
         precondition(!service.isEmpty && !service.contains("/"), "A credential file needs a plain service name")
-        self.service = service; self.directory = directory.standardizedFileURL
+        self.service = service; self.directory = directory.standardizedFileURL; self.binding = binding
     }
     /// One file per service, named like the Keychain service it replaces.
     public var file: URL { directory.appendingPathComponent(service + ".json", isDirectory: false) }
@@ -31,7 +38,7 @@ public struct CredentialFileStore: Sendable {
     /// Runs `body` on the shared credential queue with the same diagnostics as the Keychain store (AC-14.01).
     public func perform<T: Sendable>(_ event: DiagnosticEvent,
                                      _ body: @escaping @Sendable (CredentialFileAccess) throws -> T) async throws -> T {
-        let access = CredentialFileAccess(file: file, directory: directory)
+        let access = CredentialFileAccess(file: file, directory: directory, service: service, binding: binding)
         return try await CredentialFileQueue.run {
             let operation = DiagnosticOperation()
             DiagnosticLog.record(event, component: .credentials, outcome: .started, operation: operation)
@@ -53,28 +60,45 @@ public struct CredentialFileStore: Sendable {
 public struct CredentialFileAccess: Sendable {
     let file: URL
     let directory: URL
+    let service: String
+    let binding: CredentialBinding
 
-    /// The saved bytes, or nil when nothing is saved. A file that grew wider than user-only is narrowed before
-    /// reading; an oversize file is rejected for its owner to replace.
+    /// The saved payload, or nil when nothing is saved. A file that grew wider than user-only is narrowed before
+    /// reading; an oversize file, one that is not a JSON document, or a sealed file this Mac and user cannot open
+    /// (copied from elsewhere, renamed or edited) is refused with `errSecDecode` for its owner to replace.
     public func load() throws -> Data? {
         guard FileManager.default.fileExists(atPath: file.path) else { return nil }
         try Self.restrict(file, to: 0o600)
         let size = (try? FileManager.default.attributesOfItem(atPath: file.path))?[.size] as? Int ?? 0
-        guard size <= CredentialFileStore.maximumBytes else { throw SecureStorageFailure(status: errSecDecode) }
-        do { return try Data(contentsOf: file) } catch { throw SecureStorageFailure(status: errSecIO) }
+        guard size <= CredentialFileStore.maximumFileBytes else { throw SecureStorageFailure(status: errSecDecode) }
+        let bytes: Data
+        do { bytes = try Data(contentsOf: file) } catch { throw SecureStorageFailure(status: errSecIO) }
+        guard let object = (try? JSONSerialization.jsonObject(with: bytes)) as? [String: Any] else {
+            throw SecureStorageFailure(status: errSecDecode)
+        }
+        if CredentialEnvelope.isEnvelope(object) { return try CredentialEnvelope.open(object, service: service, binding: binding) }
+        // A build before the sealing wrote the payload in the clear: it is read once and sealed in place. A failed
+        // rewrite is logged and keeps the file readable; the next save seals it.
+        guard bytes.count <= CredentialFileStore.maximumBytes else { throw SecureStorageFailure(status: errSecDecode) }
+        do { try save(bytes) } catch {
+            DiagnosticLog.record(.storageSave, component: .credentials, outcome: .failed, operation: DiagnosticOperation(),
+                                 reason: .storage, code: (error as? SecureStorageFailure).map { Int($0.status) })
+        }
+        return bytes
     }
 
-    /// Writes the bytes beside the file with user-only permissions from the first byte, then moves them into place
-    /// atomically, so no reader ever sees a partial file or a wider-readable one.
+    /// Seals the payload for this Mac and user, writes it beside the file with user-only permissions from the first
+    /// byte, then moves it into place atomically, so no reader ever sees a partial file or a wider-readable one.
     public func save(_ data: Data) throws {
         guard !data.isEmpty, data.count <= CredentialFileStore.maximumBytes else { throw SecureStorageFailure(status: errSecParam) }
+        let sealed = try CredentialEnvelope.seal(data, service: service, binding: binding)
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
                                                     attributes: [.posixPermissions: 0o700])
             try Self.restrict(directory, to: 0o700)
         } catch let failure as SecureStorageFailure { throw failure } catch { throw SecureStorageFailure(status: errSecIO) }
         let temporary = directory.appendingPathComponent("." + file.lastPathComponent + "." + UUID().uuidString + ".tmp")
-        guard FileManager.default.createFile(atPath: temporary.path, contents: data, attributes: [.posixPermissions: 0o600]) else {
+        guard FileManager.default.createFile(atPath: temporary.path, contents: sealed, attributes: [.posixPermissions: 0o600]) else {
             throw SecureStorageFailure(status: errSecIO)
         }
         guard rename(temporary.path, file.path) == 0 else {

@@ -32,6 +32,7 @@ import LunletSecureStorage
     private var pairingClient: (any ChannelBotClient)?
     private var pendingSave: BotEnrollment?
     private var cleanup: [Task<Void, Never>] = []
+    private var sealing: Task<Void, Never>?
     private var revision = UUID()
     private var closed = false
 
@@ -49,6 +50,16 @@ import LunletSecureStorage
     func reload() {
         guard !closed, operation == nil, let channel else { return }
         load(channel, authorized: false)
+    }
+    /// Reads every channel's saved connection once, apart from the card's state, so a file an earlier build wrote in
+    /// the clear is sealed in place even for a channel that is not selected (AC-01.02). Nothing is prompted, retried
+    /// or reported; the selected channel's own load shows its state.
+    func sealSavedConnections() {
+        guard !closed, sealing == nil else { return }
+        let factory = storeFactory
+        sealing = Task.detached(priority: .utility) {
+            for channel in BotChannel.allCases where !Task.isCancelled { _ = try? await factory(channel).load() }
+        }
     }
     func authorize() {
         guard !closed, state == .accessRequired, operation == nil, let channel else { return }
@@ -183,6 +194,10 @@ import LunletSecureStorage
         else if (error as? SecureStorageFailure)?.requiresOwnerAuthorization == true {
             state = .accessRequired
             issue = "This build needs your permission to read the saved connection. Authorize it, or clear it and paste the token again."
+        } else if (error as? SecureStorageFailure)?.unreadableOnThisMac == true {
+            state = .failed; reloadAvailable = true
+            issue = "The saved connection cannot be opened on this Mac; it may have been copied from another Mac or user "
+                + "account. Clear it and paste the token again."
         } else {
             state = .failed; reloadAvailable = true
             issue = "The connection could not be saved or restored. Your existing credentials were kept."
@@ -203,6 +218,8 @@ import LunletSecureStorage
     func shutdown() async {
         guard !closed else { return }
         invalidate(); closed = true
+        sealing?.cancel()
+        if let sealing { await sealing.value }
         for task in cleanup { await task.value }
         cleanup.removeAll(); pendingSave = nil; challenge = nil; binding = nil
         draftBotToken = ""; draftAppToken = ""

@@ -18,6 +18,9 @@ public struct SecureStorageFailure: Error, Equatable, Sendable {
     public var requiresOwnerAuthorization: Bool {
         [errSecUserCanceled, errSecAuthFailed, errSecInteractionNotAllowed, errSecInteractionRequired].contains(status)
     }
+    /// The saved file cannot be opened by this Mac and user account (copied from elsewhere, renamed or edited);
+    /// only removing it and connecting again helps, never authorization or a retry.
+    public var unreadableOnThisMac: Bool { status == errSecDecode }
 }
 
 /// One generic-password item per service in the file-based, non-synchronizing Keychain.

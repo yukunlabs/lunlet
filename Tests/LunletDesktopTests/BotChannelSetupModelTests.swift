@@ -145,6 +145,38 @@ private actor SetupBotFixture: ChannelBotClient {
             await model.shutdown()
         }
     }
+    @Test func aFileSealedElsewhereIsReportedAsUnreadableHereNotAsAccessDenied() async {
+        let store = SetupCredentialFixture()
+        await store.save(Data("{}".utf8))
+        await store.deny(errSecDecode)
+        let model = BotChannelSetupModel(storeFactory: { _ in store }, clientFactory: { SetupBotFixture($0.channel) })
+        model.select(.slack)
+        await wait { model.state == .failed }
+        #expect(model.issue?.contains("cannot be opened on this Mac") == true)
+        #expect(model.issue?.contains("paste the token again") == true)
+        #expect(await store.authorizations == 0)
+        await model.shutdown()
+    }
+    // A file an earlier build wrote in the clear is sealed when it is read (AC-01.02); reading every channel's saved
+    // connection once at start covers the channel that is not selected, without touching the card's state.
+    @Test func savedConnectionsOfEveryChannelAreReadOnceAtStartSoTheirFilesAreSealed() async throws {
+        let slack = SetupCredentialFixture(), telegram = SetupCredentialFixture()
+        await slack.save(Data("{}".utf8))
+        let model = BotChannelSetupModel(storeFactory: { $0 == .slack ? slack : telegram },
+                                         clientFactory: { SetupBotFixture($0.channel) })
+        model.sealSavedConnections()
+        for _ in 0..<400 {
+            if await slack.loads >= 1, await telegram.loads >= 1 { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(await slack.loads == 1)
+        #expect(await telegram.loads == 1)
+        #expect(await slack.authorizations == 0)
+        #expect(model.state == .disconnected)
+        #expect(model.channel == nil)
+        #expect(model.issue == nil)
+        await model.shutdown()
+    }
 }
 
 private actor RoutedBotFixture: ChannelReplyClient {
