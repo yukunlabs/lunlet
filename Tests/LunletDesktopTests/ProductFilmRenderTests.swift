@@ -179,6 +179,8 @@ final class FilmWindow: NSWindow {
     let macLock: CGImage, phoneLock: CGImage, phoneBanner: CGImage, phoneChat: CGImage, phoneChatReplied: CGImage, phoneChatDelivered: CGImage
     /// The completion card SessionCard renders for the ending's turn, open and after the reply was delivered.
     let card: FilmNoticeCard, cardDelivered: FilmNoticeCard
+    /// What the entry shows: both agents' allowances and the sessions' compact status.
+    let allowances: [AgentAllowance], sessionStatus: CompactSessionStatus
     private let hosts: [Page: FilmPageHost]
     private let cleanup: () async -> Void
 
@@ -331,9 +333,11 @@ final class FilmWindow: NSWindow {
         entry = LettermarkView(frame: CGRect(origin: .zero, size: entryFrame.size))
         entry.appearance = NSAppearance(named: .darkAqua)
         entry.notchSize = FilmScreen.notch.size
-        entry.setAllowances(NotchEntryController.allowances(providers: [.codex, .claude], codex: 69, claude: limits.limits,
-                                                            claudeConnected: true, now: now))
-        entry.setSessionStatus(.init(snapshots: sessions.sessions, available: true, partial: false))
+        allowances = NotchEntryController.allowances(providers: [.codex, .claude], codex: 69, claude: limits.limits,
+                                                     claudeConnected: true, now: now)
+        sessionStatus = .init(snapshots: sessions.sessions, available: true, partial: false)
+        entry.setAllowances(allowances)
+        entry.setSessionStatus(sessionStatus)
         entry.layoutSubtreeIfNeeded()
         entry.setActive(true); entry.setPose(.finished, replay: true)
         wake = FilmKeyframes(capturing: try #require(entry.layer))
@@ -574,28 +578,30 @@ struct FilmStoryboard {
     }
 
     /// The panel pages shown at `t`, with the pointer when it is over them; macOS hides the pointer while typing, and it
-    /// does not return before the Mac locks.
-    @MainActor func pages(at t: Double) async -> (from: CGImage?, to: CGImage?) {
+    /// does not return before the Mac locks. A still without the pointer shows no hover state either.
+    @MainActor func pages(at t: Double, hover: Bool = true) async -> (from: CGImage?, to: CGImage?) {
         guard panel.visible(t) else { return (nil, nil) }
         let pointer = pointer(at: t), state = page(at: t)
-        let hovering = t < Self.typing.start && world.bodyFrame.contains(pointer) ? pointer : nil
+        let hovering = hover && t < Self.typing.start && world.bodyFrame.contains(pointer) ? pointer : nil
         let from = await world.page(state.from, pointer: hovering)
         return (from, state.amount < 1 ? await world.page(state.to, pointer: hovering) : nil)
     }
 
-    @MainActor func frame(at t: Double, captions: Bool = true) async -> CGImage {
-        let canvas = FilmCanvas()
+    /// One frame. Stills for the product page pass a higher `density`, hide the pointer and may fix the `camera`.
+    @MainActor func frame(at t: Double, captions: Bool = true, density: CGFloat = 1, pointer showPointer: Bool = true,
+                          camera shot: FilmShot? = nil) async -> CGImage {
+        let canvas = FilmCanvas(density: density)
         let context = canvas.context
         let pointer = pointer(at: t)
-        let pointerOnScreen = t < Self.typing.start
+        let pointerOnScreen = showPointer && t < Self.typing.start
         let panelVisible = panel.visible(t)
         let state = page(at: t)
-        let (from, to) = await pages(at: t)
+        let (from, to) = await pages(at: t, hover: showPointer)
         let locked = CGFloat(FilmEasing.smooth((t - Self.lock) / 0.35))
         let asleep = CGFloat(FilmEasing.smooth((t - Self.sleep) / 1.0))
 
         FilmDevice.backdrop(context)
-        canvas.camera(camera(at: t)) {
+        canvas.camera(shot ?? camera(at: t)) {
             FilmDevice.drawLid(canvas)
             context.saveGState(); context.addPath(FilmDevice.screen); context.clip()
             if locked < 1 { drawDesktop(canvas, at: t, panelVisible: panelVisible, from: from, to: to, state: state) }

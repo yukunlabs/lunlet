@@ -35,14 +35,14 @@ Release builds use [Sparkle 2.10.1](https://github.com/sparkle-project/Sparkle/r
 
 ## Product page and optional support
 
-`website/` contains a dependency-free single page with synthetic interaction illustrations. It derives its lettering and palette from Lunlet's native source, uses the selected app icon, supports light/dark and reduced motion, and makes no account/network requests. Its copy distinguishes implemented read-only observation, verified notification delivery and one reply per notice from client workflows that still need on-device validation.
+`website/` contains a dependency-free single page. Every picture on it is a still of Lunlet's real interface with synthetic data: the opt-in [still render](../Tests/LunletDesktopTests/SiteAssetRenderTests.swift) draws them from the film's synthetic world (the display's top with the Overview open, each panel page, the cue island, the phone's notice card before and after a reply, and the entry in each built-in skin), and `scripts/render-site-assets.sh` places them in `docs/assets/screenshots/`, which the README shares. The page uses the selected app icon, supports light/dark and reduced motion, and makes no account/network requests. Its copy distinguishes implemented read-only observation, verified notification delivery and one reply per notice from client workflows that still need on-device validation.
 
 ```sh
 python3 scripts/build_site.py
 python3 -m http.server 4173 --bind 127.0.0.1 --directory .tmp/site
 ```
 
-The output directory must be new; a fresh output keeps unrelated local files out of deployment. Open `http://127.0.0.1:4173` locally. Static/configuration checks pass; browser acceptance has not been performed, so desktop and mobile visual and keyboard review remain outstanding. Stop the owned preview server after review.
+The output directory must be new; a fresh output keeps unrelated local files out of deployment. Open `http://127.0.0.1:4173` locally. Static/configuration checks pass, and the page was reviewed in Chrome at a 1440-pixel desktop width and a 390-pixel phone viewport (layout, pictures, horizontal overflow); keyboard review remains outstanding. Stop the owned preview server after review.
 
 Before publication, fill only owner-approved destinations in `website/config.json`: the actual repository, corresponding GitHub Release, and optionally the external support page. Configured source and release destinations must identify the same repository. Null destinations are omitted; the page never invents a download or payment link. "Buy me a coffee" remains a small secondary footer link, with payment methods/QR codes only on its destination. [The Pages workflow](../.github/workflows/pages.yml) builds the reviewed static directory only on a manual dispatch from public `main`; it has not been run.
 
