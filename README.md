@@ -79,6 +79,7 @@ Every change traces to a confirmed user story in [the requirements](docs/require
 - [Feasibility](docs/feasibility.md): technical evidence and open validation gates.
 - [Messaging setup](docs/messaging.md) and [custom skins](docs/skins.md).
 - [Release preparation](docs/releases.md): packaging, signing, the product page and how releases are iterated.
+- [Product page](https://yukunlabs.github.io/lunlet/) with the one-minute walkthrough.
 - [Contributing](CONTRIBUTING.md), [code of conduct](CODE_OF_CONDUCT.md) and [security policy](SECURITY.md).
 
 ## License
