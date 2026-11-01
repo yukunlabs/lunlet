@@ -61,7 +61,7 @@ open .tmp/Lunlet.app
 ## Not yet available
 
 - Replies to Claude Code sessions, and answering an agent's question from your phone.
-- A notarized download: the current one is an unsigned preview that macOS asks you to allow on first open; a Developer ID-signed, notarized release comes later. Intel Macs. Feishu cards reviewed in the phone app.
+- A notarized download (the current one is an unsigned preview). Intel Macs. Feishu cards reviewed in the phone app.
 - Linux, Cursor and other agents.
 
 ## Development
