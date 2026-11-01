@@ -41,7 +41,7 @@ scripts/build-app.sh --preview
 open .tmp/Lunlet.app
 ```
 
-`--preview` produces an ad hoc–signed build for your own Mac. Because a preview is identified by its binary, macOS asks you to authorize access to the saved bot connection once after each build that changed code (Settings › Authorize access); relaunching the same build does not ask again. Distributable builds are signed with a Developer ID certificate, which keeps that access across updates; see [release preparation](docs/releases.md). To connect a messaging bot, follow [messaging setup](docs/messaging.md).
+`--preview` produces an ad hoc–signed build for your own Mac. Because a preview is identified by its binary, macOS asks you to authorize access to the saved bot connection once after each build that changed code (Settings › Authorize access); relaunching the same build does not ask again. The downloadable preview is also signed ad hoc, so macOS asks to allow it on first open and asks once to authorize the saved bot connection after each update; a Developer ID-signed release would keep that access across updates and is a later step. See [release preparation](docs/releases.md). To connect a messaging bot, follow [messaging setup](docs/messaging.md).
 
 ## Privacy
 
@@ -57,7 +57,7 @@ open .tmp/Lunlet.app
 ## Not yet available
 
 - Replies to Claude Code sessions, and answering an agent's question from your phone.
-- A signed, notarized download, and Feishu cards reviewed in the phone app.
+- A download: the first one will be an unsigned preview, with first-open steps in its notes; a notarized release comes later. Feishu cards reviewed in the phone app.
 - Linux, Cursor and other agents.
 
 ## Development

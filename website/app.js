@@ -16,7 +16,7 @@
   }
   if (config.releaseURL) {
     document.querySelector("#release-status").textContent =
-      "Find the current macOS download, requirements, release notes and checksums on GitHub. No new mobile conversations, SSH, remote-host discovery or general computer control.";
+      "The download is an unsigned preview: on first open, allow it in System Settings › Privacy & Security (Open Anyway), and after each update authorize the saved bot connection once. Requirements, release notes and checksums are on GitHub. No new mobile conversations, SSH, remote-host discovery or general computer control.";
   }
 
   // One messenger at a time: the tabs swap the three phones and their note, with roving focus and arrow keys.

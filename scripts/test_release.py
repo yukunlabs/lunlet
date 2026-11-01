@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 yukunlabs
 # SPDX-License-Identifier: 0BSD
-# Refs: US-27, AC-27.01, AC-27.03; US-29, AC-29.03.
+# Refs: US-27, AC-27.01, AC-27.03, AC-27.05; US-29, AC-29.03.
 # Refs: US-35, AC-35.01, AC-35.03, AC-35.04.
 import os
 import plistlib
@@ -52,6 +52,39 @@ class ReleaseBoundaryTests(unittest.TestCase):
                                     capture_output=True, text=True, timeout=5)
             self.assertEqual(result.returncode, 2)
             self.assertIn('Development previews cannot become public release artifacts', result.stderr)
+
+    def test_an_unsigned_release_build_is_an_explicit_choice(self):
+        # Without the flag an ad hoc identity is refused for a normal build; with it the build proceeds and says what
+        # the release notes must state (AC-27.05).
+        result, swift_called = run_build_with_stub_swift([], LUNLET_CODE_SIGN_IDENTITY="-")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("requires a certificate signing identity", result.stderr)
+        self.assertFalse(swift_called)
+        result, swift_called = run_build_with_stub_swift([], LUNLET_CODE_SIGN_IDENTITY="-", LUNLET_RELEASE_UNSIGNED="1")
+        self.assertIn("unsigned preview release", result.stderr)
+        self.assertIn("first-open steps", result.stderr)
+        self.assertNotIn("requires a certificate signing identity", result.stderr)
+        # A normal build still needs a clean checkout; on one, the stub stops the build after being called.
+        if swift_called:
+            self.assertEqual(result.returncode, 97)
+        else:
+            self.assertIn("clean source checkout", result.stderr)
+
+    def test_unsigned_release_mode_still_rejects_previews_and_names_its_signature_rule(self):
+        with tempfile.TemporaryDirectory(prefix="lunlet-release-test-") as temporary:
+            app = Path(temporary) / "Lunlet.app"
+            (app / "Contents").mkdir(parents=True)
+            with (app / "Contents/Info.plist").open('wb') as file:
+                plistlib.dump({'LunletDevelopmentPreview': True}, file)
+            result = subprocess.run([str(ROOT / 'scripts/package-release.sh'), str(app), 'v0.1.0'],
+                                    env={**os.environ, "LUNLET_RELEASE_UNSIGNED": "1"}, capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn('Development previews cannot become public release artifacts', result.stderr)
+        script = (ROOT / "scripts/package-release.sh").read_text()
+        # The unsigned mode accepts only an ad hoc signature without a certificate and records it as such.
+        self.assertIn("'^Signature=adhoc$'", script)
+        self.assertIn("ad hoc (unsigned preview)", script)
+        self.assertIn("none (unsigned preview", script)
 
     def test_normal_build_needs_both_update_settings_well_formed_before_running_swift(self):
         identity = {"LUNLET_CODE_SIGN_IDENTITY": "Synthetic Identity"}
