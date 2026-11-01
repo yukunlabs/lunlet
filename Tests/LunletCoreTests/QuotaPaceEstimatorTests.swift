@@ -25,9 +25,16 @@ private extension QuotaPace {
 
     @Test func dailyCycleAveragesOutAcrossTwoIdenticalWorkWeeks() throws {
         // AC-32.02, AC-32.06: a trailing calendar week makes nights and work hours one stable pace.
+        // Work hours since the window began: weekdays, nine to six, at 1.2 points an hour. Written as a plain loop
+        // because the hosted Swift 6.3 compiler cannot type-check the one-line closure form in reasonable time.
         func used(_ hour: Int) -> Double {
             let window = hour / 168 * 168
-            return Double((window..<hour).filter { ($0 % 168) / 24 < 5 && (9..<18).contains($0 % 24) }.count) * 1.2
+            var workHours = 0
+            for elapsed in window..<hour {
+                let weekday = (elapsed % 168) / 24, hourOfDay = elapsed % 24
+                if weekday < 5 && hourOfDay >= 9 && hourOfDay < 18 { workHours += 1 }
+            }
+            return Double(workHours) * 1.2
         }
         let readings = (0..<336).map { reading(Double($0), (100 - used($0)).rounded(), reset: Double($0 / 168 * 168 + 168)) }
         let weekly = 5 * 9 * 1.2, truth = 100 - weekly
@@ -62,7 +69,8 @@ private extension QuotaPace {
         #expect(increased.evenPace == nil)
         #expect(near(try #require(increased.estimate).runOut, 162))
         let steady = pace(before + [reading(80, 22, reset: 168)], reset: 168, now: 80)
-        #expect(abs(try #require(steady.evenPace) - 100 * 88 / 168) < 1e-9)
+        let evenPace = try #require(steady.evenPace), expectedPace: Double = 100 * 88 / 168
+        #expect(abs(evenPace - expectedPace) < 1e-9)
         #expect(steady.latest?.remaining == 22)
     }
 

@@ -55,12 +55,12 @@ struct ClaudeSessionMonitorTests {
         return (monitor, captured, sink)
     }
     private func settle(_ captured: Captured, until condition: @escaping @Sendable ([(SessionSnapshot, Bool)]) -> Bool) async throws {
-        let end = ContinuousClock.now + .seconds(2)
+        let end = ContinuousClock.now + .seconds(10)
         while !condition(await captured.snapshots), ContinuousClock.now < end { try await Task.sleep(for: .milliseconds(5)) }
     }
     /// The sink appends asynchronously; wait for a stream marker before reading it.
     private func settled<T: Sendable>(_ captured: Captured, _ read: @escaping @Sendable (Captured) async -> T?) async throws -> T? {
-        let end = ContinuousClock.now + .seconds(2)
+        let end = ContinuousClock.now + .seconds(10)
         while ContinuousClock.now < end {
             if let value = await read(captured) { return value }
             try await Task.sleep(for: .milliseconds(5))

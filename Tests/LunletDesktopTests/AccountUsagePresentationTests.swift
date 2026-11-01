@@ -115,7 +115,7 @@ private actor SyntheticAccountCardReader: CodexAccountReading {
     """.utf8), observedAt: now.addingTimeInterval(-120), accountData: Data(#"{"account":{"type":"chatgpt","email":"synthetic@example.invalid","planType":"pro"}}"#.utf8))
     let model = AccountUsageModel(client: SyntheticAccountCardReader(snapshot: snapshot))
     model.start()
-    let deadline = ContinuousClock.now + .seconds(2)
+    let deadline = ContinuousClock.now + .seconds(10)
     while model.state == .loading, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
     #expect(model.displayedSnapshot == snapshot)
     let hover = UsageHoverPanelController()

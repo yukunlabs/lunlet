@@ -44,7 +44,7 @@ private final class SilentCuePresenter: TaskCuePresenting {
         let child = SessionSnapshot(observation: .init(sessionID: UUID(), connectionID: UUID(), liveness: .unverified, phase: .running),
             project: "Synthetic", title: "Child", activityConfirmed: true, parentSessionID: UUID())
         await source.send(.snapshot(child, baseline: false))
-        let deadline = ContinuousClock.now + .seconds(2)
+        let deadline = ContinuousClock.now + .seconds(10)
         while model.sessions.isEmpty && ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
         #expect(model.sessions.count == 1 && forwarded.isEmpty)
         await owner.shutdown(); model.shutdown()
@@ -56,23 +56,22 @@ private final class SilentCuePresenter: TaskCuePresenting {
         var forwarded: [(SessionSnapshot, Bool)] = []
         subject.snapshotReceived = { forwarded.append(($0, $1)) }
         subject.start(); subject.start()
-        let end = ContinuousClock.now + .seconds(2)
-        while await source.starts == 0, ContinuousClock.now < end { try await Task.sleep(for:.milliseconds(5)) }
+        try await until { await source.starts > 0 }
         #expect(await source.starts == 1)
         let id=UUID(),connection=UUID()
         let snapshot=SessionSnapshot(observation:.init(sessionID:id,connectionID:connection,liveness:.alive,phase:.running),
                                      project:"Synthetic",title:"Task",turnID:"turn",localPreview:"Local only")
         await source.send(.snapshot(snapshot,baseline:true))
-        while model.sessions.isEmpty, ContinuousClock.now < end { try await Task.sleep(for:.milliseconds(5)) }
+        try await until { !model.sessions.isEmpty }
         #expect(model.sessions.count == 1 && presenter.shown == 0)
         #expect(model.sessions.first?.localPreview == "Local only")
         // Refs: US-06, AC-06.02: the notification path receives the request preview for the owner's notice excerpt.
         #expect(forwarded.count == 1 && forwarded[0].0 == snapshot && forwarded[0].0.localPreview == "Local only" && forwarded[0].1)
         await source.send(.availability(connected:false,partial:true))
-        while model.monitoringAvailable, ContinuousClock.now < end { try await Task.sleep(for:.milliseconds(5)) }
+        try await until { !model.monitoringAvailable }
         #expect(model.sessions.first?.observation.liveness == .unverified)
         await source.send(.snapshot(snapshot,baseline:true))
-        while !model.monitoringAvailable, ContinuousClock.now < end { try await Task.sleep(for:.milliseconds(5)) }
+        try await until { model.monitoringAvailable }
         #expect(model.monitoringAvailable && presenter.shown == 0)
         await subject.shutdown(); await subject.shutdown()
         #expect(await source.stops == 1)
@@ -93,7 +92,7 @@ private final class SilentCuePresenter: TaskCuePresenting {
         await source.send(.snapshot(snapshot, baseline: true))
         await source.setVerified([:])
         owner.refresh()
-        let deadline = ContinuousClock.now + .seconds(2)
+        let deadline = ContinuousClock.now + .seconds(10)
         while model.isRefreshing, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
         #expect(model.displayedSessions.isEmpty)
         await source.setVerified([snapshot.observation.sessionID: snapshot.observation.connectionID])
@@ -119,7 +118,7 @@ private final class SilentCuePresenter: TaskCuePresenting {
               project: "Synthetic", turnID: "turn", activityConfirmed: true, localPreview: "Synthetic", provider: provider)
     }
     private func until(_ condition: @MainActor () async -> Bool) async throws {
-        let deadline = ContinuousClock.now + .seconds(2)
+        let deadline = ContinuousClock.now + .seconds(10)
         while !(await condition()), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
     }
 

@@ -159,7 +159,7 @@ struct FeishuReplyServiceTests {
         try await waitUntil { connections.active == 0 }
         let capability = try #require(await value.prepareReply(for: snapshot()))
         #expect(await value.bindReply(capability, receipt: ownerReceipt()))
-        try await Task.sleep(for: .milliseconds(40))
+        try await settle { connections.active == 1 }
         #expect(connections.active == 1)
         clock.advance(ContinuationGate.controlLifetime)
         try await waitUntil { connections.active == 0 }
@@ -192,7 +192,10 @@ struct FeishuReplyServiceTests {
             }
             #expect(status.status == .processing)
         }
-        try await Task.sleep(for: .milliseconds(20))
+        try await settle {
+            let dispatched = await dispatch.actions.count, sent = await cards.sent.count
+            return dispatched == 1 && sent == 1
+        }
         let dispatched = await dispatch.actions.count, sent = await cards.sent.count
         #expect(dispatched == 1 && sent == 1)
         await value.close()
@@ -291,7 +294,10 @@ struct FeishuReplyServiceTests {
             Issue.record("The consumed card must not dispatch again"); return
         }
         #expect(receipt.status == (outcome == .notConfirmed ? .uncertain : .failed))
-        try await Task.sleep(for: .milliseconds(20))
+        try await settle {
+            let dispatched = await dispatch.actions.count, sent = await cards.sent.count
+            return dispatched == 1 && sent == 1
+        }
         let dispatched = await dispatch.actions.count, sent = await cards.sent.count
         #expect(dispatched == 1 && sent == 1)
         await value.close()
@@ -364,4 +370,10 @@ struct ReplyReceiptCardTests {
         let unknown = try ReplyReceiptCard.render(.refused(.sessionEnded), for: nil).content
         #expect(unknown.contains("Not sent to this session. The session has ended. Lunlet does not restart sessions."))
     }
+}
+
+/// Polls `condition` for up to ten seconds; a fixed sleep is not enough on a loaded shared runner.
+private func settle(_ condition: () async -> Bool) async throws {
+    let end = ContinuousClock.now + .seconds(10)
+    while !(await condition()), ContinuousClock.now < end { try await Task.sleep(for: .milliseconds(5)) }
 }

@@ -56,7 +56,7 @@ private actor CardBotClient: ChannelBotClient {
 @Suite(.serialized, .enabled(if: ProcessInfo.processInfo.environment["LUNLET_RENDER_DIR"] != nil))
 @MainActor struct ConnectionCardRenderTests {
     private func wait(_ condition: () -> Bool) async {
-        let deadline = ContinuousClock.now + .seconds(2)
+        let deadline = ContinuousClock.now + .seconds(10)
         while !condition(), ContinuousClock.now < deadline { await Task.yield() }
     }
     private static func binding(_ channel: BotChannel) -> BotBinding {

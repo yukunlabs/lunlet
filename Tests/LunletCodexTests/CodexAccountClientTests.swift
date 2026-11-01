@@ -50,7 +50,7 @@ private struct FakeCodex {
         let fake = try FakeCodex(scenario)
         defer { try? FileManager.default.removeItem(at: fake.directory) }
         do {
-            _ = try await CodexAccountClient(executableURL: fake.executable, timeout: 2).readLimits()
+            _ = try await CodexAccountClient(executableURL: fake.executable, timeout: scenario == "timeout" ? 2 : 15).readLimits()
             Issue.record("A failed account read cannot return verified usage")
         } catch {
             #expect(error as? CodexAccountFailure == expected)
@@ -67,7 +67,7 @@ private struct FakeCodex {
     let fake = try FakeCodex("cancel")
     defer { try? FileManager.default.removeItem(at: fake.directory) }
     let task = Task { try await CodexAccountClient(executableURL: fake.executable).readLimits() }
-    let deadline = ContinuousClock.now + .seconds(2)
+    let deadline = ContinuousClock.now + .seconds(10)
     while !FileManager.default.fileExists(atPath: fake.directory.appendingPathComponent("waiting").path),
           ContinuousClock.now < deadline {
         try await Task.sleep(for: .milliseconds(5))

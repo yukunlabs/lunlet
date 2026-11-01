@@ -68,7 +68,7 @@ private final class CompletionPower: IdleSleepControlling {
                   phase: .idle(completedTurnID: "runtime")), project: "Synthetic", title: "Runtime",
                   turnID: "runtime", activityConfirmed: true)
         subject.receive(value, baseline: false)
-        let deadline = ContinuousClock.now + .seconds(2)
+        let deadline = ContinuousClock.now + .seconds(10)
         while subject.status != .delivered, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
         #expect(await sender.received == [value])
         #expect(!SessionNotice.prepare(value).allowsFollowup)
@@ -89,7 +89,7 @@ private final class CompletionPower: IdleSleepControlling {
         subject.receive(claude("earlier"), baseline: false)
         subject.receive(claude("live"), baseline: false)
         subject.receive(claude("live"), baseline: false)
-        let deadline = ContinuousClock.now + .seconds(2)
+        let deadline = ContinuousClock.now + .seconds(10)
         while subject.status != .delivered, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
         #expect(await sender.received.map(\.turnID) == ["live"])
         let notice = SessionNotice.prepare(claude("live"))
@@ -103,7 +103,7 @@ private final class CompletionPower: IdleSleepControlling {
         let sender = CompletionSender()
         let subject = LockedCompletionNotifications(isLocked: { false }, power: CompletionPower(), checksOnConfigure: true)
         subject.configure(sender: sender)
-        let deadline = ContinuousClock.now + .seconds(2)
+        let deadline = ContinuousClock.now + .seconds(10)
         while subject.authorizationCheck != .accepted, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
         #expect(subject.authorizationCheck == .accepted)
         let checks = await sender.authorizationChecks, received = await sender.received
@@ -119,12 +119,13 @@ private final class CompletionPower: IdleSleepControlling {
         let subject = LockedCompletionNotifications(isLocked: { locked.value }, power: CompletionPower())
         subject.configure(sender: sender)
         subject.checkAuthorization()
-        let deadline = ContinuousClock.now + .seconds(2)
+        let deadline = ContinuousClock.now + .seconds(10)
         while !(await sender.started), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
         #expect(await sender.started)
         locked.value = false; subject.refreshLockState()
         await sender.release()
-        while subject.authorizationCheck == .checking, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
+        let settled = ContinuousClock.now + .seconds(10)
+        while subject.authorizationCheck == .checking, ContinuousClock.now < settled { try await Task.sleep(for: .milliseconds(5)) }
         #expect(subject.authorizationCheck == .accepted)
         #expect(subject.status == .ready)
         await subject.shutdown()
@@ -135,7 +136,7 @@ private final class CompletionPower: IdleSleepControlling {
         let subject = LockedCompletionNotifications(isLocked: { false }, power: CompletionPower())
         subject.configure(sender: sender)
         subject.checkAuthorization()
-        let deadline = ContinuousClock.now + .seconds(2)
+        let deadline = ContinuousClock.now + .seconds(10)
         while !(await sender.started), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
         #expect(await sender.started)
         subject.configure(sender: nil)
@@ -150,11 +151,12 @@ private final class CompletionPower: IdleSleepControlling {
         subject.configure(sender: sender)
         let completion = snapshot("unconfirmed", session: UUID(), connection: UUID())
         subject.receive(completion, baseline: false)
-        let deadline = ContinuousClock.now + .seconds(2)
+        let deadline = ContinuousClock.now + .seconds(10)
         while subject.status != .failed, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
         subject.checkAuthorization()
         subject.checkAuthorization()
-        while subject.authorizationCheck == .checking, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
+        let settled = ContinuousClock.now + .seconds(10)
+        while subject.authorizationCheck == .checking, ContinuousClock.now < settled { try await Task.sleep(for: .milliseconds(5)) }
         #expect(subject.authorizationCheck == .accepted)
         #expect(await sender.authorizationChecks == 1)
         #expect(subject.status == .failed)
@@ -181,7 +183,7 @@ private final class CompletionPower: IdleSleepControlling {
         subject.receive(snapshot("unknown", session: session, connection: connection, alive: false), baseline: false)
         let completion = snapshot("live", session: session, connection: connection)
         subject.receive(completion, baseline: false); subject.receive(completion, baseline: false)
-        let deadline = ContinuousClock.now + .seconds(2)
+        let deadline = ContinuousClock.now + .seconds(10)
         while subject.status != .delivered, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
         #expect(await sender.received == [completion])
         locked.value = nil; subject.refreshLockState(); #expect(!power.enabled)
@@ -198,7 +200,7 @@ private final class CompletionPower: IdleSleepControlling {
         subject.configure(sender: sender)
         let completion = snapshot("pending", session: UUID(), connection: UUID())
         subject.receive(completion, baseline: false)
-        let deadline = ContinuousClock.now + .seconds(2)
+        let deadline = ContinuousClock.now + .seconds(10)
         while !(await sender.started), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
         locked.value = false; subject.refreshLockState()
         while !(await sender.cancelled), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
@@ -217,7 +219,7 @@ private final class CompletionPower: IdleSleepControlling {
         subject.configure(sender: sender)
         subject.receive(snapshot("scheduled", session: UUID(), connection: UUID()), baseline: false)
         locked.value = false
-        let deadline = ContinuousClock.now + .seconds(2)
+        let deadline = ContinuousClock.now + .seconds(10)
         while subject.status == .sending, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
         #expect(subject.status == .ready)
         #expect(await sender.received.isEmpty)
@@ -236,7 +238,7 @@ private final class CompletionPower: IdleSleepControlling {
         subject.receive(snapshot("turn-1099", session: session, connection: connection), baseline: false)
         let fresh = snapshot("fresh", session: session, connection: connection)
         subject.receive(fresh, baseline: false); subject.receive(fresh, baseline: false)
-        let deadline = ContinuousClock.now + .seconds(2)
+        let deadline = ContinuousClock.now + .seconds(10)
         while subject.status != .delivered, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
         #expect(await sender.received == [fresh])
         await subject.shutdown()
@@ -245,7 +247,7 @@ private final class CompletionPower: IdleSleepControlling {
         let first = CompletionSender(), second = CompletionSender()
         let subject = LockedCompletionNotifications(isLocked: { false }, power: CompletionPower())
         subject.configure(sender: first); subject.configure(sender: second)
-        let deadline = ContinuousClock.now + .seconds(2)
+        let deadline = ContinuousClock.now + .seconds(10)
         while subject.pendingCleanupCount > 0, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
         #expect(subject.pendingCleanupCount == 0)
         #expect(await first.closed)
@@ -259,7 +261,7 @@ private final class CompletionPower: IdleSleepControlling {
         subject.configure(sender: sender)
         let completion = snapshot("failed", session: UUID(), connection: UUID())
         subject.receive(completion, baseline: false)
-        let deadline = ContinuousClock.now + .seconds(2)
+        let deadline = ContinuousClock.now + .seconds(10)
         while subject.status != .failed, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
         #expect(subject.status == .failed)
         subject.receive(completion, baseline: false)

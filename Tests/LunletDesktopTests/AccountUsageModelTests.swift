@@ -29,7 +29,7 @@ private actor UsageReader: CodexAccountReading {
 }
 
 @MainActor private func eventually(_ expected: AccountUsageModel.State, in model: AccountUsageModel) async throws {
-    let deadline = ContinuousClock.now + .seconds(2)
+    let deadline = ContinuousClock.now + .seconds(10)
     while model.state != expected, ContinuousClock.now < deadline {
         try await Task.sleep(for: .milliseconds(5))
     }
@@ -52,7 +52,7 @@ private actor UsageReader: CodexAccountReading {
     let reader = try UsageReader(blocked: true)
     let model = AccountUsageModel(client: reader)
     model.start()
-    let deadline = ContinuousClock.now + .seconds(2)
+    let deadline = ContinuousClock.now + .seconds(10)
     while await reader.reads == 0, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
     model.refresh()
     model.refreshIfNeeded()

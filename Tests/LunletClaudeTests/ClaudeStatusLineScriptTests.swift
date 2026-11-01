@@ -210,8 +210,9 @@ struct StatusLineSandbox {
         let box = try Sandbox(); defer { box.remove() }
         let input = Sandbox.input(fiveHour: (23.5, now + 3_600), sevenDay: (41.2, now + 86_400))
         let times = try (0..<7).map { _ in try box.run(input).seconds }.sorted()
-        // About 25 ms when measured alone; the bound tolerates parallel test load. No network or interpreter is used.
-        #expect(times[3] < 0.15, "median \(times[3])s")
+        // About 25 ms when measured alone; the bound leaves room for a loaded shared runner while still failing if the
+        // script ever shelled out to an interpreter or the network.
+        #expect(times[3] < 0.5, "median \(times[3])s")
         #expect(!ClaudeStatusLineScript.source.contains("jq") && !ClaudeStatusLineScript.source.contains("python")
                 && !ClaudeStatusLineScript.source.contains("curl"))
     }

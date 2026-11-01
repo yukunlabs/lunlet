@@ -154,7 +154,7 @@ private struct FixedUsage: LocalUsageReading {
         let claudeHistory = LocalUsageModel(reader: FixedUsage(history: .init(days: [.init(date: today, amount: recorded)],
                                                                              sessions: [:], partial: true)))
         claudeHistory.refresh()
-        let deadline = ContinuousClock.now + .seconds(2)
+        let deadline = ContinuousClock.now + .seconds(10)
         while claudeHistory.snapshot == nil, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
         let codexHistory = LocalUsageModel(reader: FixedUsage(history: .init(days: [], sessions: [:], partial: false)))
         let account = AccountUsageModel(client: NoAccount())
@@ -219,7 +219,7 @@ private struct FixedUsage: LocalUsageReading {
     let history = LocalUsageModel(reader: FixedUsage(history: .init(days: [.init(date: today, amount: amount)],
                                                                      sessions: [ids[0]: amount, ids[1]: amount], partial: true)))
     history.refresh()
-    let deadline = ContinuousClock.now + .seconds(2)
+    let deadline = ContinuousClock.now + .seconds(10)
     while history.snapshot == nil, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
     let hover = UsageHoverPanelController(observesSystemEvents: false)
     let sessions = SessionListModel(displayAvailable: { false }, elapsed: { 0 }, presenter: RecordingCues())

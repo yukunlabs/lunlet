@@ -283,17 +283,22 @@ struct VineEntryTests {
             #expect(try glass("lamp-codex") != glass("lamp-claude"))
             // The lamps interleave along the width, Codex's first, and each pair's lamps are smaller than a single cord's.
             let xs = try (lamps("lamp-codex") + lamps("lamp-claude")).map(\.position.x)
-            #expect(xs[0] < xs[5] && xs[5] < xs[1] && xs[4] < xs[9])
+            #expect(xs[0] < xs[5])
+            #expect(xs[5] < xs[1])
+            #expect(xs[4] < xs[9])
             #expect(try lamps("lamp-codex").allSatisfy { $0.transform.m11 < 1 })
         }
         view.setAllowances([.init(provider: .claude, remaining: 30)])
         view.layoutSubtreeIfNeeded()
         let scene = try #require(view.layer?.sublayers?.first { $0.name == "lanterns" })
-        #expect(scene.sublayers?.filter { $0.name?.hasPrefix("lamp-") == true }.count == 5)
+        let lampCount = scene.sublayers?.filter { $0.name?.hasPrefix("lamp-") == true }.count
+        #expect(lampCount == 5)
         #expect(sublayer("cord-claude", in: scene) == nil && sublayer("lamp-0", in: scene)?.transform.m11 == 1)
         let single = try (0..<5).map { try #require(sublayer("lamp-\($0)", in: view.layer)) }
             .map { try #require($0.sublayers?.first { $0 is CAGradientLayer }).opacity }
-        #expect(abs(single[0] - 1) < 0.001 && abs(single[1] - 0.56) < 0.001)
+        let firstLamp = single[0], secondLamp = single[1]
+        #expect(abs(firstLamp - 1) < 0.001)
+        #expect(abs(secondLamp - 0.56) < 0.001)
     }
 
     // Refs: US-04, AC-04.13, AC-04.03; US-33, AC-33.09.

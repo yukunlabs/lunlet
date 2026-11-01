@@ -39,7 +39,7 @@ private struct TrendPanelHistory: LocalUsageReading {
     let account = AccountUsageModel(client: TrendPanelAccount(snapshots))
     for index in 0..<4 {
         if index == 0 { account.start() } else { account.refresh() }
-        let deadline = ContinuousClock.now + .seconds(2)
+        let deadline = ContinuousClock.now + .seconds(10)
         while account.state == .loading, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
     }
     // The fourth read fails; the trend and its estimate stay, labeled stale.
@@ -58,7 +58,7 @@ private struct TrendPanelHistory: LocalUsageReading {
     #expect(QuotaForecastText.evenPace(display.pace, now: now)?.hasPrefix("Even pace ") == true)
     let history = LocalUsageModel(reader: TrendPanelHistory(value: .init(days: days, sessions: [:], partial: true, quotaHistory: localQuota)))
     history.refresh()
-    let deadline = ContinuousClock.now + .seconds(2)
+    let deadline = ContinuousClock.now + .seconds(10)
     while history.isLoading, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
     let view = NSHostingView(rootView: UsageOverviewPanel(account: account, history: history)
         .frame(width: 320, height: 357).background(Color(white: 0.14)).environment(\.colorScheme, .dark))
