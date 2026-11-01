@@ -2,11 +2,12 @@
 # SPDX-FileCopyrightText: 2026 yukunlabs
 # SPDX-License-Identifier: 0BSD
 # Refs: US-28, AC-28.01, AC-28.02, AC-28.03, AC-28.04; US-30, AC-30.01, AC-30.02, AC-30.03.
+import re
 import tempfile
 import unittest
 from pathlib import Path
 
-from build_site import load_config, build
+from build_site import SCREENSHOTS, load_config, build, referenced_files
 
 
 class ProductSiteTests(unittest.TestCase):
@@ -88,16 +89,27 @@ class ProductSiteTests(unittest.TestCase):
             self.assertTrue((output / "video/lunlet-poster.jpg").is_file())
             self.assertTrue((output / "video/lunlet-captions.vtt").is_file())
             page = (output / "index.html").read_text()
-            self.assertIn('<video class="product-film" controls playsinline preload="none"', page)
+            video = re.search(r'<video [^>]*>', page).group(0)
+            self.assertIn('controls', video)
+            self.assertIn('preload="none"', video)
+            self.assertNotIn('autoplay', video)
             self.assertIn('kind="captions"', page)
-            self.assertNotIn('<video autoplay', page)
             self.assertEqual((output / "site-config.js").read_text(), "window.LUNLET_SITE_CONFIG = {};\n")
-            artwork = (output / "artwork.js").read_text()
-            self.assertIn('"leftInk"', artwork)
-            self.assertIn('"palette"', artwork)
-            self.assertNotIn('localhost', (output / "index.html").read_text())
+            self.assertNotIn('localhost', page)
+            # Every picture the page shows is a shipped still of the real interface (AC-28.02), never a hot link.
+            referenced = referenced_files(page)
+            self.assertTrue({"assets/" + name for name in SCREENSHOTS} <= referenced)
+            for path in referenced:
+                self.assertTrue((output / path).is_file(), path)
+            self.assertNotIn('src="http', page)
+            self.assertNotIn('srcset=', page)
             with self.assertRaises(FileExistsError):
                 build(output)
+
+    def test_referenced_files_cover_pictures_video_poster_and_tracks(self):
+        page = ('<img src="assets/a.png"><video poster="video/p.jpg"><source src="video/m.mp4">'
+                '<track src="video/c.vtt"></video><link href="style.css"><a href="https://example.com/x.png">')
+        self.assertEqual(referenced_files(page), {"assets/a.png", "video/p.jpg", "video/m.mp4", "video/c.vtt"})
 
 
 if __name__ == "__main__":

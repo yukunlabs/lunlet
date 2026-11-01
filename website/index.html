@@ -6,78 +6,122 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Lunlet is a quiet macOS companion for existing Codex and Claude Code sessions, recorded usage and short periods away through your chosen messenger.">
+  <meta name="description" content="Lunlet is a quiet macOS companion for the Codex and Claude Code sessions already running on your Mac: their state, their limits, and a short notice on your own messenger while you are away.">
   <meta name="color-scheme" content="light dark">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self'; media-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; media-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'">
   <title>Lunlet — A little closer to your flow</title>
   <link rel="icon" href="assets/lunlet-app-icon.png">
   <link rel="stylesheet" href="style.css">
   <script defer src="site-config.js"></script>
-  <script defer src="artwork.js"></script>
   <script defer src="app.js"></script>
 </head>
 <body>
   <a class="skip" href="#main">Skip to content</a>
   <header class="site-header">
-    <a class="brand" href="#"><img src="assets/lunlet-app-icon.png" width="30" height="30" alt=""><span>Lunlet</span></a>
-    <nav aria-label="Main navigation"><a href="#experience">Experience</a><a href="#film">Film</a><a href="#away">Away from your Mac</a><a href="#availability">Availability</a></nav>
-    <a class="nav-source" data-link="repositoryURL" hidden>Source ↗</a>
+    <a class="brand" href="#"><img src="assets/lunlet-app-icon.png" width="28" height="28" alt=""><span>Lunlet</span></a>
+    <nav aria-label="Main navigation"><a href="#glance">Overview</a><a href="#film">Film</a><a href="#away">Away</a><a href="#availability">Availability</a><a data-link="repositoryURL" hidden>Source</a></nav>
   </header>
   <main id="main">
     <section class="hero">
-      <p class="eyebrow"><span class="status-dot"></span> A macOS companion · Source preview</p>
-      <h1>A little closer<br>to your <em>flow.</em></h1>
-      <p class="hero-copy">Your coding sessions, their allowance, and a quiet signal when work is ready. Right where you need them.</p>
-      <a class="primary-link" href="#experience">Explore the interaction <span aria-hidden="true">↓</span></a>
-      <div class="screen" aria-label="Illustrative Lunlet desktop, with synthetic data">
-        <div class="screen-glow"></div>
-        <div class="desktop-bar"><span>Finder</span><span aria-hidden="true">◌ &nbsp; ◷</span></div>
-        <div class="island"><svg class="letter left-word" viewBox="0 0 40 26" aria-hidden="true"></svg><div class="notch"></div><svg class="letter right-word" viewBox="0 0 40 26" aria-hidden="true"></svg><svg class="vine" viewBox="0 0 273 44" aria-hidden="true"></svg><div class="lamps" hidden aria-hidden="true"></div></div>
-        <div class="companion" id="demo-panel">
-          <div class="panel-heading"><strong>Codex</strong><span class="demo-state" aria-live="polite">Quietly in view</span><span aria-hidden="true">⚙</span></div>
-          <div class="allowance-block">
-            <div class="account"><span>developer@example.com</span><span class="pill">Sample plan</span></div>
-            <div class="quota-heading"><strong>Weekly allowance</strong><span id="remaining-label">68% left</span></div>
-            <div class="quota" role="progressbar" aria-label="Illustrative weekly allowance remaining" aria-valuemin="0" aria-valuemax="100" aria-valuenow="68"><div class="quota-fill"></div><i style="left:20%"></i><i style="left:50%"></i><i style="left:80%"></i></div>
-            <div class="quota-caption"><span>Resets in 3d 4h</span><span>Credits 120</span></div>
-          </div>
-          <div class="chart-heading"><span>Recent usage</span><div class="metric-control" role="group" aria-label="Illustrative chart metric"><button class="selected" type="button" data-metric="token" aria-pressed="true">Token</button><button type="button" data-metric="cost" aria-pressed="false">Cost</button></div></div>
-          <div class="chart" aria-label="Illustrative five-day token usage"></div>
-          <div class="session"><span class="session-indicator"></span><div><strong>Website polish</strong><small class="session-state">Turn in progress · a1b2c3d4</small></div><div class="session-usage">42K tokens<small>≈$0.18</small></div></div>
-          <div class="panel-footer"><span>◉ Feishu</span><span>Illustrative data</span></div>
-        </div>
-        <div class="desktop-caption">Small presence. Useful perspective.</div>
+      <p class="eyebrow">For Codex and Claude Code on macOS</p>
+      <h1>A little closer<br>to your flow.</h1>
+      <p class="lede">Lunlet sits beside your Mac's notch and keeps the coding sessions already running on your Mac in view: what each one is doing, how much of each plan is left, and a quiet signal when a turn ends.</p>
+      <div class="actions"><a class="button primary" href="#film">Watch the film</a><a class="button" data-link="repositoryURL" hidden>View the source</a></div>
+      <figure class="display reveal">
+        <img src="assets/hero-overview.jpg" width="3200" height="1520" fetchpriority="high" decoding="async" alt="The top of a Mac display: the lun and let lettering beside the notch, and the Lunlet panel open on its Overview with each agent's limits and a daily token chart">
+        <figcaption>Rendered from Lunlet's own interface with synthetic data, like every picture on this page.</figcaption>
+      </figure>
+    </section>
+
+    <section class="feature" id="glance">
+      <div class="intro reveal">
+        <p class="eyebrow">Overview</p>
+        <h2>Both agents, one glance.</h2>
+        <p>Each agent's limits stay apart. Today's and the week's tokens add up across them, and one chart shows the days.</p>
+      </div>
+      <figure class="single reveal">
+        <img src="assets/panel-overview.jpg" width="1688" height="1384" loading="lazy" decoding="async" alt="The Overview page: Codex and Claude limits with their reset times, today's and five-day token totals, and a daily usage chart with both agents stacked">
+      </figure>
+    </section>
+
+    <section class="feature dark" id="limits">
+      <div class="intro reveal">
+        <p class="eyebrow">Limits and usage</p>
+        <h2>Know what is left.</h2>
+        <p>Codex shows its weekly allowance, credits and reset times. Claude Code shows its session and weekly limits and today's tokens. Cost is an estimate at API prices, never a bill.</p>
+      </div>
+      <div class="pair reveal">
+        <figure><img src="assets/panel-codex.jpg" width="1688" height="1384" loading="lazy" decoding="async" alt="The Codex page: a Pro account with 69% of the week left, credits, reset credits and three sessions, one waiting for approval on the Mac"><figcaption>Codex</figcaption></figure>
+        <figure><img src="assets/panel-claude.jpg" width="1688" height="1384" loading="lazy" decoding="async" alt="The Claude Code page: a Max account's session and weekly limits, today's tokens by kind, and three sessions"><figcaption>Claude Code</figcaption></figure>
       </div>
     </section>
-    <section class="experience section-shell" id="experience">
-      <div class="section-intro"><p class="eyebrow">Make a little room for focus</p><h2>See enough.<br>Stay in the moment.</h2><p>A compact home for the work already happening on your Mac. Hover to glance, click to stay, and return to your original session when you need more.</p></div>
-      <div class="demo-controls">
-        <div class="control-row"><span>Notch style</span><div class="skin-control" role="group" aria-label="Illustrative notch style"><button class="selected" type="button" data-skin="vine" aria-pressed="true">Vine</button><button type="button" data-skin="lantern" aria-pressed="false">Lanterns</button></div></div>
-        <label class="control-row" for="allowance-range"><span>Weekly allowance</span><output for="allowance-range" id="control-value">68%</output></label><input id="allowance-range" type="range" min="0" max="100" value="68" aria-label="Illustrative remaining weekly allowance">
-        <button class="run-demo" type="button">Play a task cue <span aria-hidden="true">↗</span></button>
-        <p class="fine-print">An interactive illustration. It uses synthetic data and does not connect to your accounts.</p>
+
+    <section class="feature" id="island">
+      <div class="intro reveal">
+        <p class="eyebrow">Task cues</p>
+        <h2>A short island.</h2>
+        <p>When a turn starts or finishes, a short island grows from the notch with the project and the request, then folds back by itself. Open the panel right after, and it shows that conversation.</p>
       </div>
+      <figure class="wide reveal">
+        <img src="assets/cue-island.jpg" width="3840" height="480" loading="lazy" decoding="async" alt="A close-up of the notch: a black island around it reads Completed, lunlet-site, and Refine the product page, with the lettering and vine inside it">
+      </figure>
     </section>
-    <section class="film-section section-shell" id="film">
-      <div class="film-intro"><p class="eyebrow">A short look at Lunlet</p><h2>The work stays yours.<br>The context stays close.</h2><p>A short, silent film rendered from Lunlet's own interface on a synthetic Mac desktop: the notch, task cues, the panel and its usage charts, then the completion notice Lunlet sends to your Feishu bot while your Mac is locked. Every screen uses synthetic data.</p></div>
-      <video class="product-film" controls playsinline preload="none" poster="video/lunlet-poster.jpg" aria-label="Lunlet product walkthrough with captions">
+
+    <section class="feature film" id="film">
+      <div class="intro reveal">
+        <p class="eyebrow">One minute</p>
+        <h2>See it move.</h2>
+        <p>A silent, captioned film rendered from Lunlet's own views on a synthetic Mac: the notch, a task cue, the panel, then the notice on a phone and the reply that continues the session. Playback starts only when you choose it.</p>
+      </div>
+      <video class="product-film reveal" controls playsinline preload="none" poster="video/lunlet-poster.jpg" aria-label="Lunlet product walkthrough with captions">
         <source src="video/lunlet-walkthrough.mp4" type="video/mp4">
         <track kind="captions" src="video/lunlet-captions.vtt" srclang="en" label="English">
-        Your browser does not support video. Read the feature descriptions below.
+        Your browser does not support video. The sections on this page describe the same flow.
       </video>
-      <p class="fine-print">Captions are part of the film and also available through the player. Playback starts only when you choose it.</p>
     </section>
-    <section class="details section-shell">
-      <article><span class="feature-number">01</span><h3>Keep work in sight.</h3><p>Observable local Codex and Claude Code activity in compact Active and History views. Clear the active view without deleting your conversations.</p></article>
-      <article><span class="feature-number">02</span><h3>Know what is left.</h3><p>Reported account allowance alongside local token history. Equivalent API cost stays clearly marked as an estimate, separate from your subscription bill.</p></article>
-      <article><span class="feature-number">03</span><h3>Make it feel like yours.</h3><p>Choose Vine or Lanterns, tune the colors, import a declarative skin, or use the lun·let lettering in the menu bar on a Mac without a notch.</p></article>
+
+    <section class="feature dark" id="away">
+      <div class="intro reveal">
+        <p class="eyebrow">Away from your Mac</p>
+        <h2>Step away.<br>Stay in the loop.</h2>
+        <p>Lock your Mac and go. When a turn finishes, Lunlet sends a short notice to your own Feishu or Lark, Slack or Telegram bot. One reply continues that same Codex session. Approvals always stay on your Mac.</p>
+      </div>
+      <ol class="phones reveal">
+        <li><img src="assets/phone-notice.png" width="1116" height="2024" loading="lazy" decoding="async" alt="A phone showing the Lunlet bot chat: a card titled Codex succeeded for lunlet-site, with what you asked, the agent's answer, and an open reply box"><span><b>1</b> The notice, with a reply box</span></li>
+        <li><img src="assets/phone-replied.png" width="1116" height="2024" loading="lazy" decoding="async" alt="The same card after a reply was typed and sent: the box is disabled, the card shows Replied, and the reply appears as a sent message"><span><b>2</b> Your reply, sent</span></li>
+        <li><img src="assets/phone-delivered.png" width="1116" height="2024" loading="lazy" decoding="async" alt="The card rewritten as delivered: Codex is continuing on your Mac"><span><b>3</b> Delivered to the session</span></li>
+      </ol>
+      <p class="note reveal">Shown on Feishu. Slack and Telegram carry the same notice and reply.</p>
     </section>
-    <section class="away section-shell" id="away">
-      <div><p class="eyebrow">For a little time away</p><h2>Your Mac keeps working.<br>You keep the context.</h2><p>Connect your own Feishu or Lark, Slack or Telegram bot to receive short completion notices while your Mac is locked and awake.</p><p class="fine-print">One reply per notice continues that same Codex session as its next turn. Execution approvals stay on your Mac.</p></div>
-      <div class="message-card"><div class="message-sender"><img src="assets/lunlet-app-icon.png" width="36" height="36" alt=""><div><strong>Lunlet</strong><small>Illustrative Feishu card</small></div></div><div class="completion-card"><span class="completion-label">✓ Turn finished</span><h3>Website polish</h3><p>The layout update is ready for your review.</p><div>Codex · Sample project</div></div></div>
+
+    <section class="feature" id="yours">
+      <div class="intro reveal">
+        <p class="eyebrow">Skins</p>
+        <h2>Make it yours.</h2>
+        <p>Vine or red lanterns, your own accent color, or a declarative skin you import. On a Mac without a notch, the lun·let lettering lives in the menu bar.</p>
+      </div>
+      <div class="strips reveal">
+        <figure><img src="assets/notch.png" width="1156" height="196" loading="lazy" decoding="async" alt="The vine skin: lun and let lettering beside the notch, joined by two strands that show each agent's weekly allowance"><figcaption>Vine</figcaption></figure>
+        <figure><img src="assets/notch-lanterns.png" width="1156" height="196" loading="lazy" decoding="async" alt="The red lanterns skin: warm lettering and a string of lanterns under the notch, lit as far as the allowance goes"><figcaption>Red lanterns</figcaption></figure>
+      </div>
     </section>
-    <section class="availability section-shell" id="availability"><p class="eyebrow">A thoughtful beginning</p><h2>Made for macOS.<br>Built one reliable step at a time.</h2><div class="availability-grid"><div><h3>Current source preview</h3><p>Codex and Claude Code are available for local evaluation. macOS 14 is the deployment target; on-device validation currently covers macOS 27 on Apple silicon. A broader tested range will accompany a release.</p><p>Read-only observation includes locally owned Codex and Claude Code records. Some client workflows still need on-device validation. Locked-Mac delivery and one reply per notice are verified on Feishu, Telegram and Slack.</p></div><div><h3>Release availability</h3><p id="release-status">Source-only preview: a public macOS download is not available yet. The source uses 0BSD; artwork and privacy claims still need publication review, and a macOS download needs signing and installation checks.</p><a class="primary-link" data-link="releaseURL" hidden>Download on GitHub <span aria-hidden="true">↗</span></a><p class="fine-print">No new mobile conversations, SSH, remote-host discovery, or general computer control in the first release.</p></div></div></section>
+
+    <section class="availability" id="availability">
+      <div class="intro reveal">
+        <p class="eyebrow">Availability</p>
+        <h2>Made for macOS.<br>Built one step at a time.</h2>
+      </div>
+      <div class="columns reveal">
+        <div><h3>Source preview</h3><p>Codex and Claude Code observation, limits and usage work locally; build Lunlet from source. macOS 14 is the deployment target, and on-device validation currently covers macOS 27 on Apple silicon.</p></div>
+        <div><h3>Verified so far</h3><p>Read-only observation of locally owned Codex and Claude Code records. Locked-Mac notices and one reply per notice are verified on Feishu, Telegram and Slack. Some client workflows still need on-device validation.</p></div>
+        <div><h3>Not in the first release</h3><p id="release-status">No public macOS download yet; a signed package needs signing and installation checks first. No new mobile conversations, SSH, remote-host discovery or general computer control.</p><a class="button primary" data-link="releaseURL" hidden>Download on GitHub</a></div>
+      </div>
+    </section>
   </main>
-  <footer class="site-footer"><a class="brand" href="#"><img src="assets/lunlet-app-icon.png" width="26" height="26" alt=""><span>Lunlet</span></a><span>A quiet companion for your coding flow.</span><div><a data-link="repositoryURL" hidden>Source</a><a data-link="supportURL" hidden>Buy me a coffee</a></div></footer>
+  <footer class="site-footer">
+    <a class="brand" href="#"><img src="assets/lunlet-app-icon.png" width="24" height="24" alt=""><span>Lunlet</span></a>
+    <span>A quiet companion for your coding flow. Source under 0BSD.</span>
+    <div><a data-link="repositoryURL" hidden>Source</a><a data-link="supportURL" hidden>Buy me a coffee</a></div>
+  </footer>
 </body>
 </html>

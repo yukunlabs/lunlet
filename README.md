@@ -9,12 +9,12 @@ Lunlet lives around your MacBook's notch and keeps the Codex and Claude Code wor
 </p>
 
 <p align="center">
-  <img src="docs/assets/screenshots/overview.png" width="32%" alt="Overview: limits for each agent, today's and this week's tokens, and a daily usage chart">
-  <img src="docs/assets/screenshots/codex.png" width="32%" alt="Codex page: weekly allowance, credits and active sessions">
-  <img src="docs/assets/screenshots/claude-code.png" width="32%" alt="Claude Code page: session and weekly limits, today's tokens and active sessions">
+  <img src="docs/assets/screenshots/panel-overview.jpg" width="32%" alt="Overview: limits for each agent, today's and this week's tokens, and a daily usage chart">
+  <img src="docs/assets/screenshots/panel-codex.jpg" width="32%" alt="Codex page: weekly allowance, credits and active sessions">
+  <img src="docs/assets/screenshots/panel-claude.jpg" width="32%" alt="Claude Code page: session and weekly limits, today's tokens and active sessions">
 </p>
 
-<p align="center"><sub>All screenshots use synthetic data. <a href="website/video/lunlet-walkthrough.mp4">Watch the one-minute walkthrough</a>, rendered from Lunlet's own views with synthetic data, captions included.</sub></p>
+<p align="center"><sub>Every picture is rendered from Lunlet's own interface with synthetic data by <code>scripts/render-site-assets.sh</code>. <a href="website/video/lunlet-walkthrough.mp4">Watch the one-minute walkthrough</a>, rendered from Lunlet's own views with synthetic data, captions included.</sub></p>
 
 > **Status: source preview.** There is no signed download yet; build it from source as shown below. Codex and Claude Code observation, limits and usage work locally. Notices to a locked Mac's paired Feishu, Telegram or Slack chat, and one reply per notice that continues the same Codex session, are verified on the maintainer's devices. Feishu cards have not yet been reviewed in the phone app, and Claude Code sessions take no replies.
 

@@ -297,13 +297,14 @@ struct FilmCanvas {
     static let size = CGSize(width: 1920, height: 1080)
     let context: CGContext
 
-    init() {
-        context = CGContext(data: nil, width: Int(Self.size.width), height: Int(Self.size.height), bitsPerComponent: 8,
-                            bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+    /// A frame with `density` device pixels per frame pixel: 1 for the film, more for stills shown at a higher resolution.
+    init(density: CGFloat = 1) {
+        context = CGContext(data: nil, width: Int(Self.size.width * density), height: Int(Self.size.height * density),
+                            bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
                             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
         context.interpolationQuality = .high
         context.setShouldAntialias(true); context.setAllowsFontSmoothing(true)
-        context.translateBy(x: 0, y: Self.size.height); context.scaleBy(x: 1, y: -1)
+        context.translateBy(x: 0, y: Self.size.height * density); context.scaleBy(x: density, y: -density)
     }
     /// Wraps a context that already draws with y pointing down.
     init(context: CGContext) { self.context = context }
