@@ -92,7 +92,7 @@ private actor RangeHistoryReader: LocalUsageReading {
         let reader = HistoryReader(blocked: true)
         let subject = LocalUsageModel(reader: reader)
         subject.refresh(); subject.refresh(); subject.refreshIfNeeded()
-        let deadline = ContinuousClock.now + .seconds(2)
+        let deadline = ContinuousClock.now + .seconds(10)
         while await reader.reads == 0, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
         #expect(await reader.reads == 1)
         await subject.shutdown()
@@ -109,7 +109,7 @@ private actor RangeHistoryReader: LocalUsageReading {
         let subscription = subject.$snapshot.compactMap { $0?.days.count }.sink { published.append($0) }
         defer { subscription.cancel() }
         subject.refresh()
-        let deadline = ContinuousClock.now + .seconds(2)
+        let deadline = ContinuousClock.now + .seconds(10)
         while await reader.requests.isEmpty, ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(5))
         }
@@ -129,7 +129,7 @@ private actor RangeHistoryReader: LocalUsageReading {
         let reader = RangeHistoryReader()
         let subject = LocalUsageModel(reader: reader)
         subject.refresh()
-        let deadline = ContinuousClock.now + .seconds(2)
+        let deadline = ContinuousClock.now + .seconds(10)
         while await reader.requests.isEmpty, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
         subject.setHistoryDays(7); subject.setHistoryDays(5)
         await reader.release()
@@ -198,7 +198,7 @@ private actor RangeHistoryReader: LocalUsageReading {
         await model.shutdown()
     }
     private func settle(_ model: LocalUsageModel) async throws {
-        let deadline = ContinuousClock.now + .seconds(2)
+        let deadline = ContinuousClock.now + .seconds(10)
         while model.isLoading, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
         #expect(!model.isLoading)
     }

@@ -75,10 +75,16 @@ struct WeeklyQuotaTrend: Equatable {
     private(set) var readings: [QuotaReading] = []
 
     mutating func record(_ snapshot: AccountLimitsSnapshot) {
+        // Every weekly window must report a used percentage within range; spelled out in steps so the compiler
+        // type-checks it quickly on every supported toolchain.
+        let windows = snapshot.buckets.flatMap { [$0.primary, $0.secondary] }.compactMap { $0 }
+        let weeklyWindows = windows.filter { $0.durationMinutes == 10_080 }
+        let weeklyPercentsValid = weeklyWindows.allSatisfy { window in
+            guard let used = window.usedPercent else { return false }
+            return used <= 100
+        }
         guard let email = snapshot.identity?.email, !email.isEmpty,
-              let weekly = AccountUsagePresentation.weekly(in: snapshot),
-              snapshot.buckets.flatMap({ [$0.primary, $0.secondary] }).compactMap({ $0 })
-                .filter({ $0.durationMinutes == 10_080 }).allSatisfy({ $0.usedPercent.map { $0 <= 100 } == true }),
+              let weekly = AccountUsagePresentation.weekly(in: snapshot), weeklyPercentsValid,
               let remaining = weekly.remainingPercent, remaining.isFinite, (0...100).contains(remaining),
               let reset = weekly.resetsAt, reset > snapshot.observedAt,
               reset.timeIntervalSince(snapshot.observedAt) <= 7 * 86_400 else {

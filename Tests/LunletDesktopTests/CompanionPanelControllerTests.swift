@@ -88,7 +88,7 @@ private struct TabRowContent: View {
         #expect(window.frame.width == 490 && window.frame.height == 397)
         #expect(probe.band == NotchBand(height: 32, leading: 142.5, trailing: 142.5))
         probe.tabs = true
-        let deadline = ContinuousClock.now + .seconds(2)
+        let deadline = ContinuousClock.now + .seconds(10)
         while window.frame.height != 427, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
         #expect(window.frame.height == 425 && window.frame.maxY == 982 && controller.isVisible)
         controller.hide(animated: false)

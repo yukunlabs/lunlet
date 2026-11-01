@@ -239,6 +239,10 @@ struct WeeklyTrendChart: View {
             .foregroundStyle(projected ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary)).help(help)
     }
 
+    /// The band's extent at one moment, for VoiceOver; built outside the chart builder so it type-checks quickly.
+    private func bandDescription(_ point: QuotaEstimateGeometry.BandPoint) -> String {
+        percent(point.low) + " to " + percent(point.high) + " at " + time(point.at)
+    }
     private func chart(points: [QuotaReading], resets: [QuotaResetMarker], reset: Date, now: Date, days: Int,
                        pace: QuotaPace, summary: String) -> some View {
         let windowStart = QuotaChartTimeline.start(now: now, days: days) ?? now
@@ -258,8 +262,7 @@ struct WeeklyTrendChart: View {
                          series: .value("Series", "Estimate range"))
                     .foregroundStyle(.tint.opacity(0.18))
                     .accessibilityLabel("Estimate range")
-                    .accessibilityValue(percent(point.low) + " to "
-                        + percent(point.high) + " at " + time(point.at))
+                    .accessibilityValue(bandDescription(point))
             }
             if let ideal {
                 ForEach([(idealStart, ideal), (reset, 0.0)], id: \.0) { at, remaining in

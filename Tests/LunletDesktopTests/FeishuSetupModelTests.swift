@@ -74,7 +74,7 @@ private final class SetupHTTPProtocol: URLProtocol, @unchecked Sendable {
 }
 
 @MainActor private func eventually(_ expected: FeishuSetupModel.State, in model: FeishuSetupModel) async throws {
-    let deadline = ContinuousClock.now + .seconds(2)
+    let deadline = ContinuousClock.now + .seconds(10)
     while model.state != expected, ContinuousClock.now < deadline {
         try await Task.sleep(for: .milliseconds(5))
     }
@@ -107,7 +107,7 @@ private final class SetupHTTPProtocol: URLProtocol, @unchecked Sendable {
     let model = FeishuSetupModel(store: RecoverableStorage(failRemoval: true))
     await model.load()
     model.removeSetup()
-    let deadline = ContinuousClock.now + .seconds(2)
+    let deadline = ContinuousClock.now + .seconds(10)
     while model.state == .stopping, ContinuousClock.now < deadline {
         try await Task.sleep(for: .milliseconds(5))
     }
@@ -127,7 +127,7 @@ private final class SetupHTTPProtocol: URLProtocol, @unchecked Sendable {
     model.removeSetup()
     try await eventually(.disconnected, in: model)
     model.connect()
-    let deadline = ContinuousClock.now + .seconds(4)
+    let deadline = ContinuousClock.now + .seconds(10)
     while ContinuousClock.now < deadline {
         if case .failed = model.state { break }
         try await Task.sleep(for: .milliseconds(5))

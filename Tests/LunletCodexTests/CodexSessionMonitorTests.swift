@@ -65,8 +65,14 @@ struct CodexSessionMonitorTests {
     let helper = CodexSessionReaderTests()
     let a = CodexProcessIdentity(pid: 42, seconds: 100, microseconds: 0)
     let b = CodexProcessIdentity(pid: 43, seconds: 101, microseconds: 0)
+    private func wait(_ capture: CapturedUpdates, liveness: CLILiveness) async throws {
+        let end = ContinuousClock.now + .seconds(10)
+        while await capture.snapshots.last?.0.observation.liveness != liveness, ContinuousClock.now < end {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+    }
     private func wait(_ capture: CapturedUpdates, for count: Int) async throws {
-        let end = ContinuousClock.now + .seconds(2)
+        let end = ContinuousClock.now + .seconds(10)
         while await capture.count < count, ContinuousClock.now < end { try await Task.sleep(for: .milliseconds(5)) }
         #expect(await capture.count >= count)
     }
@@ -460,12 +466,12 @@ struct CodexSessionMonitorTests {
         let stream=await monitor.updates();let sink=Task { for await u in stream { await capture.append(u) } }
         await monitor.refresh();try await wait(capture,for:1)
         processes.set([.init(process:a,files:[f1,f2])]);await monitor.refresh()
-        try await Task.sleep(for:.milliseconds(30))
+        try await wait(capture, liveness: .unverified)
         #expect(await capture.snapshots.last?.0.observation.liveness == .unverified)
         #expect(await monitor.activeConnections().isEmpty)
         try helper.header(helper.second).write(to:f2.url)
         processes.set([.init(process:a,files:[f1,f2]),.init(process:b,files:[f1])])
-        await monitor.refresh();try await Task.sleep(for:.milliseconds(30))
+        await monitor.refresh();try await wait(capture, liveness: .unverified)
         #expect(await capture.snapshots.last?.0.observation.liveness == .unverified)
         await monitor.shutdown();await sink.value
     }

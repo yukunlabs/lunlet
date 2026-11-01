@@ -134,7 +134,7 @@ final class RenderPower: IdleSleepControlling { func setEnabled(_ enabled: Bool)
             }
         }
         if showHistory { sessions.clearDisplayedSessions(provider: tab) }
-        let deadline = ContinuousClock.now + .seconds(2)
+        let deadline = ContinuousClock.now + .seconds(10)
         while (codexUsage.snapshot == nil || claudeUsage.snapshot == nil || usage.state == .loading), ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(5))
         }

@@ -687,9 +687,10 @@ struct FilmNoticeCardView: View {
                         .padding(.top, label && index > 0 ? 6 : 0)
                 }
                 if let input = card.input {
+                    let fieldColor: Color = input.text == nil ? .white.opacity(0.4) : (input.enabled ? .white : .white.opacity(0.6))
                     HStack(spacing: 8) {
                         Text(input.text ?? input.placeholder).font(.system(size: 15))
-                            .foregroundStyle(input.text == nil ? Color.white.opacity(0.4) : (input.enabled ? Color.white : Color.white.opacity(0.6)))
+                            .foregroundStyle(fieldColor)
                             .lineLimit(2).padding(.horizontal, 12).padding(.vertical, 9)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(.white.opacity(input.enabled ? 0.08 : 0.04)))

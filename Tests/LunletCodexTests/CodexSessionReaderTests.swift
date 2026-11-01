@@ -341,8 +341,10 @@ struct CodexSessionReaderTests {
         defer { try? FileManager.default.removeItem(at: root) }
         var reader = CodexSessionReader(file: file); _ = try reader.read()
         let filler = try line("response_item", ["type": "function_call_output", "output": String(repeating: "x", count: 1_000_000)])
-        try append(try event("task_complete", "old") + event("task_started", "new")
-            + filler + filler + filler + filler + filler + event("task_complete", "new"), to: file)
+        var appended = try event("task_complete", "old") + event("task_started", "new")
+        for _ in 0..<5 { appended += filler }
+        appended += try event("task_complete", "new")
+        try append(appended, to: file)
         let bounded = try reader.read()
         #expect(bounded.content.phase == .unknown && bounded.baseline)
         let caughtUp = try reader.read()

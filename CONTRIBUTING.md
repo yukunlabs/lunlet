@@ -20,6 +20,8 @@ Fork the repository or create a short-lived branch from `main`, and keep one log
 
 Run the relevant module first (`scripts/test-core.sh core|codex|claude|feishu|messaging|storage|desktop`) and the full default suite at the change boundary. Run `python3 scripts/test_traceability.py`, `python3 scripts/check_traceability.py`, and `git diff --check`. For website changes, run `python3 scripts/test_site.py` and build the site locally. If native interaction, live messaging or a signed update matters, describe what was actually tested and what remains unaccepted. Synthetic tests do not establish live delivery.
 
+The hosted `macos-26` runner differs from a development Mac: its Swift toolchain lags the current Xcode release and it is slower under load. Before pushing, build with `-Xswiftc -Xfrontend -Xswiftc -warn-long-expression-type-checking=100` and split any expression it reports, keep test waits on ten-second deadlines with one deadline per wait, and do not assert absolute wall-clock times below half a second.
+
 The maintainer reviews external PRs for product scope, correctness, privacy, licensing and evidence. Address review conversations before merge. The default branch is protected: merging requires the Validate check and resolved conversations, and direct pushes, force pushes and deletion are disabled. An independent approval requirement is added when a second maintainer is available.
 
 ## Report security issues privately
