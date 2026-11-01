@@ -17,3 +17,4 @@ Describe the behavior this changes and link the related Issue. Cite the confirme
 - [ ] New dependencies or assets have reviewed license and attribution terms.
 - [ ] Documentation and UI copy describe current capability without claiming synthetic tests are live acceptance.
 - [ ] Cancellation, binding, authorization and cleanup boundaries remain covered where relevant.
+- [ ] The product page is in step: a story this change confirms declares its page section and is presented there, interface changes come with re-rendered stills (`scripts/render-site-assets.sh`), and `python3 scripts/check_site_assets.py` passes.

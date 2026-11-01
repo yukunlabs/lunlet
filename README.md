@@ -5,7 +5,7 @@
 Lunlet lives around your MacBook's notch and keeps the Codex and Claude Code work already running on your Mac in view: what each session is doing, how much of each plan is left, and how many tokens you have used. When you lock the Mac and step away, it can send a short completion notice to your own Feishu/Lark, Slack or Telegram bot.
 
 <p align="center">
-  <img src="docs/assets/screenshots/notch.png" width="680" alt="The lun and let lettering beside the notch, joined by two vine strands that show each agent's weekly allowance">
+  <img src="docs/assets/screenshots/notch-vine.png" width="680" alt="The lun and let lettering beside the notch, joined by two vine strands that show each agent's weekly allowance">
 </p>
 
 <p align="center">

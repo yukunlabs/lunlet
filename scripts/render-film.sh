@@ -46,4 +46,6 @@ out=website/video
     -movflags +faststart -an "$out/lunlet-walkthrough.mp4"
 "$ffmpeg_bin" -hide_banner -loglevel error -y -i "$frames/poster.png" -q:v 3 "$out/lunlet-poster.jpg"
 cp "$frames/lunlet-captions.vtt" "$out/lunlet-captions.vtt"
+# The film's manifest records the sources it was drawn from, so scripts/check_site_assets.py can tell when it lags them.
+python3 scripts/check_site_assets.py --film --write
 ls -l "$out/lunlet-walkthrough.mp4" "$out/lunlet-poster.jpg" "$out/lunlet-captions.vtt"

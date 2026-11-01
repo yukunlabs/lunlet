@@ -38,8 +38,11 @@ import LunletCore
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let world = try await FilmWorld()
         let film = FilmStoryboard(world: world)
-        let pages: [(String, Double, FilmWorld.Page)] = [("codex", Self.codexTime, .codex), ("overview", Self.heroTime, .overview),
-                                                        ("claude", Self.claudeTime, .claude)]
+        // The page stills are named after the agents' own identifiers, and every agent the app offers has one.
+        let pages: [(String, Double, FilmWorld.Page)] = [(SessionProvider.codex.rawValue, Self.codexTime, .codex),
+                                                        ("overview", Self.heroTime, .overview),
+                                                        (SessionProvider.claude.rawValue, Self.claudeTime, .claude)]
+        #expect(Set(pages.map(\.0)).isSuperset(of: SessionProvider.allCases.map(\.rawValue)))
         for (_, time, page) in pages {
             let shown = film.page(at: time)
             #expect(shown.from == page)
@@ -71,6 +74,8 @@ import LunletCore
                                ("phone-feishu-delivered", world.phoneChatDelivered)] {
             try Self.write(Self.phone(screen), to: directory.appendingPathComponent(name + ".png"))
         }
+        // Every messenger the app offers is shown: Feishu as the film's card, the others from their composed messages.
+        #expect(Set(CommunicationChannel.allCases.map(\.rawValue)) == ["feishu", "slack", "telegram"])
         let notice = SessionNotice.prepare(world.notice)
         let states: [(String, NoticeReplyState)] = [("notice", .open), ("replied", .received(world.replyText)),
                                                     ("delivered", .finished(.delivered, world.replyText))]
@@ -98,9 +103,9 @@ import LunletCore
             try Self.write(Self.phone(await Self.screen(telegramChat)), to: directory.appendingPathComponent("phone-telegram-" + state + ".png"))
         }
         // The entry beside the notch in each built-in skin, with the same agents and sessions as the film (AC-04.13).
-        for (name, skin) in [("notch", SkinCatalog.builtins[0]), ("notch-lanterns", SkinCatalog.builtins[1])] {
+        for skin in SkinCatalog.builtins {
             try Self.write(try Self.entry(skin: skin, allowances: world.allowances, status: world.sessionStatus),
-                           to: directory.appendingPathComponent(name + ".png"))
+                           to: directory.appendingPathComponent("notch-" + skin.id + ".png"))
         }
         await world.shutdown()
     }
