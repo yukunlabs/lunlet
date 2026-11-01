@@ -1,6 +1,6 @@
 # Release preparation
 
-The source is published at [github.com/yukunlabs/lunlet](https://github.com/yukunlabs/lunlet) as a source preview; no signed download or product page has been published yet. This workflow supports US-27 through US-30 and US-35; it does not establish MVP acceptance.
+The source is published at [github.com/yukunlabs/lunlet](https://github.com/yukunlabs/lunlet) as a source preview and the product page at [yukunlabs.github.io/lunlet](https://yukunlabs.github.io/lunlet/); no signed download has been published yet. This workflow supports US-27 through US-30 and US-35; it does not establish MVP acceptance.
 
 ## Hosting and cost
 
