@@ -16,7 +16,7 @@ Lunlet lives around your MacBook's notch and keeps the Codex and Claude Code wor
 
 <p align="center"><sub>Every picture is rendered from Lunlet's own interface with synthetic data by <code>scripts/render-site-assets.sh</code>. <a href="website/video/lunlet-walkthrough.mp4">Watch the one-minute walkthrough</a>, rendered from Lunlet's own views with synthetic data, captions included.</sub></p>
 
-> **Status: source preview.** There is no signed download yet; build it from source as shown below. Codex and Claude Code observation, limits and usage work locally. Notices to a locked Mac's paired Feishu, Telegram or Slack chat, and one reply per notice that continues the same Codex session, are verified on the maintainer's devices. Feishu cards have not yet been reviewed in the phone app, and Claude Code sessions take no replies.
+> **Status: unsigned preview.** Download the disk image from the [latest GitHub Release](https://github.com/yukunlabs/lunlet/releases/latest) or build from source as shown below. The download is signed ad hoc and not notarized, so macOS asks you to allow it once: on macOS 15 and later, open it, choose Done, then System Settings › Privacy & Security › Open Anyway; on macOS 14, right-click Lunlet and choose Open. Updates install from inside Lunlet and ask for nothing. Codex and Claude Code observation, limits and usage work locally. Notices to a locked Mac's paired Feishu, Telegram or Slack chat, and one reply per notice that continues the same Codex session, are verified on the maintainer's devices. Feishu cards have not yet been reviewed in the phone app, Claude Code sessions take no replies, and an in-app update from the first version is accepted when the second one ships.
 
 ## Features
 
@@ -28,9 +28,13 @@ Lunlet lives around your MacBook's notch and keeps the Codex and Claude Code wor
 
 ## Requirements
 
-- macOS 14 or later. Tested on macOS 27 on Apple silicon; a notched MacBook gives the full experience.
+- macOS 14 or later on Apple silicon (the download is arm64 only). Tested on macOS 27; a notched MacBook gives the full experience.
 - Codex (CLI or app) and/or Claude Code, signed in on this Mac.
 - To build: Xcode Command Line Tools with Swift 6.2 or later.
+
+## Install
+
+Download `Lunlet-<version>-macos-arm64.dmg` from the [latest release](https://github.com/yukunlabs/lunlet/releases/latest), open it and drag Lunlet to Applications. Each release lists its files' SHA-256 checksums, its source tag and, in `manifest.json`, its signing and notarization status. The first time you open it, macOS asks you to allow it as described above. Release notes live in [docs/release-notes](docs/release-notes).
 
 ## Build and run
 
@@ -57,7 +61,7 @@ open .tmp/Lunlet.app
 ## Not yet available
 
 - Replies to Claude Code sessions, and answering an agent's question from your phone.
-- A download: the first one will be an unsigned preview, with first-open steps in its notes; a notarized release comes later. Feishu cards reviewed in the phone app.
+- A notarized download: the current one is an unsigned preview that macOS asks you to allow on first open; a Developer ID-signed, notarized release comes later. Intel Macs. Feishu cards reviewed in the phone app.
 - Linux, Cursor and other agents.
 
 ## Development
