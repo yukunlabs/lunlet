@@ -35,7 +35,7 @@ import LunletSecureStorage
     private enum Recovery { case load, authorize, register, save(FeishuEnrollment), remove }
     private var recovery: Recovery = .register
 
-    init(registration: RegistrationClient = RegistrationClient(), store: any EnrollmentStoring = EnrollmentStore(),
+    init(registration: RegistrationClient = RegistrationClient(), store: any EnrollmentStoring = MigratingEnrollmentStore.standard(),
          ownerMemory: FeishuOwnerMemory = FeishuOwnerMemory()) {
         self.ownerMemory = ownerMemory
         self.registration = registration
@@ -120,7 +120,8 @@ import LunletSecureStorage
         await registration.cancel()
     }
 
-    /// Only this build's Keychain access is missing; the saved connection itself is intact, so authorizing is the
+    /// Only this build's access to a connection an earlier build saved in the Keychain is missing; the connection
+    /// itself is intact and one authorization moves it into Lunlet's credential file for good, so authorizing is the
     /// primary action and removal, which would create another Feishu bot on reconnecting, asks first.
     var accessRequired: Bool { if case .authorize = recovery { true } else { false } }
     var retryTitle: String { accessRequired ? "Authorize access" : "Try again" }
@@ -187,7 +188,7 @@ import LunletSecureStorage
         if needsAuthorization(error) {
             return "This build needs your permission to read the saved Feishu connection. The connection itself is intact."
         }
-        return "Lunlet could not \(operation) in Keychain. Feishu is unavailable. Try again after the storage issue is resolved."
+        return "Lunlet could not \(operation) on this Mac. Feishu is unavailable. Try again after the storage issue is resolved."
     }
 
     private static func message(for error: Error) -> String {

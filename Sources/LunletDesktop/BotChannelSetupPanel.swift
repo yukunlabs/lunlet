@@ -82,9 +82,10 @@ struct BotChannelSetupPanel: View {
                 }
             }
             HStack(alignment: .center) {
-                Label("Tokens stay in your Keychain", systemImage: "lock.fill")
+                Label("Tokens stay on this Mac", systemImage: "lock.fill")
                     .font(Font.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                    .help("Use a bot dedicated to Lunlet. Tokens are saved only in macOS Keychain and never leave this Mac.")
+                    .help("Use a bot dedicated to Lunlet. Tokens are saved in a file only your macOS user can read, under "
+                        + "Library/Application Support/com.lunlet, and go only to your messenger.")
                 Spacer(minLength: PanelStyle.Space.medium)
                 if model.reloadAvailable { Button("Reload saved connection", action: model.reload).controlSize(.small) }
                 Button("Connect") {

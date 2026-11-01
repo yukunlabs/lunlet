@@ -37,8 +37,8 @@ if [ "$lunlet_preview" = true ]; then
     if [ -z "$lunlet_signing_identity" ]; then lunlet_signing_identity=-; fi
 elif [ "$lunlet_signing_identity" = - ] && [ "${LUNLET_RELEASE_UNSIGNED:-}" = 1 ]; then
     # The unsigned preview release (owner decision 2026-11-01): a release build signed ad hoc, so macOS asks to allow it
-    # on first open and each update asks once to authorize the saved bot connection. Its notes must say so (AC-27.05).
-    printf '%s\n' 'Building an unsigned preview release; its notes must state the first-open steps and the authorization click after each update.' >&2
+    # on first open; credentials live in Lunlet's user-only file, so updates ask for nothing. Its notes must say so (AC-27.05).
+    printf '%s\n' 'Building an unsigned preview release; its notes must state the first-open steps.' >&2
 elif [ -z "$lunlet_signing_identity" ] || [ "$lunlet_signing_identity" = - ]; then
     printf '%s\n' 'A normal Lunlet build requires a certificate signing identity.' >&2
     printf '%s\n' 'Set LUNLET_CODE_SIGN_IDENTITY (or LUNLET_CODE_SIGN_IDENTITY=- with LUNLET_RELEASE_UNSIGNED=1 for an unsigned preview release), or use --preview for a development build with explicit owner authorization for saved Feishu access.' >&2
