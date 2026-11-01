@@ -1,14 +1,18 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
-// Refs: US-28, AC-28.01, AC-28.02, AC-28.04; US-06, AC-06.01, AC-06.02; US-13, AC-13.07; US-19, AC-19.05; US-04, AC-04.13.
+// Refs: US-28, AC-28.01, AC-28.02, AC-28.04; US-06, AC-06.01, AC-06.02; US-36, AC-36.01, AC-36.03; US-13, AC-13.07.
+// Refs: US-19, AC-19.05; US-04, AC-04.13.
 // The product page's stills, drawn from the film's synthetic world so every picture is Lunlet's real interface with
-// synthetic data (AC-28.02): the Overview open on the synthetic display, the task cue island, the phone's notice card
-// before and after a reply, and the entry in each built-in skin. Opt-in: set `LUNLET_SITE_ASSET_DIR` to a directory
+// synthetic data (AC-28.02): the Overview open on the synthetic display, the task cue island, the phone's notice on
+// Feishu, Slack and Telegram before and after a reply, and the entry in each built-in skin. Opt-in: set `LUNLET_SITE_ASSET_DIR` to a directory
 // outside the repository; `scripts/render-site-assets.sh` runs this and places the results. The screen is never captured.
 import AppKit
 import ImageIO
+import SwiftUI
 import Testing
 import UniformTypeIdentifiers
+import LunletCore
+@testable import LunletMessaging
 @testable import LunletDesktop
 
 @Suite(.serialized, .enabled(if: ProcessInfo.processInfo.environment["LUNLET_SITE_ASSET_DIR"] != nil))
@@ -60,11 +64,38 @@ import UniformTypeIdentifiers
         for (name, time, _) in pages {
             try await still(at: time, crop: panelCrop.integral, camera: Self.reading, name: "panel-" + name + ".png")
         }
-        // The notice card with its open reply box, the reply received, and the card rewritten as delivered (AC-06.01,
-        // AC-06.02), each on the film's generic phone.
-        for (name, screen) in [("phone-notice", world.phoneChat), ("phone-replied", world.phoneChatReplied),
-                               ("phone-delivered", world.phoneChatDelivered)] {
+        // The notice on each channel, open, with the reply received, and rewritten as delivered (AC-06.01, AC-06.02,
+        // AC-36.01, AC-36.03), each on the film's generic phone. Feishu is the film's card; Slack and Telegram are
+        // read back from the messages Lunlet composes for them.
+        for (name, screen) in [("phone-feishu-notice", world.phoneChat), ("phone-feishu-replied", world.phoneChatReplied),
+                               ("phone-feishu-delivered", world.phoneChatDelivered)] {
             try Self.write(Self.phone(screen), to: directory.appendingPathComponent(name + ".png"))
+        }
+        let notice = SessionNotice.prepare(world.notice)
+        let states: [(String, NoticeReplyState)] = [("notice", .open), ("replied", .received(world.replyText)),
+                                                    ("delivered", .finished(.delivered, world.replyText))]
+        for (state, reply) in states {
+            let slack = try FilmSlackNotice(SlackNoticeMessage.body(notice, channel: "D0SYNTHETIC", reply: reply))
+            let telegram = try FilmTelegramNotice(html: TelegramNoticeMessage.html(notice, reply: reply),
+                                                  markup: TelegramNoticeMessage.replyMarkup(reply))
+            #expect(slack.headerText == "Codex succeeded · lunlet-site")
+            #expect(telegram.plainText.hasPrefix("Codex succeeded · lunlet-site"))
+            if reply == .open {
+                #expect(slack.contextLines.last?.hasPrefix("Reply in this thread") == true)
+                #expect(telegram.button == NoticeReplyText.replyButton)
+            } else {
+                let label = NoticeReplyText.status(reply, agent: "Codex")?.label ?? ""
+                #expect(slack.contextLines.last?.hasPrefix(label) == true)
+                #expect(telegram.button == nil)
+                #expect(telegram.plainText.contains(label))
+            }
+            let replied = reply == .open ? nil : world.replyText
+            let time = reply == .open ? "4:52" : "4:53"
+            let slackChat = FilmSlackChat(notice: slack, avatar: world.icon, time: time, stamp: "Today 4:52 PM", reply: replied)
+            let telegramChat = FilmTelegramChat(notice: telegram, avatar: world.icon, time: time, stamp: "Today 4:52 PM",
+                                                prompt: replied == nil ? nil : NoticeReplyText.prompt(agent: "Codex"), reply: replied)
+            try Self.write(Self.phone(await Self.screen(slackChat)), to: directory.appendingPathComponent("phone-slack-" + state + ".png"))
+            try Self.write(Self.phone(await Self.screen(telegramChat)), to: directory.appendingPathComponent("phone-telegram-" + state + ".png"))
         }
         // The entry beside the notch in each built-in skin, with the same agents and sessions as the film (AC-04.13).
         for (name, skin) in [("notch", SkinCatalog.builtins[0]), ("notch-lanterns", SkinCatalog.builtins[1])] {
@@ -83,6 +114,13 @@ import UniformTypeIdentifiers
         context.setShouldAntialias(true); context.setAllowsFontSmoothing(true)
         context.translateBy(x: 0, y: size.height * scale); context.scaleBy(x: scale, y: -scale)
         return context
+    }
+
+    /// One chat drawn at the phone's screen size and the film's density.
+    private static func screen(_ view: some View) async -> CGImage {
+        let host = FilmPageHost(AnyView(view), size: FilmPhone.screenSize)
+        defer { host.close() }
+        return await host.image(pointer: nil)
     }
 
     /// The phone around one screen image, with room for its shadow.

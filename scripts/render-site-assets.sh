@@ -20,7 +20,8 @@ fi
 out=docs/assets/screenshots
 mkdir -p "$out"
 # Interface-only pictures stay PNG; pictures of the synthetic display carry its wallpaper, so they ship as JPEG.
-for name in notch notch-lanterns phone-notice phone-replied phone-delivered; do
+for name in notch notch-lanterns phone-feishu-notice phone-feishu-replied phone-feishu-delivered phone-slack-notice \
+            phone-slack-replied phone-slack-delivered phone-telegram-notice phone-telegram-replied phone-telegram-delivered; do
     cp "$stills/$name.png" "$out/$name.png"
 done
 for name in hero-overview cue-island panel-codex panel-overview panel-claude; do
