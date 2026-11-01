@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
-// Refs: US-32, AC-32.01, AC-32.02, AC-32.03, AC-32.04, AC-32.05, AC-32.06, AC-32.07, AC-32.08.
+// Refs: US-32, AC-32.01, AC-32.02, AC-32.03, AC-32.04, AC-32.05, AC-32.06, AC-32.07, AC-32.08; US-33, AC-33.09.
 import Foundation
 import LunletCore
 
@@ -116,19 +116,38 @@ struct WeeklyQuotaTrend: Equatable {
         return .init(points: chart.points, resets: chart.resets, pace: pace)
     }
 
-    /// Daily points and detected resets of comparable readings for one window, shared by every agent's chart.
-    static func chart(_ comparable: [QuotaReading], resetAt: Date, now: Date, since: Date)
-        -> (points: [QuotaReading], resets: [QuotaResetMarker]) {
+    /// Changes smaller than this, in percentage points, are invisible at the chart's scale and add no point; the pace
+    /// still sees every reading.
+    static let chartResolution = 1.0
+
+    /// The points and detected resets of comparable readings for one window, shared by every agent's chart. The
+    /// readings within the shown days are drawn at the chart's resolution, so a window observed on one or two days
+    /// still shows its course: a reading is kept when it moves a visible step from the last kept one, when the next
+    /// reading moves a visible step from it (so a slope starts where it started), and at each day's and window's
+    /// edges, so a flat stretch still draws from day to day and a detected reset keeps both sides (AC-32.01,
+    /// AC-33.09). Invisible drift between those points is left out.
+    static func chart(_ comparable: [QuotaReading], resetAt: Date, now: Date, since: Date,
+                      calendar: Calendar = .current) -> (points: [QuotaReading], resets: [QuotaResetMarker]) {
         // The chart shows at most seven days, never the guard's extra day, and no unidentified later window.
         let start = max(since, now.addingTimeInterval(-WeeklyQuotaEstimator.week))
         let shown = comparable.filter {
             $0.at >= start && $0.resetAt.timeIntervalSince(resetAt) <= WeeklyQuotaEstimator.resetTimeTolerance
         }
         let events = Self.resetEvents(shown)
-        let groups = Dictionary(grouping: shown) { Calendar.current.startOfDay(for: $0.at) }
-        let daily = groups.keys.sorted().compactMap { groups[$0]?.last }
+        func edge(_ a: QuotaReading?, _ b: QuotaReading?) -> Bool {
+            guard let a, let b else { return true }
+            return !calendar.isDate(a.at, inSameDayAs: b.at)
+                || abs(a.resetAt.timeIntervalSince(b.resetAt)) > WeeklyQuotaEstimator.resetTimeTolerance
+        }
+        var drawn: [QuotaReading] = []
+        for (index, reading) in shown.enumerated() {
+            let previous = index > 0 ? shown[index - 1] : nil, next = index + 1 < shown.count ? shown[index + 1] : nil
+            let step = drawn.last.map { abs($0.remaining - reading.remaining) >= Self.chartResolution } ?? true
+            let slopeStart = next.map { abs($0.remaining - reading.remaining) >= Self.chartResolution } ?? false
+            if step || slopeStart || edge(previous, reading) || edge(reading, next) { drawn.append(reading) }
+        }
         var unique: [Date: QuotaReading] = [:]
-        for point in events.flatMap({ [$0.before, $0.after] }) + daily { unique[point.at] = point }
+        for point in events.flatMap({ [$0.before, $0.after] }) + drawn { unique[point.at] = point }
         return (unique.values.sorted { $0.at < $1.at }, events.map(\.marker))
     }
 

@@ -143,7 +143,7 @@ Validation order: (1) terminal-independent identification and continuation of ex
 ### Open gates
 
 - Feishu card review in the phone app, including each in-place reply state.
-- Quit can stall while a Slack reply listener is active; the app now quits after eight seconds regardless and logs the last finished shutdown stage. Root cause open.
+- Quit stalled twice on 2026-11-01 (01:15 and 01:24 local) while a Slack reply listener was active; the system log holds `event=shutdown outcome=started` for each with no stage or completion entry. Both ran a build from before the Socket Mode receive was made to resume on cancellation; every quit since completed within 100 ms. Each shutdown stage now waits at most two seconds and logs `uncertain reason=timeout code=<stage>` when it overruns, and the eight-second watchdog remains. Root cause probable, unproven: pending an owner reproduction with an active Slack listener.
 - Behavior under organization restrictions and the three-second provider response budget under load.
 
 ## Locked-device notifications and power

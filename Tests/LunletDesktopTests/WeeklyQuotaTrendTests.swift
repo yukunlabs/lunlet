@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
-// Refs: US-32, AC-32.01, AC-32.02, AC-32.03, AC-32.04, AC-32.05, AC-32.06, AC-32.07, AC-32.08.
+// Refs: US-32, AC-32.01, AC-32.02, AC-32.03, AC-32.04, AC-32.05, AC-32.06, AC-32.07, AC-32.08; US-33, AC-33.09.
 import Foundation
 import Testing
 import LunletCore
@@ -187,7 +187,7 @@ struct WeeklyQuotaTrendTests {
         #expect(trend.display(local: records, now: now, since: start).points.count < full.points.count)
     }
     @Test func forecastUsesFullResolutionReadingsNotDailyChartPoints() throws {
-        // AC-32.02: the chart keeps one point per day; the pace sees every reading.
+        // AC-32.02: the chart draws each reading of the shown days; the pace sees every reading, shown or not.
         var trend = WeeklyQuotaTrend()
         trend.record(try sample(hours: 72, remaining: 60))
         let priorReset = start.addingTimeInterval(-86_400)
@@ -198,9 +198,35 @@ struct WeeklyQuotaTrendTests {
         ]
         let now = start.addingTimeInterval(72 * 3600)
         let withRows = trend.display(local: rows, now: now)
-        #expect(withRows.points.count == 2)
+        #expect(withRows.points.count == 3)
         #expect(withRows.pace?.estimate != nil)
         #expect(withRows.pace != trend.display(local: [rows[1]], now: now).pace)
+    }
+    // AC-32.01, AC-33.09: a window observed on a single day shows its whole course, not one point; a flat run shows
+    // its two ends per day, so a quiet stretch still draws a line from day to day.
+    @Test func everyReadingOfTheShownDaysIsDrawnExceptTheInteriorOfAFlatRun() throws {
+        var trend = WeeklyQuotaTrend()
+        trend.record(try sample(hours: 72, remaining: 60))
+        let reset = start.addingTimeInterval(7 * 86_400), now = start.addingTimeInterval(72 * 3600)
+        func reading(_ minutesAgo: Double, _ remaining: Double) -> LocalQuotaObservation {
+            .init(at: now.addingTimeInterval(-minutesAgo * 60), resetAt: reset, remaining: remaining, bucketID: "codex", plan: "pro")
+        }
+        // Five falling readings within the last hour and the account's own: all six are drawn.
+        let falling = [reading(50, 90), reading(40, 85), reading(30, 80), reading(20, 75), reading(10, 70)]
+        #expect(trend.display(local: falling, now: now).points.map(\.remaining) == [90, 85, 80, 75, 70, 60])
+        // Ten identical readings spread over three days keep each day's first and last, never a bare interior.
+        let calendar = Calendar(identifier: .gregorian)
+        let dayStart = calendar.startOfDay(for: now.addingTimeInterval(-3 * 86_400))
+        let flat = (0..<10).map { index in
+            LocalQuotaObservation(at: dayStart.addingTimeInterval(Double(index) * 6 * 3600 + 3600), resetAt: reset, remaining: 95,
+                                  bucketID: "codex", plan: "pro")
+        }
+        let points = WeeklyQuotaTrend.chart(flat.map { QuotaReading(at: $0.at, remaining: $0.remaining, resetAt: $0.resetAt) },
+                                            resetAt: reset, now: now, since: .distantPast, calendar: calendar).points
+        let perDay = Dictionary(grouping: points) { calendar.startOfDay(for: $0.at) }.values.map(\.count)
+        #expect(points.count == 6 && perDay.allSatisfy { $0 == 2 })
+        #expect(points.first?.at == flat.first?.at && points.last?.at == flat.last?.at)
+        for (a, b) in zip(points, points.dropFirst()) { #expect(QuotaChartSegments.connects(a, b, calendar: calendar)) }
     }
     @Test func forecastIncludesConsumptionImmediatelyAfterAReset() throws {
         var trend = WeeklyQuotaTrend()
@@ -250,7 +276,9 @@ struct WeeklyQuotaTrendTests {
         let runOut = try #require(pace.estimate?.runOut)
         #expect(abs(runOut.timeIntervalSince(start.addingTimeInterval(5 * 86_400))) < 600)
     }
-    @Test func dailyChartCollapsesManySamplesWithoutLosingTheCurrentReading() throws {
+    // AC-32.01: a slow drift sampled every half hour draws one point per visible step, never one per sample, and the
+    // current reading is never lost.
+    @Test func chartThinsInvisibleDriftWithoutLosingTheCurrentReading() throws {
         var trend = WeeklyQuotaTrend()
         trend.record(try sample(hours: 72, remaining: 60))
         let reset = start.addingTimeInterval(7 * 86_400)
@@ -259,10 +287,13 @@ struct WeeklyQuotaTrendTests {
                                   remaining: 90 - Double(index) * 0.2, bucketID: "codex", plan: "pro")
         }
         let chart = trend.display(local: rows, now: start.addingTimeInterval(72 * 3600)).points
-        #expect(chart.count <= 8)
-        #expect(chart.last?.remaining == 60)
+        // About 24 visible steps of one point, two points each at most, plus the day edges and the current reading.
+        #expect(chart.count >= 24 && chart.count <= 60)
+        #expect(chart.first?.remaining == 90 && chart.last?.remaining == 60)
     }
-    @Test func chartKeepsLatestObservationForEachDay() throws {
+    // AC-32.01, AC-33.09: readings minutes apart that each move a visible step all appear; the chart no longer keeps
+    // only each day's last reading.
+    @Test func chartKeepsEveryVisibleStepWithinADay() throws {
         var trend = WeeklyQuotaTrend()
         trend.record(try sample(hours: 72, remaining: 60))
         let reset = start.addingTimeInterval(7 * 86_400)
@@ -271,9 +302,7 @@ struct WeeklyQuotaTrendTests {
                                   remaining: $0.1, bucketID: "codex", plan: "pro")
         }
         let result = trend.display(local: values, now: start.addingTimeInterval(72 * 3600)).points
-        #expect(result.contains { $0.remaining == 88 })
-        #expect(!result.contains { $0.remaining == 90 })
-        #expect(!result.contains { $0.remaining == 89 })
+        #expect(result.map(\.remaining) == [90, 89, 88, 60])
     }
     @Test func timelineIncludesEveryDateThroughReset() throws {
         var calendar = Calendar(identifier: .gregorian)

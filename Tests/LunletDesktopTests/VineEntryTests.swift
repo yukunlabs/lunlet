@@ -274,7 +274,8 @@ struct VineEntryTests {
             view.layoutSubtreeIfNeeded()
             #expect(sublayer("rope", in: view.layer)?.isHidden == true)
             let scene = try #require(view.layer?.sublayers?.first { $0.name == "lanterns" })
-            #expect(scene.sublayers?.filter { $0.name?.hasPrefix("lamp-") == true }.count == 10)
+            let lampLayers = scene.sublayers?.filter { $0.name?.hasPrefix("lamp-") == true } ?? []
+            #expect(lampLayers.count == 10)
             #expect(sublayer("cord-codex", in: scene) != nil && sublayer("cord-claude", in: scene) != nil)
             // Codex's 90% lights four and a half of its lamps; Claude Code's 30% one and a half of its own.
             let codex = try opacities("lamp-codex"), claude = try opacities("lamp-claude")

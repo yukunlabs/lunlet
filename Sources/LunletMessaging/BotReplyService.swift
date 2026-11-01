@@ -158,12 +158,7 @@ public actor BotReplyService {
     /// Waits for a cancelled task, but at most `limit`.
     private static func settle<Value: Sendable>(_ task: Task<Value, Never>?, limit: Duration = .seconds(3)) async {
         guard let task else { return }
-        await withTaskGroup(of: Void.self) { group in
-            group.addTask { _ = await task.value }
-            group.addTask { try? await Task.sleep(for: limit) }
-            await group.next()
-            group.cancelAll()
-        }
+        _ = await BoundedWait.settle(task, limit: limit)
     }
 
     var isListening: Bool { listener != nil }
