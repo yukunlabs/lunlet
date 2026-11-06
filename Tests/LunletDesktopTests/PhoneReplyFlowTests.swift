@@ -211,7 +211,7 @@ private final class ReplyPower: IdleSleepControlling {
         let adapter = CodexQueueAdapter(runner: queue, queueTimeout: .seconds(2), confirmationTimeout: .seconds(2),
                                         pollInterval: .milliseconds(5), baseEnvironment: ["HOME": "/Users/synthetic"])
         notifications.configure(sender: FeishuCompletionSender(
-            client: client, renderer: renderer, dispatch: CodexReplyDispatch.make(observation: observation, adapter: adapter),
+            client: client, renderer: renderer, dispatch: ReplyDispatch.make(observation: observation, codex: adapter),
             connect: { transports.make() }))
         observation.start()
         try await waitUntil { list.sessions.count == 1 }

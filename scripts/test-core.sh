@@ -13,6 +13,7 @@ case "${1:-}" in
     core) lunlet_test_scope=LunletCoreTests; shift ;;
     codex) lunlet_test_scope=LunletCodexTests; shift ;;
     claude) lunlet_test_scope=LunletClaudeTests; shift ;;
+    hook) lunlet_test_scope=LunletHookTests; shift ;;
     feishu) lunlet_test_scope=LunletFeishuTests; shift ;;
     messaging) lunlet_test_scope=LunletMessagingTests; shift ;;
     storage) lunlet_test_scope=LunletSecureStorageTests; shift ;;

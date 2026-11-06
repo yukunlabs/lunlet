@@ -99,9 +99,10 @@ struct FeishuReplyServiceTests {
     private let owner = CardCallbackFixture.owner
 
     private func snapshot(_ phase: SessionPhase = .idle(completedTurnID: "turn_one"), provider: SessionProvider = .codex,
-                          parent: UUID? = nil, liveness: CLILiveness = .alive) -> SessionSnapshot {
+                          parent: UUID? = nil, liveness: CLILiveness = .alive, inputPath: SessionInputPath? = nil) -> SessionSnapshot {
         SessionSnapshot(observation: .init(sessionID: session, connectionID: cli, liveness: liveness, phase: phase),
-                        project: "Lunlet", title: "Synthetic task", parentSessionID: parent, provider: provider)
+                        project: "Lunlet", title: "Synthetic task", parentSessionID: parent, provider: provider,
+                        inputPath: inputPath)
     }
     private func ownerReceipt(_ message: String = "om_card") -> FeishuMessageReceipt {
         FeishuMessageReceipt(messageID: message, chatID: "oc_synthetic", applicationID: owner.applicationID,
@@ -246,6 +247,23 @@ struct FeishuReplyServiceTests {
         #expect(connections.active == 1)
         await value.close()
         #expect(connections.active == 0)
+    }
+
+    // Refs: US-38, AC-38.02.
+    @Test func claudeSessionsWithLunletsHookTakeRepliesLikeCodex() async throws {
+        let cards = SyntheticCards(), connections = SyntheticConnections(), dispatch = SyntheticDispatch()
+        let value = service(cards, connections, dispatch)
+        value.recordOwner(from: ownerReceipt())
+        value.setReplyWindow(true)
+        let linked = snapshot(provider: .claude, inputPath: .claudeHook)
+        value.observe(linked)
+        let capability = await value.prepareReply(for: linked)
+        #expect(capability != nil)
+        if let capability { await value.withdrawReply(capability) }
+        let unlinked = snapshot(provider: .claude)
+        value.observe(unlinked)
+        #expect(await value.prepareReply(for: unlinked) == nil)
+        await value.close()
     }
 
     @Test func noReplyIsIssuedWithoutAVerifiedOwnerOutsideTheWindowOrForIneligibleSnapshots() async throws {

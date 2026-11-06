@@ -16,7 +16,7 @@ Lunlet lives around your MacBook's notch and keeps the Codex and Claude Code wor
 
 <p align="center"><sub>Every picture is rendered from Lunlet's own interface with synthetic data by <code>scripts/render-site-assets.sh</code>. <a href="website/video/lunlet-walkthrough.mp4">Watch the one-minute walkthrough</a>, rendered from Lunlet's own views with synthetic data, captions included.</sub></p>
 
-> **Status: unsigned preview.** Download the disk image from the [latest GitHub Release](https://github.com/yukunlabs/lunlet/releases/latest) or build from source as shown below. The download is signed ad hoc and not notarized, so macOS asks you to allow it once: on macOS 15 and later, open it, choose Done, then System Settings › Privacy & Security › Open Anyway; on macOS 14, right-click Lunlet and choose Open. Updates install from inside Lunlet and ask for nothing. Codex and Claude Code observation, limits and usage work locally. Notices to a locked Mac's paired Feishu, Telegram or Slack chat, and one reply per notice that continues the same Codex session, are verified on the maintainer's devices. Feishu cards have not yet been reviewed in the phone app, Claude Code sessions take no replies, and an in-app update from the first version is accepted when the second one ships.
+> **Status: unsigned preview.** Download the disk image from the [latest GitHub Release](https://github.com/yukunlabs/lunlet/releases/latest) or build from source as shown below. The download is signed ad hoc and not notarized, so macOS asks you to allow it once: on macOS 15 and later, open it, choose Done, then System Settings › Privacy & Security › Open Anyway; on macOS 14, right-click Lunlet and choose Open. Updates install from inside Lunlet and ask for nothing. Codex and Claude Code observation, limits and usage work locally. Notices to a locked Mac's paired Feishu, Telegram or Slack chat, and one reply per notice that continues the same Codex session, are verified on the maintainer's devices. Claude Code sessions take replies through Lunlet's Stop hook (see below); the hook and the bundled helper are verified in live sessions on the maintainer's Mac, and the phone round trip awaits acceptance. Feishu cards have not yet been reviewed in the phone app, and an in-app update from the first version is accepted when the second one ships.
 
 ## Features
 
@@ -36,6 +36,10 @@ Lunlet lives around your MacBook's notch and keeps the Codex and Claude Code wor
 
 Download `Lunlet-<version>-macos-arm64.dmg` from the [latest release](https://github.com/yukunlabs/lunlet/releases/latest), open it and drag Lunlet to Applications. Each release lists its files' SHA-256 checksums, its source tag and, in `manifest.json`, its signing and notarization status. The first time you open it, macOS asks you to allow it as described above. Release notes live in [docs/release-notes](docs/release-notes).
 
+### Phone replies for Claude Code
+
+Claude Code has no command that queues a message into a running session, so Lunlet uses Claude Code's Stop hook: while Claude Code is a selected agent, Lunlet adds one `Stop` entry to Claude Code's user settings (and removes exactly that entry when you turn Claude Code off or press Disconnect in Settings › Agents). Nothing else is needed: no flag, plugin or confirmation, in any terminal or editor. When a turn of a Claude Code session ends while your Mac is locked, the hook keeps that turn open for one phone reply, which continues the same conversation as your next message; when you unlock, it lets go at once. Settings › Agents says so beside the Claude Code switch and shows a note only if the hook could not be added.
+
 ## Build and run
 
 From a checkout of this repository:
@@ -53,14 +57,14 @@ open .tmp/Lunlet.app
 - It reads Codex's and Claude Code's local session records and transcripts to show activity and usage, including your latest request and the agent's final reply for each finished turn.
 - A completion notice, sent only while the Mac is locked and a bot is paired, goes through that messaging provider to your private chat. It carries the project, agent and session title, an excerpt of your latest request (about 140 characters) and the agent's final reply, shortened only to fit the messenger. Secret-looking values and hidden reasoning are removed and home folders shortened, but no filter catches everything; tool output and the rest of the conversation are never sent.
 - Codex limits come from Codex's own account interface on this Mac. Claude Code limits come only from Lunlet's status line in Claude Code, added while Claude Code is selected and removed, restoring your previous one, when you turn Claude Code off; the account email and plan come from Claude Code's local profile. Lunlet never reads Claude Code login credentials.
-- A reply from Feishu, Slack or Telegram is passed to that session's own Codex with `codex queue` and only after Lunlet confirms the session is still open and idle; the session keeps its sandbox and approval settings. The reply text is briefly visible to your other processes as a command argument.
+- A reply from Feishu, Slack or Telegram is passed to that session's own Codex with `codex queue` and only after Lunlet confirms the session is still open and idle; the session keeps its sandbox and approval settings. The reply text is briefly visible to your other processes as a command argument. A reply to a Claude Code session is written to a file in Lunlet's own folder and handed to that session by the hook helper Claude Code ran inside it, as the documented hook feedback that continues the turn under the session's existing permission mode; Lunlet never answers permission prompts.
 - Messaging credentials are stored on your Mac in `~/Library/Application Support/com.lunlet/credentials`, in files only your user account can read, sealed with a key bound to this Mac and your account (not in the Keychain, so updates never ask for authorization). A copy of a file on another Mac or account cannot be opened, and a backup or disk scan shows no token; a program running as you could still read them, as it could read Codex's own credential file. Moving to a new Mac means connecting the channel again.
 - Errors are also kept in a small local log at `~/Library/Logs/Lunlet` (no content or identifiers; it rotates at 256 KB and keeps one previous file, so about 512 KB at most; never uploaded); Settings › About shows it in Finder.
 - Release builds check for updates about once a day with [Sparkle](https://sparkle-project.org); the request identifies only Lunlet's and Sparkle's versions, with no system profile, and nothing is downloaded until you choose Install. Turn the checks off in Settings › About. `--preview` builds never check.
 
 ## Not yet available
 
-- Replies to Claude Code sessions, and answering an agent's question from your phone.
+- Answering an agent's question from your phone, and more than eight phone replies in a row to one Claude Code turn without a typed prompt (Claude Code's own cap).
 - A notarized download (the current one is an unsigned preview). Intel Macs. Feishu cards reviewed in the phone app.
 - Linux, Cursor and other agents.
 

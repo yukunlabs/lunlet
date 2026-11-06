@@ -40,6 +40,7 @@ import SwiftUI
     let claudeHistory: LocalUsageModel
     private let claudeUsageHover: UsageHoverPanelController
     let claudeLimits: ClaudePlanLimitsModel
+    private let claudeHook: ClaudeHookModel
     private var availabilityRefresh: Task<Void, Never>?
     private let notifications: LockedCompletionNotifications
     private let observation: SessionObservationModel
@@ -79,6 +80,8 @@ import SwiftUI
         // Plan limits connect on their own while Claude Code is selected, unless the owner disconnected them (AC-33.08).
         let claudeLimits = ClaudePlanLimitsModel(connectsAutomatically: true, choices: .standard)
         self.claudeLimits = claudeLimits
+        let claudeHook = ClaudeHookModel(connectsAutomatically: true)
+        self.claudeHook = claudeHook
         let entry = NotchEntryController(companion: panel, usage: usage, claudeLimits: claudeLimits, preferences: preferences,
                                          skinCatalog: skins, sessions: sessions)
         self.entry = entry
@@ -91,7 +94,7 @@ import SwiftUI
             }
         }
         self.observation = observation
-        replyDispatch = CodexReplyDispatch.make(observation: observation)
+        replyDispatch = ReplyDispatch.make(observation: observation)
         observation.snapshotReceived = { [weak notifications] in notifications?.receive($0, baseline: $1) }
         botSetup.checkAuthorizationAction = { [weak notifications] in notifications?.checkAuthorization() }
         setup.checkAuthorizationAction = { [weak notifications] in notifications?.checkAuthorization() }
@@ -113,7 +116,10 @@ import SwiftUI
         preferences.$value.map(\.sessionProviders).removeDuplicates().sink { [weak self] providers in
             self?.observation.setProviders(Set(providers))
             if providers.contains(.claude), self?.started == true { self?.claudeHistory.refreshIfNeeded() }
-            if self?.started == true { self?.claudeLimits.setActive(providers.contains(.claude)) }
+            if self?.started == true {
+                self?.claudeLimits.setActive(providers.contains(.claude))
+                self?.claudeHook.setActive(providers.contains(.claude))
+            }
         }.store(in: &preferenceObservations)
         preferences.$value.map(\.channel).removeDuplicates().sink { [weak self] channel in
             // Published emits before value changes; this owns routing during that transition.
@@ -164,7 +170,8 @@ import SwiftUI
                                    history: history, usageHover: usageHover,
                                    claudeHistory: claudeHistory, claudeUsageHover: claudeUsageHover,
                                    refresh: { [weak self] in self?.refresh() })
-                .environment(\.claudePlanLimits, self?.claudeLimits).environment(\.appUpdater, self?.updater))
+                .environment(\.claudePlanLimits, self?.claudeLimits).environment(\.claudeHook, self?.claudeHook)
+                .environment(\.appUpdater, self?.updater))
         }
     }
 
@@ -182,8 +189,13 @@ import SwiftUI
         usage.start(); history.refreshIfNeeded(); observation.start()
         if preferences.value.sessionProviders.contains(.claude) { claudeHistory.refreshIfNeeded() }
         claudeLimits.setActive(preferences.value.sessionProviders.contains(.claude))
+        claudeHook.setActive(preferences.value.sessionProviders.contains(.claude))
         setupLoading = Task { await setup.load() }
         botSetup.sealSavedConnections()
+        // Claude Code's Stop hook runs the helper this build bundles; stop folders of ended helpers are swept (US-38).
+        ClaudeHookInstallation.prepare(helper: Bundle.main.executableURL?.deletingLastPathComponent()
+            .appendingPathComponent("lunlet-hook", isDirectory: false))
+        notifications.lockObserver = { [weak observation] locked in observation?.setClaudeReplyWindow(locked) }
     }
 
     public func showPanel() {

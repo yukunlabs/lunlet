@@ -92,9 +92,9 @@ public enum SessionCard {
             ])
             interaction.append(["tag": "form", "name": "continuation", "elements": fields])
         }
-        // Only a card that can never carry a reply box says so; a Feishu Codex card may gain one later, so it stays
-        // silent rather than claim replies do not exist.
-        if !active, reply == nil, snapshot.provider != .codex {
+        // Only a card that can never carry a reply box says so; a card of a session with an input path may gain one
+        // later, so it stays silent rather than claim replies do not exist.
+        if !active, reply == nil, snapshot.inputPath == nil {
             interaction.append(markdown(grey(escaped(SessionNotice.repliesUnavailableFooter)), size: "notation",
                                         icon: ("info_outlined", "grey")))
         }

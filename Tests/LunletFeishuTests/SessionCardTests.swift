@@ -37,6 +37,17 @@ struct SessionCardTests {
         #expect(!rendered.delivery.content.contains("Mobile input is unavailable"))
     }
 
+    // Refs: US-38, AC-38.02; US-33, AC-33.05.
+    @Test func claudeCardsWithLunletsHookOfferTheFollowupFormAndNoUnavailableFooter() throws {
+        let claude = SessionSnapshot(observation: .init(sessionID: UUID(), connectionID: UUID(), liveness: .alive,
+                                                        phase: .idle(completedTurnID: "turn")), project: "Lunlet",
+                                     turnID: "turn", activityConfirmed: true, provider: .claude, inputPath: .claudeHook)
+        #expect(SessionCard.form(for: claude) == .followup(field: "followup"))
+        let rendered = try SessionCard.render(claude)
+        #expect(!rendered.delivery.content.contains(SessionNotice.repliesUnavailableFooter))
+        #expect(rendered.delivery.content.contains("Claude Code finished"))
+    }
+
     @Test func aRenderedFollowupUsesOnlyItsOpaqueControlAndSubmitsThroughTheRouter() async throws {
         let snapshot = snapshot(.idle(completedTurnID: "turn_private")), connection = UUID()
         let router = await router(for: snapshot.observation, connection: connection)

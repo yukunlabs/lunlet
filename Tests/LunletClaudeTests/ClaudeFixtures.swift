@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
-// Refs: US-33, AC-33.01, AC-33.03, AC-33.04, AC-33.06, AC-33.07.
+// Refs: US-33, AC-33.01, AC-33.03, AC-33.04, AC-33.06, AC-33.07; US-38, AC-38.04.
 // Synthetic Claude Code 2.1-shaped records under a per-test temporary root; no real Claude data is read.
 import Foundation
+import LunletHook
 @testable import LunletClaude
 
 struct ClaudeFixture {
@@ -82,6 +83,14 @@ struct ClaudeFixture {
     static func meta(uuid: String, session: String = first) -> String {
         line(["type": "user", "uuid": uuid, "promptId": "meta", "sessionId": session, "timestamp": "2026-10-30T10:00:01.500Z",
               "isMeta": true, "promptSource": "typed", "message": ["role": "user", "content": "Caveat: injected"]])
+    }
+    /// Claude Code's record of its Stop hooks' run; `followups` are the texts Lunlet's hook handed over.
+    static func stopHookSummary(followups: [String] = [], otherContexts: [String] = [], session: String = first,
+                                at time: String = "2026-10-30T10:00:06.000Z", uuid: String = UUID().uuidString.lowercased()) -> String {
+        line(["type": "system", "subtype": "stop_hook_summary", "uuid": uuid, "sessionId": session, "timestamp": time,
+              "version": "2.1.319", "isSidechain": false, "level": "suggestion", "hookCount": 1 + otherContexts.count,
+              "hookErrors": [], "preventedContinuation": false, "hasOutput": !followups.isEmpty,
+              "hookAdditionalContext": followups.map { HookOutput.followupPrefix + $0 } + otherContexts])
     }
     static func interrupted(session: String = first) -> String {
         line(["type": "user", "uuid": UUID().uuidString.lowercased(), "promptId": "p-int", "sessionId": session,

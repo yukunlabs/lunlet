@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
-// Refs: US-36, AC-36.01, AC-36.02, AC-36.03, AC-36.04; US-05, AC-05.09; US-08, AC-08.03, AC-08.04; US-10, AC-10.01, AC-10.02, AC-10.04.
+// Refs: US-38, AC-38.02; US-36, AC-36.01, AC-36.02, AC-36.03, AC-36.04; US-05, AC-05.09; US-08, AC-08.03, AC-08.04; US-10, AC-10.01, AC-10.02, AC-10.04.
 // A synthetic channel client stands in for the provider; no network, credentials or Codex input.
 import Foundation
 import Testing
@@ -66,10 +66,12 @@ struct BotReplyServiceTests {
     private let binding = BotBinding(channel: .telegram, botID: "9001", botName: "SyntheticLunletBot", ownerID: "42", chatID: "42")
 
     private func snapshot(_ turn: String = "turn_a", provider: SessionProvider = .codex, phase: SessionPhase? = nil,
-                          session: UUID = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!) -> SessionSnapshot {
+                          session: UUID = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!,
+                          inputPath: SessionInputPath? = nil) -> SessionSnapshot {
         SessionSnapshot(observation: .init(sessionID: session, connectionID: session, liveness: .alive,
                                            phase: phase ?? .idle(completedTurnID: turn)),
-                        project: "reply-project", title: "Synthetic task", publicConclusion: "Done.", provider: provider)
+                        project: "reply-project", title: "Synthetic task", publicConclusion: "Done.", provider: provider,
+                        inputPath: inputPath)
     }
 
     private func reply(_ id: String, to message: String, text: String = "Run the tests") -> BotReply {
@@ -150,6 +152,11 @@ struct BotReplyServiceTests {
         #expect(await service.prepareReply(for: snapshot()) == nil)
         service.setReplyWindow(true)
         #expect(await service.prepareReply(for: snapshot(provider: .claude)) == nil)
+        // A Claude session takes replies only while Lunlet's hook holds its turn (US-38, AC-38.02).
+        let claude = UUID(uuidString: "22222222-2222-4222-8222-222222222222")!
+        let linked = snapshot(provider: .claude, session: claude, inputPath: .claudeHook)
+        service.observe(linked)
+        #expect(await service.prepareReply(for: linked) != nil)
         #expect(await service.prepareReply(for: snapshot(phase: .running)) == nil)
         #expect(await service.prepareReply(for: snapshot("turn_b")) == nil)
         #expect(await service.prepareReply(for: snapshot()) != nil)

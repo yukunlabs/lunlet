@@ -115,7 +115,7 @@ public actor BotReplyService {
     public func prepareReply(for snapshot: SessionSnapshot) async -> ContinuationControl? {
         await flush()
         let session = snapshot.observation.sessionID
-        guard !closed, replyWindow, snapshot.provider == .codex, snapshot.parentSessionID == nil, latest[session] == snapshot,
+        guard !closed, replyWindow, snapshot.inputPath != nil, snapshot.parentSessionID == nil, latest[session] == snapshot,
               case .idle = snapshot.observation.phase, snapshot.observation.liveness == .alive else { return nil }
         return gate.issueControl(for: session, now: elapsed())
     }

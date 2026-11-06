@@ -51,7 +51,7 @@ actor OwnerChannelCompletionSender: CompletionNotificationSending {
     }
     /// Observations and lock changes reach the reply service in caller order; a task per call could reorder them.
     nonisolated func observe(_ snapshot: SessionSnapshot) {
-        guard snapshot.provider == .codex, snapshot.parentSessionID == nil else { return }
+        guard snapshot.inputPath != nil, snapshot.parentSessionID == nil else { return }
         replies?.observe(snapshot)
     }
     /// The reply window follows the lock state (AC-05.09).

@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
-// Refs: US-33, AC-33.01, AC-33.02, AC-33.03, AC-33.07.
+// Refs: US-33, AC-33.01, AC-33.02, AC-33.03, AC-33.07; US-38, AC-38.02.
 import Darwin
 import Foundation
 
@@ -21,6 +21,11 @@ enum ClaudeProcessPresence: Sendable { case same, ended, unknown }
 protocol ClaudeProcessInspecting: Sendable {
     func verify(pid: Int32, startedAt: Date) -> ClaudeProcessCheck
     func presence(of process: ClaudeProcessIdentity) -> ClaudeProcessPresence
+    /// The parent of a live same-user process, or nil when there is no such process.
+    func parent(of pid: Int32) -> Int32?
+}
+extension ClaudeProcessInspecting {
+    func parent(of pid: Int32) -> Int32? { nil }
 }
 
 /// Native libproc checks only: no shell tools, environment reads or terminal inspection.
@@ -74,12 +79,21 @@ struct ClaudeProcessReader: ClaudeProcessInspecting {
     /// Only an interpreter's first argument, its script path, is decoded. Later arguments can
     /// hold prompts and the environment follows them; neither is decoded or retained.
     static func scriptArgument(_ pid: Int32) -> String? {
+        guard let data = arguments(pid) else { return nil }
+        return scriptArgument(from: data)
+    }
+    /// The hook helper's parent must be the session's own process before its stop signal counts.
+    func parent(of pid: Int32) -> Int32? {
+        guard pid > 0, let info = Self.info(pid), info.pbi_uid == getuid(), info.pbi_status != UInt32(SZOMB) else { return nil }
+        return Int32(info.pbi_ppid)
+    }
+    private static func arguments(_ pid: Int32) -> Data? {
         var mib = [CTL_KERN, KERN_PROCARGS2, pid], size = 0
         guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > 4, size <= 2_097_152 else { return nil }
         var data = Data(count: size)
         let status = data.withUnsafeMutableBytes { sysctl(&mib, 3, $0.baseAddress, &size, nil, 0) }
         guard status == 0, size > 4, size <= data.count else { return nil }
-        return scriptArgument(from: data.prefix(size))
+        return data.prefix(size)
     }
     static func scriptArgument(from data: Data) -> String? {
         let bytes = [UInt8](data)

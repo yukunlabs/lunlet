@@ -40,6 +40,7 @@ struct PreferencesPane: View {
     /// The category to show first, such as Agents when a page asks to connect Claude plan limits.
     var initialCategory: PreferenceCategory? = nil
     @Environment(\.claudePlanLimits) private var claudeLimits
+    @Environment(\.claudeHook) private var claudeHook
     @Environment(\.appUpdater) private var updater
     @ViewState private var category = PreferenceCategory.appearance
     @ViewState private var fileIssue: String?
@@ -158,13 +159,15 @@ struct PreferencesPane: View {
             } footer: {
                 Text("Several agents share an Overview tab · Claude Code: local sessions and usage")
                     .font(Font.caption).foregroundStyle(.secondary)
-                    .help("Claude Code is observed from its own local session records and transcripts, without hooks or sockets. "
-                        + "While it is selected, Lunlet adds a status line to Claude Code's settings.json for plan limits (a custom "
-                        + "status line hides most footer keyboard hints) and keeps any existing one running; turning Claude Code off "
-                        + "restores the previous status line exactly. Only the account email and plan are kept from Claude Code's "
-                        + "profile; credentials and environment values are never read.")
+                    .help("Claude Code is observed from its own local session records and transcripts, without sockets. "
+                        + "While it is selected, Lunlet adds two things to Claude Code's user settings and removes both when it is "
+                        + "turned off: a status line for plan limits (a custom status line hides most footer keyboard hints; any "
+                        + "existing one keeps running and is restored exactly) and a Stop hook for phone replies, which keeps a "
+                        + "finished turn open for one reply only while this Mac is locked. Only the account email and plan are kept "
+                        + "from Claude Code's profile; credentials and environment values are never read.")
             }
             ClaudePlanLimitsSettings(model: claudeLimits ?? .placeholder)
+            ClaudeHookSettings(model: claudeHook ?? .placeholder)
         }
     }
     private var messaging: some View {

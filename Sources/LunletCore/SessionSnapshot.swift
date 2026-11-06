@@ -29,6 +29,10 @@ public struct SessionNavigation: Equatable, Sendable {
 /// Identity/liveness require proof. The local preview is the latest request; only the owner's own
 /// completion notice may carry an excerpt of it (AC-06.02), never logs.
 /// Derive values through the named transforms below, so no field is reset by omission.
+/// How a verified follow-up reaches a session's original CLI. Codex sessions always queue through `codex queue`;
+/// a Claude Code session has a path only while Lunlet's Stop hook holds its finished turn open (US-38).
+public enum SessionInputPath: String, Equatable, Sendable { case codexQueue, claudeHook }
+
 public struct SessionSnapshot: Equatable, Sendable {
     /// Confirmed Codex activity does not prove original-client lifetime or input authority.
     public private(set) var activityConfirmed: Bool
@@ -59,13 +63,18 @@ public struct SessionSnapshot: Equatable, Sendable {
     public private(set) var parentSessionID: UUID?
     /// The agent whose records produced this snapshot; it labels rows, cues and notifications.
     public private(set) var provider: SessionProvider
+    /// The verified original-CLI input path a reply can take; nil leaves every notice without reply controls.
+    public private(set) var inputPath: SessionInputPath?
+    /// Why no input path is available, for Settings; nil when the path exists or the source gives no reason.
+    public private(set) var inputPathNote: String?
 
     public init(observation: ObservedSession, project: String, title: String? = nil,
                 publicConclusion: String? = nil, limitations: [String] = [],
                 questions: [SessionQuestion] = [], outcome: TaskCue.Outcome = .unknown, turnID: String? = nil,
                 inputActivityID: String? = nil, inputPending: Bool = false, activityConfirmed: Bool = false,
                 navigation: SessionNavigation? = nil, lastActivityAt: Date? = nil, localPreview: String? = nil,
-                parentSessionID: UUID? = nil, provider: SessionProvider = .codex) {
+                parentSessionID: UUID? = nil, provider: SessionProvider = .codex,
+                inputPath: SessionInputPath? = nil, inputPathNote: String? = nil) {
         self.activityConfirmed = activityConfirmed; self.navigation = navigation
         self.observation = observation; self.project = project; self.sourceTitle = title
         self.publicConclusion = publicConclusion; self.limitations = limitations
@@ -75,6 +84,9 @@ public struct SessionSnapshot: Equatable, Sendable {
         self.localPreview = localPreview
         self.parentSessionID = parentSessionID
         self.provider = provider
+        // Codex always has its queue path; any other provider names a path only when its source verified one.
+        self.inputPath = inputPath ?? (provider == .codex ? .codexQueue : nil)
+        self.inputPathNote = self.inputPath == nil ? inputPathNote : nil
     }
 
     public static func placeholderTitle(for sessionID: UUID) -> String { "Session " + sessionID.uuidString.prefix(8) }

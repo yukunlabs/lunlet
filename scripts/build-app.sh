@@ -77,14 +77,19 @@ if [ "$lunlet_preview" = false ] && [ "$lunlet_source_dirty" = true ]; then
 fi
 . scripts/swift-common.sh
 lunlet_swift build --product Lunlet --configuration "$lunlet_configuration"
+lunlet_swift build --product lunlet-hook --configuration "$lunlet_configuration"
 lunlet_binary_directory=$(lunlet_swift build --show-bin-path --configuration "$lunlet_configuration")
 lunlet_bundle=${LUNLET_APP_OUTPUT:-"$PWD/.tmp/Lunlet.app"}
+# Executables from an earlier build are never kept beside this build's.
+rm -rf "$lunlet_bundle/Contents/MacOS"
 mkdir -p "$lunlet_bundle/Contents/MacOS"
 rm -rf "$lunlet_bundle/Contents/Resources"
 rm -rf "$lunlet_bundle/Contents/Helpers"
 rm -rf "$lunlet_bundle/Contents/Frameworks"
 mkdir -p "$lunlet_bundle/Contents/Resources/third-party"
 cp "$lunlet_binary_directory/Lunlet" "$lunlet_bundle/Contents/MacOS/Lunlet"
+# The Claude Code Stop hook helper ships beside the app binary; the launcher Lunlet installs runs it from there.
+cp "$lunlet_binary_directory/lunlet-hook" "$lunlet_bundle/Contents/MacOS/lunlet-hook"
 # Sparkle loads from the bundle only: drop search paths into this checkout's build directories and add the bundle's.
 mkdir -p "$lunlet_bundle/Contents/Frameworks"
 /usr/bin/ditto "$lunlet_binary_directory/Sparkle.framework" "$lunlet_bundle/Contents/Frameworks/Sparkle.framework"

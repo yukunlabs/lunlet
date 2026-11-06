@@ -118,8 +118,9 @@ public actor FeishuReplyService {
     public func prepareReply(for snapshot: SessionSnapshot) async -> FeishuReplyCapability? {
         await flush()
         let session = snapshot.observation.sessionID
-        // Codex is the only agent with a validated original-CLI input path.
-        guard !closed, !blocked, replyWindow, owner?.isComplete == true, snapshot.provider == .codex,
+        // Only a session with a verified original-CLI input path takes replies: Codex's queue, or Lunlet's channel
+        // helper running inside a Claude Code session (US-38).
+        guard !closed, !blocked, replyWindow, owner?.isComplete == true, snapshot.inputPath != nil,
               snapshot.parentSessionID == nil, latest[session] == snapshot,
               case .idle = snapshot.observation.phase, snapshot.observation.liveness == .alive else { return nil }
         preparing += 1

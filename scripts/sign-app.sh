@@ -47,5 +47,9 @@ fi
 for lunlet_framework in "$lunlet_bundle"/Contents/Frameworks/*.framework; do
     [ -d "$lunlet_framework" ] && lunlet_sign "$lunlet_framework"
 done
+# Nested executables, such as the Claude Code hook helper, are signed before the bundle that contains them.
+for lunlet_nested in "$lunlet_bundle"/Contents/MacOS/*; do
+    case "$lunlet_nested" in */Lunlet) ;; *) [ -f "$lunlet_nested" ] && lunlet_sign "$lunlet_nested" ;; esac
+done
 lunlet_sign "$lunlet_bundle"
 /usr/bin/codesign --verify --deep --strict "$lunlet_bundle"

@@ -67,6 +67,9 @@ enum CompletionDeliveryStatus: Equatable {
     /// so remembering the most recent ones is enough to suppress duplicates.
     private static let retainedCompletions = 1024
     private let isLocked: @MainActor () -> Bool?
+    /// Told about every lock change, whether or not a sender exists; the Claude reply window follows it.
+    var lockObserver: (@MainActor (Bool) -> Void)?
+    private var observedLock: Bool?
     private let power: any IdleSleepControlling
     private var sender: (any CompletionNotificationSending)?
     private var seen: Set<Completion> = []
@@ -139,6 +142,7 @@ enum CompletionDeliveryStatus: Equatable {
         let locked = isLocked() == true
         // Unlocking ends every card's reply window; unknown lock state never opens one.
         if reportedLock != locked, let sender { reportedLock = locked; sender.lockChanged(locked) }
+        if observedLock != locked { observedLock = locked; lockObserver?(locked) }
         if !locked {
             generation = UUID()
             for task in pending.values { task.cancel() }

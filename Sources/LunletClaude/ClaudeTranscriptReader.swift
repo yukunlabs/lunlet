@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
 // Refs: US-33, AC-33.01, AC-33.02, AC-33.03, AC-33.06, AC-33.07.
-// Refs: US-13, AC-13.01, AC-13.04; US-15, AC-15.02, AC-15.06; US-06, AC-06.02, AC-06.05; US-33, AC-33.05.
+// Refs: US-13, AC-13.01, AC-13.04; US-15, AC-15.02, AC-15.06; US-06, AC-06.02, AC-06.05; US-33, AC-33.05; US-38, AC-38.05.
 import Darwin
 import Foundation
 import LunletCore
@@ -14,6 +14,8 @@ struct ClaudeTranscriptContent: Equatable, Sendable {
     var localPreview: String?
     /// The text of the final reply of the latest completed turn, for the owner's completion notice.
     var conclusion: String?
+    /// How many follow-ups Lunlet's hook handed to this turn; each one completes again under a suffixed id.
+    var continuations = 0
 
     /// Unconfirmed state keeps identity and input evidence but no conclusion or outcome.
     func unconfirmed() -> Self {
@@ -153,13 +155,25 @@ struct ClaudeTranscriptReader {
             endTurnSeen = stop == "end_turn"
             if endTurnSeen { endTurnReply = replyText.isEmpty ? nil : replyText }
         case "system":
+            let subtype = object["subtype"] as? String
+            if subtype == "stop_hook_summary" {
+                // Lunlet's hook handed the owner's follow-up over: the turn goes on as if it had been typed.
+                guard let followup = ClaudeHookRecord.followups(in: object).first, old.turn != nil else { return }
+                endTurnSeen = false; resetReply()
+                var next = old
+                next.phase = .running; next.outcome = .unknown; next.conclusion = nil; next.continuations += 1
+                next.localPreview = Self.preview(followup) ?? old.localPreview
+                content = next
+                return
+            }
             // Completion is an `end_turn` reply followed by its `turn_duration` record.
-            guard object["subtype"] as? String == "turn_duration", endTurnSeen else { return }
+            guard subtype == "turn_duration", endTurnSeen else { return }
             endTurnSeen = false
-            guard let turn = old.turn ?? Self.identifier(object["uuid"]) else { return }
+            guard let base = old.turn ?? Self.identifier(object["uuid"]) else { return }
+            let turn = ClaudeTurnID.compose(base, continuations: old.continuations)
             if case .idle(let completed) = old.phase, completed == turn { return }
             var next = old
-            next.phase = .idle(completedTurnID: turn); next.turn = turn; next.outcome = .unknown
+            next.phase = .idle(completedTurnID: turn); next.turn = base; next.outcome = .unknown
             next.conclusion = endTurnReply
             content = next
         default:
@@ -189,7 +203,7 @@ struct ClaudeTranscriptReader {
         resetReply()
         var next = old
         next.phase = .running; next.turn = Self.identifier(object["promptId"]) ?? input; next.outcome = .unknown
-        next.inputActivityID = input; next.conclusion = nil
+        next.inputActivityID = input; next.conclusion = nil; next.continuations = 0
         next.localPreview = Self.preview(text) ?? old.localPreview
         content = next
     }
@@ -232,4 +246,12 @@ final class ClaudeTimestamps: @unchecked Sendable {
         return value
     }()
     func date(from value: String) -> Date? { fractional.date(from: value) ?? whole.date(from: value) }
+}
+
+/// The id of a completed turn: the prompt id, suffixed with the number of hook continuations it had, so a turn
+/// that Lunlet's hook continued completes again under a new id and the first completion is never replayed.
+enum ClaudeTurnID {
+    static func compose(_ base: String, continuations: Int) -> String {
+        continuations > 0 ? base + "#" + String(continuations) : base
+    }
 }
