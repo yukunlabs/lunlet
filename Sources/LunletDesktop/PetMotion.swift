@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
-// Refs: US-39, AC-39.03, AC-39.04, AC-39.06, AC-39.08; US-24, AC-24.02.
+// Refs: US-39, AC-39.03, AC-39.04, AC-39.06, AC-39.08; US-24, AC-24.02; US-40, AC-40.03, AC-40.04.
 import Foundation
 import LunletCore
 import SwiftUI
@@ -19,6 +19,9 @@ struct PetMotionInput: Equatable {
     var impulseAt: TimeInterval?
     /// The companion panel is open beside the dog: it looks up at it and keeps its own bubble away.
     var panelOpen = false
+    /// A drag in progress and when it started; a pack plays running-left or running-right meanwhile (AC-40.03).
+    var drag: PetDragDirection?
+    var dragStartedAt: TimeInterval = 0
 }
 
 /// The dog's life between state changes: blinks, a wandering gaze, ear twitches and the loops of each pose, all
@@ -33,6 +36,8 @@ enum PetMotion {
     /// the pointer or the panel holds the dog's attention run at thirty, so that the quick things read.
     static let calmInterval: TimeInterval = 1.0 / 12.0
     static let livelyInterval: TimeInterval = 1.0 / 30.0
+    /// A pack standing still (asleep, or a look cell) is checked twice a second for something new.
+    static let restingInterval: TimeInterval = 0.5
 
     /// A stable pseudo-random value in 0…1 for an integer segment of time.
     static func noise(_ segment: Int, _ salt: Int = 0) -> Double {
@@ -135,9 +140,15 @@ enum PetMotion {
 final class PetTempo: @unchecked Sendable {
     private let lock = NSLock()
     private var current = PetMotionInput()
+    private var sheet: PetSpriteVersion?
     var input: PetMotionInput {
         get { lock.withLock { current } }
         set { lock.withLock { current = newValue } }
+    }
+    /// The pack's layout while a pack is the pet; nil for the dog.
+    var sprite: PetSpriteVersion? {
+        get { lock.withLock { sheet } }
+        set { lock.withLock { sheet = newValue } }
     }
 }
 
@@ -152,9 +163,20 @@ struct PetTempoSchedule: TimelineSchedule {
         mutating func next() -> Date? {
             let current = upcoming
             let t = current.timeIntervalSinceReferenceDate
-            var step = PetMotion.lively(at: t, input: tempo.input) ? PetMotion.livelyInterval : calm
-            if step > PetMotion.livelyInterval, let soon = PetMotion.nextLivelyMoment(after: t), soon - t < step {
-                step = Swift.max(soon - t, PetMotion.livelyInterval)
+            let input = tempo.input
+            var step: TimeInterval
+            if let version = tempo.sprite {
+                // A pack changes cells at its own frame durations; attention keeps the look direction fresh.
+                let attentive = input.gaze != nil || input.hovered || input.panelOpen
+                step = attentive ? PetMotion.livelyInterval : PetMotion.restingInterval
+                if let change = PetSpriteRule.nextChange(after: t, cue: PetSpriteDrawing.cue(from: input, version: version)), change - t < step {
+                    step = Swift.max(change - t, 0.004)
+                }
+            } else {
+                step = PetMotion.lively(at: t, input: input) ? PetMotion.livelyInterval : calm
+                if step > PetMotion.livelyInterval, let soon = PetMotion.nextLivelyMoment(after: t), soon - t < step {
+                    step = Swift.max(soon - t, PetMotion.livelyInterval)
+                }
             }
             upcoming = Date(timeIntervalSinceReferenceDate: t + step)
             return current

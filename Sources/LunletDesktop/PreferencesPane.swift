@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
 // Refs: US-24, AC-24.01, AC-24.02; US-22, AC-22.03; US-20, AC-20.02; US-21, AC-21.02.
+// Refs: US-40, AC-40.01, AC-40.02, AC-40.07.
 // Refs: US-02, AC-02.07; US-04, AC-04.04; US-29, AC-29.05; US-19, AC-19.01; US-33, AC-33.08; US-14, AC-14.07.
 // Refs: US-16, AC-16.01, AC-16.02; US-17, AC-17.01, AC-17.04, AC-17.08;
 // Refs: US-18, AC-18.01; US-19, AC-19.01, AC-19.02, AC-19.03; US-20, AC-20.01; US-33, AC-33.07, AC-33.08;
@@ -30,6 +31,42 @@ extension EnvironmentValues {
     }
 }
 
+/// The pet choice: the built-in dog or a pack from Lunlet's or Codex's pets folder, with the reasons any pack
+/// cannot be used (AC-40.01, AC-40.02, AC-40.07).
+private struct PetPackChoice: View {
+    @ObservedObject var preferences: PreferencesStore
+    @ObservedObject var packs: PetPackLibrary
+    private var selection: Binding<String> {
+        Binding(get: { preferences.value.petPack ?? "" },
+                set: { key in preferences.update { $0.petPack = key.isEmpty ? nil : key } })
+    }
+    var body: some View {
+        Picker("Pet", selection: selection) {
+            Text("Built-in dog").tag("")
+            ForEach(packs.validEntries, id: \.reference.key) { entry in
+                Text("\(entry.displayName) · \(entry.reference.source.title)").tag(entry.reference.key)
+            }
+            if let chosen = preferences.value.petPack, !packs.validEntries.contains(where: { $0.reference.key == chosen }) {
+                Text("Unavailable pack").tag(chosen)
+            }
+        }
+        .help("Packs use Codex's pet format: a pet.json beside a sprite sheet. Packs in ~/.codex/pets are listed too and only read.")
+        LabeledContent("Packs") {
+            HStack {
+                Button("Refresh") { packs.refresh() }
+                Button("Open pets folder") { packs.openLunletFolder() }
+            }
+        }
+        if let problem = packs.chosenProblem {
+            Text(problem).font(.caption).foregroundStyle(.secondary)
+        }
+        ForEach(packs.invalidEntries, id: \.reference.key) { entry in
+            Text("\(entry.reference.folder) (\(entry.reference.source.title)): \(entry.failure?.description ?? "invalid")")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+}
+
 struct PreferencesPane: View {
     @ObservedObject var preferences: PreferencesStore
     @ObservedObject var skins: SkinCatalog
@@ -41,6 +78,7 @@ struct PreferencesPane: View {
     var initialCategory: PreferenceCategory? = nil
     @Environment(\.claudePlanLimits) private var claudeLimits
     @Environment(\.claudeHook) private var claudeHook
+    @Environment(\.petPacks) private var petPacks
     @Environment(\.appUpdater) private var updater
     @ViewState private var category = PreferenceCategory.appearance
     @ViewState private var fileIssue: String?
@@ -101,8 +139,11 @@ struct PreferencesPane: View {
                 .help("The notch widget flanks a hardware notch; the menu bar entry is a standard status item; the desktop "
                     + "pet is a small dog on every Space that shows what your agents are doing and opens the panel beside it.")
                 if preferences.value.presentation == .pet {
-                    Picker("Coat", selection: binding(\.petCoat)) {
-                        ForEach(PetCoat.allCases, id: \.self) { Text($0.title).tag($0) }
+                    if let petPacks { PetPackChoice(preferences: preferences, packs: petPacks) }
+                    if preferences.value.petPack == nil || petPacks == nil {
+                        Picker("Coat", selection: binding(\.petCoat)) {
+                            ForEach(PetCoat.allCases, id: \.self) { Text($0.title).tag($0) }
+                        }
                     }
                 }
                 Picker("Skin", selection: binding(\.skinID)) {

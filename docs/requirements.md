@@ -706,9 +706,9 @@ Acceptance criteria:
 - **AC-39.05**: **Given** the pet, **When** I click it, **Then** the session panel opens beside the dog, above it when there is room and below it otherwise, without notch shoulders, with the conversation of the pose's session selected, and closes under the AC-03.06 rules; a right-click offers Open Lunlet, Refresh, Settings and Quit.
 - **AC-39.06**: **Given** the drawing, **When** it is rendered, **Then** it is vector shapes drawn in code at any size, with the golden coat by default and Cream and Slate as the other built-in coats, a lantern-red collar with a lantern tag that is lit while Working, pulsing while Waiting, dim while Idle and off while Asleep, and gentle loops (breathing, tail wag, head bob) that stop under Reduce Motion, while the screen is locked and while the window is hidden.
 - **AC-39.07**: **Given** assistive tools, **When** they inspect the pet, **Then** its accessibility label states the pose and the session count, such as "Lunlet: two sessions, one waiting for you", and the panel and Settings stay reachable from the keyboard through the application menu while the pet is the entry (US-24).
-- **AC-39.08**: **Given** the pet runs all day, **When** its cost is measured, **Then** it redraws only on a state change and, for its loops, at no more than 12 frames per second, within the budgets recorded in [feasibility](feasibility.md#performance-and-resources) (US-25).
+- **AC-39.08**: **Given** the pet runs all day, **When** its cost is measured, **Then** it redraws only on a state change and, for its loops, at no more than 12 frames per second, rising to at most 30 only while something quick happens (a blink, an ear flick, a pose transition, a click bounce, the Done hop, or the pointer or the open panel holding its attention), within the budgets recorded in [feasibility](feasibility.md#performance-and-resources) (US-25).
 
-Proposed revision, 2026-11-06: the loops keep AC-39.08's 12 frames per second, and the revision would add that a blink, an ear flick, a pose transition, a click bounce, the Done hop and the moments the pointer or the open panel hold the dog's attention may run at 30, because a blink lasts about a seventh of a second and does not read at 12.
+AC-39.08 revision history: the quick moments at 30 frames per second were added on 2026-11-06, because a blink lasts about a seventh of a second and does not read at 12; the loops keep 12.
 
 Implementation choices (rules in [design notes](design.md#desktop-pet)): the pose rule and the state assistive tools read live in the core module, free of AppKit, so a later Linux or Windows entry reuses them; the drawing is a SwiftUI canvas over a 220 × 190 design space, scaled to the window, and every blink, glance, ear flick and bounce is a function of the time so that the frame needs no stored animation state; the macOS window is a floating, non-activating panel on every Space that ignores the pointer except over the dog's own silhouette; the panel opens as the dog's speech bubble, with a tail toward its head, grown from the dog and shrunk back into it; task cues reach the island or the pet, never both.
 
@@ -716,7 +716,7 @@ Implementation: [pose rule and state](../Sources/LunletCore/PetPose.swift), [dra
 
 ### US-40: Bring your own pet
 
-Status: Proposed, 2026-11-06. Basis: [pet animation research](research.md). Depends on US-39 for the pet entry, its pose rule and its window, US-26 for preference validation and US-25 for the resource budget. The built-in dog stays as it is; this story adds pets the user brings.
+Status: Confirmed. Background is in [pet animation research](research.md). Depends on US-39 for the pet entry, its pose rule and its window, US-26 for preference validation and US-25 for the resource budget. The built-in dog stays as it is; this story adds pets the user brings.
 
 **As a developer, I want to use a pet of my own in Lunlet, including a pet I already made for Codex, so that the companion looks the way I like without my learning a new format.**
 
@@ -732,7 +732,9 @@ Acceptance criteria:
 
 Out of scope: generating pets (Codex's `/pet` and its hatch-pet skill do that), bundling third-party pets, skeletal or vector runtimes (Rive, Spine, Live2D, Lottie), Codex's failed, waving and look rows beyond the uses above, and any change to the dog.
 
-Implementation choices (to be confirmed with the story): the pack reader, its validation and the pose-to-row mapping live in the core module on Foundation alone so a later Linux or Windows entry reuses them; decoding and drawing are in the desktop module; frames are drawn from the sheet by cell rectangle, never split into files; the hit test samples the current frame's alpha; preferences store the chosen pack's id and folder, never its pixels.
+Implementation choices (rules in [design notes](design.md#imported-pets)): the pack reader, its validation and the pose-to-row mapping live in the core module on Foundation alone so a later Linux or Windows entry reuses them; decoding and drawing are in the desktop module; frames are drawn from the sheet by cell rectangle, never split into files; the hit test samples the current frame's alpha; preferences store the chosen pack's source and folder, never its pixels.
+
+Implementation: [pack format, reader and frame rule](../Sources/LunletCore/PetPack.swift), [pack library and image reading](../Sources/LunletDesktop/PetPackLibrary.swift), [sheet cells, masks and drawing](../Sources/LunletDesktop/PetSpriteSheet.swift), [pet canvas and hit test](../Sources/LunletDesktop/PetView.swift), [tempo on the pack's frame boundaries](../Sources/LunletDesktop/PetMotion.swift), [entry controller: choice, fallback and drag](../Sources/LunletDesktop/PetEntryController.swift), [preference](../Sources/LunletDesktop/PreferencesStore.swift), [Settings pet choice](../Sources/LunletDesktop/PreferencesPane.swift); [format, reader and rule tests](../Tests/LunletCoreTests/PetPackTests.swift), [library, pixel, hit-test, fallback and preference tests](../Tests/LunletDesktopTests/PetPackLibraryTests.swift), [opt-in pack render](../Tests/LunletDesktopTests/PetRenderTests.swift).
 
 ### US-26: Keep customization stable across upgrades
 

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
 // Refs: US-16, AC-16.01; US-17, AC-17.08; US-18, AC-18.01; US-19, AC-19.01; US-20, AC-20.01;
-// Refs: US-21, AC-21.01; US-26, AC-26.01, AC-26.02; US-31, AC-31.01; US-33, AC-33.01.
+// Refs: US-21, AC-21.01; US-26, AC-26.01, AC-26.02; US-31, AC-31.01; US-33, AC-33.01; US-40, AC-40.01.
 import Combine
 import Foundation
 import LunletCore
@@ -54,9 +54,11 @@ struct LunletPreferences: Codable, Equatable {
     var petCoat: PetCoat = .golden
     /// Keyed by display number, so each display keeps its own place.
     var petPositions: [String: PetPosition] = [:]
+    /// The chosen pet pack as `source/folder` (AC-40.01); nil is the built-in dog.
+    var petPack: String?
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, presentation, skinID, accentOverrides, accentHex, historyDays, providers, channel, petCoat, petPositions
+        case schemaVersion, presentation, skinID, accentOverrides, accentHex, historyDays, providers, channel, petCoat, petPositions, petPack
     }
     init() {}
     init(from decoder: any Decoder) throws {
@@ -73,6 +75,7 @@ struct LunletPreferences: Codable, Equatable {
         providers = try data.decodeIfPresent([AgentProvider].self, forKey: .providers) ?? [.codex]
         petCoat = try data.decodeIfPresent(PetCoat.self, forKey: .petCoat) ?? .golden
         petPositions = try data.decodeIfPresent([String: PetPosition].self, forKey: .petPositions) ?? [:]
+        petPack = try data.decodeIfPresent(String.self, forKey: .petPack)
         let savedChannel = try data.decodeIfPresent(String.self, forKey: .channel) ?? "feishu"
         if savedChannel == "whatsapp" { channel = .feishu }
         else if let supported = CommunicationChannel(rawValue: savedChannel) { channel = supported }
@@ -87,6 +90,7 @@ struct LunletPreferences: Codable, Equatable {
         try data.encode(channel, forKey: .channel)
         try data.encode(petCoat, forKey: .petCoat)
         if !petPositions.isEmpty { try data.encode(petPositions, forKey: .petPositions) }
+        try data.encodeIfPresent(petPack, forKey: .petPack)
     }
     func validate() throws {
         // Same identifier rule as SkinDefinition.validate, so a saved choice can name a real skin.
@@ -99,6 +103,7 @@ struct LunletPreferences: Codable, Equatable {
         guard petPositions.count <= 16, petPositions.values.allSatisfy({ $0.x.isFinite && $0.y.isFinite }) else {
             throw PreferenceFailure.invalidValue
         }
+        if let petPack { guard PetPackReference(key: petPack) != nil else { throw PreferenceFailure.invalidValue } }
         guard (1...7).contains(historyDays), !providers.isEmpty,
               Set(providers).count == providers.count,
               skinID.range(of: skinIDRule, options: .regularExpression) != nil else {
@@ -141,7 +146,7 @@ struct LunletPreferences: Codable, Equatable {
     private static func decode(_ data: Data) throws -> LunletPreferences {
         guard data.count <= 65_536 else { throw PreferenceFailure.oversized }
         let fields: Set<String> = ["schemaVersion", "presentation", "skinID", "accentOverrides", "accentHex", "historyDays",
-                                   "providers", "channel", "petCoat", "petPositions"]
+                                   "providers", "channel", "petCoat", "petPositions", "petPack"]
         guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               Set(object.keys).isSubset(of: fields) else { throw PreferenceFailure.invalidValue }
         return try JSONDecoder().decode(LunletPreferences.self, from: data)

@@ -27,6 +27,8 @@ import SwiftUI
 @MainActor public final class CompanionRuntime {
     let preferences: PreferencesStore
     let skins: SkinCatalog
+    /// Pet packs on this Mac, for the pet entry and Settings (US-40).
+    let petPacks = PetPackLibrary()
     private var preferenceObservations: Set<AnyCancellable> = []
     private var savedEnrollment: FeishuEnrollment?
     private var setupLoading: Task<Void, Never>?
@@ -90,7 +92,7 @@ import SwiftUI
         let entry = NotchEntryController(companion: panel, usage: usage, claudeLimits: claudeLimits, preferences: preferences,
                                          skinCatalog: skins, sessions: sessions)
         self.entry = entry
-        let pet = PetEntryController(companion: panel, sessions: sessions, preferences: preferences, skins: skins)
+        let pet = PetEntryController(companion: panel, sessions: sessions, preferences: preferences, skins: skins, packs: petPacks)
         self.pet = pet
         cueRouter.pet = pet
         cueRouter.mode = preferences.value.presentation
@@ -185,7 +187,7 @@ import SwiftUI
                                    claudeHistory: claudeHistory, claudeUsageHover: claudeUsageHover,
                                    refresh: { [weak self] in self?.refresh() })
                 .environment(\.claudePlanLimits, self?.claudeLimits).environment(\.claudeHook, self?.claudeHook)
-                .environment(\.appUpdater, self?.updater))
+                .environment(\.appUpdater, self?.updater).environment(\.petPacks, self?.petPacks))
         }
     }
 

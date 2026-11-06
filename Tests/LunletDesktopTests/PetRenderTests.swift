@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
-// Refs: US-39, AC-39.03, AC-39.05, AC-39.06.
+// Refs: US-39, AC-39.03, AC-39.05, AC-39.06; US-40, AC-40.03, AC-40.05.
 import AppKit
 import SwiftUI
 import Testing
@@ -60,13 +60,41 @@ import LunletCore
         }
     }
 
+    /// The sample pack Mochi, written as `mochi/` in the render directory, in every pose beside the dog (US-40).
+    @Test func renderTheSamplePackInEveryPose() async throws {
+        let directory = URL(fileURLWithPath: try #require(ProcessInfo.processInfo.environment["LUNLET_RENDER_DIR"]))
+        let folder = directory.appendingPathComponent("mochi", isDirectory: true)
+        let size = try SamplePetPack.write(to: folder)
+        #expect(size.width == 1536 && size.height == 2288)
+        let library = PetPackLibrary(lunletDirectory: directory, codexDirectory: directory.appendingPathComponent("none"))
+        let entry = try #require(library.entry(for: PetPackReference(source: .lunlet, folder: "mochi")))
+        let pack = try #require(entry.pack, "\(String(describing: entry.failure))")
+        let sheet = try #require(await library.loadSheet(for: pack))
+        let window = PetEntryController.windowSize
+        let image = NSImage(size: CGSize(width: window.width * 5, height: window.height * 2), flipped: false) { _ in
+            NSColor(white: 0.82, alpha: 1).setFill(); CGRect(origin: .zero, size: CGSize(width: window.width * 5, height: window.height * 2)).fill()
+            for (column, pose) in PetPose.allCases.enumerated() {
+                Self.drawDog(pose: pose, coat: .golden, at: CGPoint(x: CGFloat(column) * window.width, y: window.height), size: window, panelOpen: false)
+                let state = PetState(pose: pose, sessionID: nil, sessionCount: 1, waitingCount: 0, runningCount: 0, summary: nil)
+                var input = PetMotionInput(); input.pose = pose
+                let tempo = PetTempo(); tempo.input = input; tempo.sprite = sheet.version
+                let view = PetCanvasView(state: state, appearance: .sprite(sheet), tempo: tempo, animating: false)
+                let renderer = ImageRenderer(content: view.frame(width: window.width, height: window.height))
+                renderer.scale = 2
+                renderer.nsImage?.draw(in: CGRect(origin: CGPoint(x: CGFloat(column) * window.width, y: 0), size: window))
+            }
+            return true
+        }
+        try Self.write(image, to: directory.appendingPathComponent("pet-pack-poses.png"))
+    }
+
     private static func drawDog(pose: PetPose, coat: PetCoat, at origin: CGPoint, size: CGSize, panelOpen: Bool) {
         let palette = PetPalette.make(coat: coat, accent: accent)
         let state = PetState(pose: pose, sessionID: nil, sessionCount: 1, waitingCount: 0, runningCount: 0, summary: nil)
         var input = PetMotionInput(); input.pose = pose; input.panelOpen = panelOpen
         if panelOpen { input.gaze = CGPoint(x: 0, y: -0.8) }
         let tempo = PetTempo(); tempo.input = input
-        let view = PetCanvasView(state: state, palette: palette, tempo: tempo, animating: false)
+        let view = PetCanvasView(state: state, appearance: .dog(palette), tempo: tempo, animating: false)
         let renderer = ImageRenderer(content: view.frame(width: size.width, height: size.height))
         renderer.scale = 2
         guard let image = renderer.nsImage else { return }

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: 0BSD
 // Refs: US-39, AC-39.01, AC-39.02, AC-39.03, AC-39.04, AC-39.05, AC-39.06, AC-39.07, AC-39.08.
 // Refs: US-03, AC-03.06, AC-03.10; US-13, AC-13.02, AC-13.04, AC-13.09; US-21, AC-21.03; US-12, AC-12.04.
+// Refs: US-40, AC-40.01, AC-40.03, AC-40.05, AC-40.07.
 import AppKit
 import Combine
 import LunletCore
@@ -32,6 +33,7 @@ import LunletCore
     private let sessions: SessionListModel
     private let preferences: PreferencesStore?
     private let skins: SkinCatalog?
+    private let packs: PetPackLibrary?
     private let display: @MainActor () -> NSScreen?
     private let available: @MainActor () -> Bool
     private let motionAllowed: @MainActor () -> Bool
@@ -43,6 +45,12 @@ import LunletCore
     private var motion = PetMotionInput()
     private var panelFrame: CGRect?
     private var palette: PetPalette
+    /// The pack being shown, or the dog; a pack's sheet is decoded once and kept while it stays chosen (AC-40.01).
+    private var appearance: PetAppearance
+    private var loadedPack: PetPackReference?
+    private var sheetLoad: Task<Void, Never>?
+    private var dragging = false
+    private var dragOrigin: CGPoint?
     private var active = false
     private var repositioning = false
     private var closed = false
@@ -52,12 +60,14 @@ import LunletCore
     var settingsAction: (() -> Void)?
 
     init(companion: CompanionPanelController, sessions: SessionListModel, preferences: PreferencesStore? = nil, skins: SkinCatalog? = nil,
+         packs: PetPackLibrary? = nil,
          display: @escaping @MainActor () -> NSScreen? = { NSScreen.main ?? NSScreen.screens.first },
          available: @escaping @MainActor () -> Bool = { SystemDisplayState.isAvailable },
          motionAllowed: @escaping @MainActor () -> Bool = { !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }) {
-        self.companion = companion; self.sessions = sessions; self.preferences = preferences; self.skins = skins
+        self.companion = companion; self.sessions = sessions; self.preferences = preferences; self.skins = skins; self.packs = packs
         self.display = display; self.available = available; self.motionAllowed = motionAllowed
         palette = Self.palette(preferences?.value, skins: skins)
+        appearance = .dog(palette)
         host = PetHostView(palette: palette)
         super.init()
         host.clicked = { [weak self] in self?.clicked() }
@@ -67,6 +77,8 @@ import LunletCore
         }
         host.contextMenu = { [weak self] in self?.menu() ?? NSMenu() }
         host.moved = { [weak self] in self?.moved() }
+        host.dragStarted = { [weak self] in self?.dragStarted() }
+        host.dragEnded = { [weak self] in self?.dragEnded() }
         if let preferences {
             preferences.$value.sink { [weak self] value in
                 guard let self else { return }
@@ -74,13 +86,24 @@ import LunletCore
                 let modeChanged = active != next
                 active = next
                 palette = Self.palette(value, skins: skins)
+                resolveAppearance(chosen: value.petPack)
                 if modeChanged, monitor != nil { refresh() } else { updateState() }
             }.store(in: &observations)
         }
         if let skins {
             skins.$skins.sink { [weak self] _ in
                 guard let self else { return }
-                palette = Self.palette(preferences?.value, skins: skins); updateState()
+                palette = Self.palette(preferences?.value, skins: skins)
+                resolveAppearance(chosen: preferences?.value.petPack); updateState()
+            }.store(in: &observations)
+        }
+        if let packs {
+            packs.$entries.sink { [weak self] _ in
+                guard let self else { return }
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    resolveAppearance(chosen: preferences?.value.petPack, reload: true); updateState()
+                }
             }.store(in: &observations)
         }
         sessions.$sessions.sink { [weak self] _ in self?.updateState() }.store(in: &observations)
@@ -95,6 +118,38 @@ import LunletCore
 
     /// The current state, from the sessions and the finish cue the list model is presenting (AC-39.03).
     var state: PetState { PetPoseRule.state(sessions: sessions.sessions, cue: cue, monitoringAvailable: sessions.monitoringAvailable) }
+    /// The pack being shown, for tests; nil while the dog is the pet.
+    var shownPack: PetPackReference? { if case .sprite(let sheet) = appearance { sheet.pack.reference } else { nil } }
+
+    /// Chooses the pack named in preferences when the library lists it as valid, else the dog, and tells Settings
+    /// why (AC-40.01, AC-40.07). The sheet is decoded off the main thread and shown when ready.
+    private func resolveAppearance(chosen key: String?, reload: Bool = false) {
+        guard let key, let packs else { showDog(problem: nil); return }
+        guard let reference = PetPackReference(key: key) else { showDog(problem: "The saved pet pack name is invalid; showing the dog."); return }
+        guard let entry = packs.entry(for: reference) else {
+            showDog(problem: "Pet pack \(reference.folder) (\(reference.source.title)) was not found; showing the dog."); return
+        }
+        guard let pack = entry.pack else {
+            showDog(problem: "Pet pack \(reference.folder) (\(reference.source.title)) is invalid: \(entry.failure?.description ?? "unknown"); showing the dog."); return
+        }
+        if !reload, loadedPack == reference, case .sprite = appearance { return }
+        sheetLoad?.cancel()
+        sheetLoad = Task { [weak self] in
+            let sheet = await packs.loadSheet(for: pack)
+            guard let self, !Task.isCancelled else { return }
+            if let sheet {
+                appearance = .sprite(sheet); loadedPack = reference; packs.chosenProblem = nil
+            } else {
+                showDog(problem: "Pet pack \(reference.folder) (\(reference.source.title)) has a sprite sheet that cannot be decoded; showing the dog.")
+            }
+            updateState()
+        }
+    }
+    private func showDog(problem: String?) {
+        sheetLoad?.cancel(); sheetLoad = nil
+        appearance = .dog(palette); loadedPack = nil
+        if packs?.chosenProblem != problem { packs?.chosenProblem = problem }
+    }
 
     func start() {
         guard !closed, monitor == nil else { return }
@@ -130,7 +185,7 @@ import LunletCore
     private func hideWindow() {
         stopPointerTracking()
         window?.orderOut(nil)
-        host.update(state, palette: palette, input: motion, animating: false)
+        host.update(state, appearance: appearance, input: motion, animating: false)
     }
 
     /// The saved place on this display, clamped to its visible area, or the lower trailing corner.
@@ -144,12 +199,28 @@ import LunletCore
     }
     static func key(for screen: NSScreen) -> String { screen.displayNumber.map { String($0.intValue) } ?? "main" }
 
-    /// The dog was dragged: its place is kept and an open bubble follows it (AC-39.02, AC-39.05).
+    /// The dog was dragged: its place is kept, an open bubble follows it, and a pack runs the way it moves
+    /// (AC-39.02, AC-39.05, AC-40.03).
     private func moved() {
         savePosition()
+        if dragging, let window {
+            let dx = window.frame.origin.x - (dragOrigin?.x ?? window.frame.origin.x)
+            dragOrigin = window.frame.origin
+            if abs(dx) >= 0.5 { motion.drag = dx > 0 ? .right : .left } else if motion.drag == nil { motion.drag = .right }
+            updateState()
+        }
         guard companion.isVisible, let anchor = bubbleAnchor else { return }
         companion.move(near: anchor)
         panelVisibilityChanged(true, frame: companion.window?.frame)
+    }
+    private func dragStarted() {
+        dragging = true; dragOrigin = window?.frame.origin
+        motion.dragStartedAt = Date().timeIntervalSinceReferenceDate
+    }
+    private func dragEnded() {
+        dragging = false; dragOrigin = nil
+        guard motion.drag != nil else { return }
+        motion.drag = nil; updateState()
     }
     private func savePosition() {
         guard let window, let screen = window.screen ?? display(), let preferences else { return }
@@ -167,8 +238,9 @@ import LunletCore
         if state.pose != motion.pose {
             motion.previousPose = motion.pose; motion.pose = state.pose; motion.poseChangedAt = now
         }
+        if case .dog(let shown) = appearance, shown != palette { appearance = .dog(palette) }
         let animating = window?.isVisible == true && available() && motionAllowed()
-        host.update(state, palette: palette, input: motion, animating: animating)
+        host.update(state, appearance: appearance, input: motion, animating: animating)
     }
 
     /// The panel opened or closed beside the dog: it looks up at it while it is open (AC-39.05).
@@ -260,6 +332,7 @@ import LunletCore
 
     func shutdown() {
         guard !closed else { return }; closed = true
+        sheetLoad?.cancel(); sheetLoad = nil
         monitor = nil; observations.removeAll(); moveObservation = nil
         stopPointerTracking()
         window?.orderOut(nil); window?.close(); window?.contentView = nil; window = nil

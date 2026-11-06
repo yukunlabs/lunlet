@@ -103,9 +103,15 @@ private extension QuotaPace {
         #expect(full == pace(altered, reset: 336, now: 260))
         // Last week's first hours were as heavy as this week's, then a mid-window increase restored the
         // allowance. Only eighth-day readings show that; without them the inferred start suggests light use.
-        let previous = [reading(0, 100, reset: 168), reading(6, 60, reset: 168)]
-            + (7...167).map { reading(Double($0), 100 - 0.2 * Double($0 - 7), reset: 168) }
-        let current = (168...180).map { reading(Double($0), 100 - 1.5 * Double($0 - 168), reset: 336) }
+        var previous = [reading(0, 100, reset: 168), reading(6, 60, reset: 168)]
+        for hour in 7...167 {
+            let remaining: Double = 100 - 0.2 * Double(hour - 7)
+            previous.append(reading(Double(hour), remaining, reset: 168))
+        }
+        let current = (168...180).map { hour -> QuotaReading in
+            let remaining: Double = 100 - 1.5 * Double(hour - 168)
+            return reading(Double(hour), remaining, reset: 336)
+        }
         let comparable = try #require(pace(previous + current, reset: 336, now: 180).estimate)
         #expect(!comparable.rough && comparable.runOut == nil)
         let sevenDays = try #require(pace((previous + current).filter { $0.at >= at(12) }, reset: 336, now: 180).estimate)

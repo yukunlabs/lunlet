@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
 // Refs: US-39, AC-39.02, AC-39.03, AC-39.04, AC-39.06, AC-39.07, AC-39.08; US-24, AC-24.02.
+// Refs: US-40, AC-40.03, AC-40.05, AC-40.06.
 import AppKit
 import LunletCore
 import SwiftUI
@@ -13,6 +14,8 @@ struct PetPalette: Equatable {
     static let lanternOff = Color(red: 0x9A / 255, green: 0x9A / 255, blue: 0x9E / 255)
     static let blush = Color(red: 0xF2 / 255, green: 0x8B / 255, blue: 0x9B / 255)
     static let check = Color(red: 0x2E / 255, green: 0x9E / 255, blue: 0x5B / 255)
+    /// The ink of bubbles and sleep marks over a pack, the dog's dark tone.
+    static let ink = Color(red: 0x2B / 255, green: 0x26 / 255, blue: 0x22 / 255)
 
     static func make(coat: PetCoat, accent: AllowanceColor) -> PetPalette {
         func color(_ hex: Int) -> Color { AllowanceColor(hex: hex).color }
@@ -200,26 +203,9 @@ enum PetDrawing {
         // Bubble with its glyph, popping in; the open panel is the dog's bubble instead (AC-39.04, AC-39.05).
         if let glyph = pose.bubble, !input.panelOpen {
             let scale = CGFloat(live ? PetMotion.bubbleScale(at: t, since: input.poseChangedAt) : 1)
-            let bx = h.x + 30, by = h.y - 78
-            var bubble = Path(roundedRect: CGRect(x: bx, y: by, width: 40, height: 34), cornerRadius: 12)
-            bubble.move(to: .init(x: bx + 8, y: by + 33)); bubble.addLine(to: .init(x: bx + 4, y: by + 43)); bubble.addLine(to: .init(x: bx + 16, y: by + 34)); bubble.closeSubpath()
-            let grow = CGAffineTransform(translationX: bx + 6, y: by + 42).scaledBy(x: scale, y: scale).translatedBy(x: -(bx + 6), y: -(by + 42))
-            c.fill(bubble.applying(grow), with: .color(.white))
-            c.stroke(bubble.applying(grow), with: .color(palette.dark), style: .init(lineWidth: 2, lineJoin: .round))
-            if scale > 0.6 {
-                c.draw(Text(glyph).font(.system(size: 22 * scale, weight: .bold)).foregroundColor(glyph == "✓" ? PetPalette.check : palette.dark),
-                       at: CGPoint(x: bx + 6 + (14) * scale, y: by + 42 - 25 * scale))
-            }
+            drawBubble(in: &c, tip: CGPoint(x: h.x + 36, y: h.y - 36), glyph: glyph, scale: scale, ink: palette.dark)
         }
-        if pose == .asleep {
-            for (index, size) in [14.0, 18.0, 22.0].enumerated() {
-                let phase = live ? ((t + Double(index) * 0.6).truncatingRemainder(dividingBy: 2.4) / 2.4) : Double(index) / 3
-                let opacity = live ? (phase < 0.3 ? phase / 0.3 : 1 - (phase - 0.3) / 0.7) * 0.9 : 0.7
-                let drift = CGFloat(phase) * 18
-                c.draw(Text("z").font(.system(size: size, weight: .bold)).foregroundColor(palette.dark.opacity(opacity)),
-                       at: .init(x: h.x + 44 + 9 * CGFloat(index) + drift * 0.5, y: h.y - 26 - 15 * CGFloat(index) - drift))
-            }
-        }
+        if pose == .asleep { drawSleep(in: &c, origin: CGPoint(x: h.x + 44, y: h.y - 26), time: live ? t : nil, ink: palette.dark) }
         if pose == .done {
             for (index, star) in [(CGPoint(x: 44, y: 70), 9.0), (CGPoint(x: 60, y: 34), 7.0), (CGPoint(x: 178, y: 56), 8.0)].enumerated() {
                 let opacity = live ? 0.15 + 0.85 * (0.5 + 0.5 * wave(1.1, Double(index) * 2)) : 1
@@ -235,11 +221,51 @@ enum PetDrawing {
     }
 }
 
+extension PetDrawing {
+    /// A white bubble with its glyph whose tail ends at `tip`, growing from the tip by `scale` (AC-39.04).
+    static func drawBubble(in c: inout GraphicsContext, tip: CGPoint, glyph: String, scale: CGFloat, ink: Color) {
+        let bx = tip.x - 6, by = tip.y - 42
+        var bubble = Path(roundedRect: CGRect(x: bx, y: by, width: 40, height: 34), cornerRadius: 12)
+        bubble.move(to: .init(x: bx + 8, y: by + 33)); bubble.addLine(to: .init(x: bx + 4, y: by + 43)); bubble.addLine(to: .init(x: bx + 16, y: by + 34)); bubble.closeSubpath()
+        let grow = CGAffineTransform(translationX: tip.x, y: tip.y).scaledBy(x: scale, y: scale).translatedBy(x: -tip.x, y: -tip.y)
+        c.fill(bubble.applying(grow), with: .color(.white))
+        c.stroke(bubble.applying(grow), with: .color(ink), style: .init(lineWidth: 2, lineJoin: .round))
+        if scale > 0.6 {
+            c.draw(Text(glyph).font(.system(size: 22 * scale, weight: .bold)).foregroundColor(glyph == "✓" ? PetPalette.check : ink),
+                   at: CGPoint(x: tip.x + 14 * scale, y: tip.y - 25 * scale))
+        }
+    }
+    /// Three drifting "z" letters rising from `origin`; still when `time` is nil.
+    static func drawSleep(in c: inout GraphicsContext, origin: CGPoint, time t: TimeInterval?, ink: Color) {
+        for (index, size) in [14.0, 18.0, 22.0].enumerated() {
+            let phase = t.map { (($0 + Double(index) * 0.6).truncatingRemainder(dividingBy: 2.4) / 2.4) } ?? Double(index) / 3
+            let opacity = t != nil ? (phase < 0.3 ? phase / 0.3 : 1 - (phase - 0.3) / 0.7) * 0.9 : 0.7
+            let drift = CGFloat(phase) * 18
+            c.draw(Text("z").font(.system(size: size, weight: .bold)).foregroundColor(ink.opacity(opacity)),
+                   at: .init(x: origin.x + 9 * CGFloat(index) + drift * 0.5, y: origin.y - 15 * CGFloat(index) - drift))
+        }
+    }
+}
+
+/// What the pet window shows: the code-drawn dog in a coat, or a pack's sprite sheet (US-40).
+enum PetAppearance: Equatable {
+    case dog(PetPalette)
+    case sprite(PetSpriteSheet)
+    static func == (lhs: PetAppearance, rhs: PetAppearance) -> Bool {
+        switch (lhs, rhs) {
+        case (.dog(let a), .dog(let b)): a == b
+        case (.sprite(let a), .sprite(let b)): a === b
+        default: false
+        }
+    }
+    var spriteVersion: PetSpriteVersion? { if case .sprite(let sheet) = self { sheet.version } else { nil } }
+}
+
 /// The dog, redrawn on a state change and, while it moves, at the tempo of what is happening: twelve frames a
 /// second for its loops, thirty for the quick things (AC-39.08). The motion input is read at draw time.
 struct PetCanvasView: View {
     let state: PetState
-    let palette: PetPalette
+    let appearance: PetAppearance
     let tempo: PetTempo
     let animating: Bool
 
@@ -259,7 +285,12 @@ struct PetCanvasView: View {
     }
     private func canvas(time: TimeInterval?) -> some View {
         Canvas(rendersAsynchronously: false) { context, size in
-            PetDrawing.draw(in: &context, size: size, state: state, palette: palette, input: tempo.input, time: time)
+            switch appearance {
+            case .dog(let palette):
+                PetDrawing.draw(in: &context, size: size, state: state, palette: palette, input: tempo.input, time: time)
+            case .sprite(let sheet):
+                PetSpriteDrawing.draw(in: &context, size: size, state: state, sheet: sheet, input: tempo.input, time: time)
+            }
         }
     }
 }
@@ -271,15 +302,18 @@ final class PetHostView: HoverTrackingView {
     private let tempo = PetTempo()
     private(set) var state = PetState(pose: .asleep, sessionID: nil, sessionCount: 0, waitingCount: 0, runningCount: 0, summary: nil)
     private(set) var input = PetMotionInput()
-    private var palette: PetPalette
+    /// What is shown; `appearance` is NSView's own.
+    private(set) var shown: PetAppearance
     private var animating = false
     var clicked: (() -> Void)?
     var contextMenu: (() -> NSMenu)?
     var moved: (() -> Void)?
+    var dragStarted: (() -> Void)?
+    var dragEnded: (() -> Void)?
 
     init(palette: PetPalette) {
-        self.palette = palette
-        hosting = NSHostingView(rootView: PetCanvasView(state: state, palette: palette, tempo: tempo, animating: false))
+        shown = .dog(palette)
+        hosting = NSHostingView(rootView: PetCanvasView(state: state, appearance: .dog(palette), tempo: tempo, animating: false))
         super.init(frame: .zero)
         hosting.translatesAutoresizingMaskIntoConstraints = false
         addSubview(hosting)
@@ -289,42 +323,72 @@ final class PetHostView: HoverTrackingView {
     }
     @available(*, unavailable) required init?(coder: NSCoder) { nil }
 
-    /// A changed state, palette or animation flag rebuilds the view; a changed motion input alone reaches the next
-    /// frame through the shared tempo, or redraws at once while the dog stands still.
-    func update(_ state: PetState, palette: PetPalette, input: PetMotionInput, animating: Bool) {
-        let rebuild = state != self.state || palette != self.palette || animating != self.animating
+    /// A changed state, appearance or animation flag rebuilds the view, as does any motion change but the gaze (a
+    /// click, a drag, attention), which the next frame must show at once; a gaze change alone reaches the next
+    /// frame through the shared tempo, or redraws at once while the pet stands still.
+    func update(_ state: PetState, appearance: PetAppearance, input: PetMotionInput, animating: Bool) {
+        var prompt = input, previous = self.input
+        prompt.gaze = nil; previous.gaze = nil
+        let rebuild = state != self.state || appearance != self.shown || animating != self.animating || prompt != previous
         let motionChanged = input != self.input
-        self.state = state; self.palette = palette; self.input = input; self.animating = animating
-        tempo.input = input
+        self.state = state; self.shown = appearance; self.input = input; self.animating = animating
+        tempo.input = input; tempo.sprite = appearance.spriteVersion
         if rebuild || (motionChanged && !animating) {
-            hosting.rootView = PetCanvasView(state: state, palette: palette, tempo: tempo, animating: animating)
+            hosting.rootView = PetCanvasView(state: state, appearance: appearance, tempo: tempo, animating: animating)
         }
         guard rebuild else { return }
         toolTip = state.summary ?? state.pose.title
         setAccessibilityLabel(state.accessibilityLabel)
         setAccessibilityValue(state.summary ?? state.pose.title)
     }
-    /// Whether a point in this view's coordinates lies on the dog rather than on transparent space.
+    /// Whether a point in this view's coordinates lies on the pet rather than on transparent space: the dog's
+    /// silhouette, or a pack's opaque pixels in its current cell and its bubble while shown (AC-39.02, AC-40.06).
     func isOnDog(_ point: CGPoint) -> Bool {
         let flipped = CGPoint(x: point.x, y: bounds.height - point.y)
-        let design = flipped.applying(PetDrawing.transform(for: bounds.size).inverted())
-        return PetDrawing.silhouette(pose: state.pose, bubbleShown: !input.panelOpen).contains(design)
+        switch shown {
+        case .dog:
+            let design = flipped.applying(PetDrawing.transform(for: bounds.size).inverted())
+            return PetDrawing.silhouette(pose: state.pose, bubbleShown: !input.panelOpen).contains(design)
+        case .sprite(let sheet):
+            if input.pose.bubble != nil, !input.panelOpen, PetSpriteDrawing.bubbleRect(in: bounds.size, sheet: sheet).contains(flipped) { return true }
+            let rect = PetSpriteDrawing.cellRect(in: bounds.size)
+            guard rect.contains(flipped) else { return false }
+            let frame = PetSpriteDrawing.frame(at: animating ? Date().timeIntervalSinceReferenceDate : nil, input: input, version: sheet.version)
+            let x = Int((flipped.x - rect.minX) / rect.width * CGFloat(PetSpriteSheet.cellWidth))
+            let y = Int((flipped.y - rect.minY) / rect.height * CGFloat(PetSpriteSheet.cellHeight))
+            return sheet.isOpaque(frame, x: x, y: y)
+        }
     }
-    /// The head's center in this view's coordinates, the origin of the dog's gaze.
+    /// The head's center in this view's coordinates, the origin of the dog's gaze; a pack's top center.
     var headCenter: CGPoint {
-        let design = PetDrawing.headCenter(pose: state.pose, in: bounds.size)
-        return CGPoint(x: design.x, y: bounds.height - design.y)
+        switch shown {
+        case .dog:
+            let design = PetDrawing.headCenter(pose: state.pose, in: bounds.size)
+            return CGPoint(x: design.x, y: bounds.height - design.y)
+        case .sprite(let sheet):
+            let top = PetSpriteDrawing.topCenter(in: bounds.size, sheet: sheet)
+            return CGPoint(x: top.x, y: bounds.height - top.y - 24)
+        }
     }
-    /// The head's circle in this view's coordinates, which the companion panel's bubble tail points at.
+    /// The head's circle in this view's coordinates, which the companion panel's bubble tail points at; for a pack,
+    /// a square whose top is the pet's top center (AC-40.05).
     var headFrame: CGRect {
-        let center = headCenter, radius = 40 * PetDrawing.transform(for: bounds.size).a
-        return CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
+        switch shown {
+        case .dog:
+            let center = headCenter, radius = 40 * PetDrawing.transform(for: bounds.size).a
+            return CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
+        case .sprite(let sheet):
+            let top = PetSpriteDrawing.topCenter(in: bounds.size, sheet: sheet)
+            return CGRect(x: top.x - 32, y: bounds.height - top.y - 64, width: 64, height: 64)
+        }
     }
     override var mouseDownCanMoveWindow: Bool { false }
     override func mouseDown(with event: NSEvent) {
         guard let window else { return }
         let origin = window.frame.origin
+        dragStarted?()
         window.performDrag(with: event)
+        dragEnded?()
         let delta = hypot(window.frame.origin.x - origin.x, window.frame.origin.y - origin.y)
         if delta < 3 { clicked?() } else { moved?() }
     }
