@@ -105,8 +105,7 @@ struct UsageHistoryPanel: View {
     }
     private func maximum(_ days: [LocalUsageDay]) -> Double { max(1e-12, days.compactMap { value($0.amount) }.max() ?? 1) }
     private func valueLabel(_ amount: LocalUsageAmount) -> String {
-        if showCost { return LocalUsageText.costBar(amount) }
-        return amount.tokens.map { (amount.partial ? "≥" : "") + $0.formatted(.number.notation(.compactName)) } ?? "—"
+        showCost ? LocalUsageText.costBar(amount) : LocalUsageText.tokenBar(amount)
     }
 }
 

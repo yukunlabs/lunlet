@@ -70,18 +70,19 @@ struct StatusLineSandbox {
     typealias Sandbox = StatusLineSandbox
     var now: Int { Int(Date().timeIntervalSince1970) }
 
-    // Refs: US-33, AC-33.08.
-    @Test func keepsOnlyBothWindowsAndPrintsTheCompactLine() throws {
+    // Refs: US-33, AC-33.08, AC-33.09.
+    @Test func keepsOnlyTheWeeklyWindowAndPrintsTheCompactLine() throws {
         let box = try Sandbox(); defer { box.remove() }
+        // Claude Code may still send a five-hour window to some accounts; it is neither stored nor printed.
         let five = now + 83 * 60 + 40, week = now + 3 * 86_400 + 3_640
         let run = try box.run(Sandbox.input(fiveHour: (23.5, five), sevenDay: (41.2, week)))
-        #expect(run.status == 0 && run.output == "5h 23% · 7d 41% · resets 1h23m\n")
+        #expect(run.status == 0 && run.output == "7d 41% · resets 3d1h\n")
         let lines = try #require(box.text(box.location.limits)).split(separator: "\n").map(String.init)
-        #expect(lines.count == 3 && lines[0] == "lunlet-claude-limits 1")
-        #expect(lines[1].hasPrefix("five_hour 23.5 \(five) ") && lines[2].hasPrefix("seven_day 41.2 \(week) "))
-        // Only the two windows' numbers and observation times are stored; nothing else from the input survives.
+        #expect(lines.count == 2 && lines[0] == "lunlet-claude-limits 1")
+        #expect(lines[1].hasPrefix("seven_day 41.2 \(week) "))
+        // Only the weekly window's numbers and observation time are stored; nothing else from the input survives.
         let stored = try #require(box.text(box.location.limits)) + (box.text(box.location.weeklyLog) ?? "")
-        for secret in ["synthetic-session", "/tmp/synthetic", "opus", "0.4242", "62.8", "314", "1740787200"] {
+        for secret in ["synthetic-session", "/tmp/synthetic", "opus", "0.4242", "62.8", "314", "1740787200", "23.5", "\(five)"] {
             #expect(!stored.contains(secret), "\(secret) persisted")
         }
         #expect(stored.range(of: #"^[a-z0-9_ .\n-]+$"#, options: .regularExpression) != nil)
@@ -94,9 +95,12 @@ struct StatusLineSandbox {
     }
 
     // Refs: US-33, AC-33.08, AC-33.09.
-    @Test func eachWindowMayBeAbsentAndNothingMisleadingIsPrinted() throws {
+    @Test func theWeeklyWindowMayBeAbsentAndNothingMisleadingIsPrinted() throws {
         let box = try Sandbox(); defer { box.remove() }
         let week = now + 2 * 86_400 + 4 * 3_600 + 60
+        // A five-hour window alone is nothing to store or print.
+        let fiveOnly = try box.run(Sandbox.input(fiveHour: (12, now + 3_600)))
+        #expect(fiveOnly.status == 0 && fiveOnly.output.isEmpty && box.text(box.location.limits) == nil)
         let weekly = try box.run(Sandbox.input(sevenDay: (41, week)))
         #expect(weekly.status == 0 && weekly.output == "7d 41% · resets 2d4h\n")
         #expect(box.text(box.location.limits)?.contains("five_hour") == false)
@@ -112,15 +116,15 @@ struct StatusLineSandbox {
     @Test func malformedInputAndInvalidValuesNeverFailAndStoreNothing() throws {
         let box = try Sandbox(); defer { box.remove() }
         let reset = now + 3_600
-        let inputs = ["", "{", "[1,2]", "null", #"{"rate_limits":null}"#, #"{"rate_limits":{"five_hour":null}}"#,
-                      #"{"rate_limits":{"five_hour":{"used_percentage":"23","resets_at":\#(reset)}}}"#,
-                      #"{"rate_limits":{"five_hour":{"used_percentage":101,"resets_at":\#(reset)}}}"#,
-                      #"{"rate_limits":{"five_hour":{"used_percentage":-1,"resets_at":\#(reset)}}}"#,
-                      #"{"rate_limits":{"five_hour":{"used_percentage":1e-9,"resets_at":\#(reset)}}}"#,
-                      #"{"rate_limits":{"five_hour":{"used_percentage":20,"resets_at":"soon"}}}"#,
-                      #"{"rate_limits":{"five_hour":{"used_percentage":20,"resets_at":\#(now + 30 * 86_400)}}}"#,
-                      #"{"rate_limits":{"five_hour":{"used_percentage":20}}}"#,
-                      #"{"rate_limits":{"five_hour":{"nested":{"used_percentage":20,"resets_at":\#(reset)}}}}"#,
+        let inputs = ["", "{", "[1,2]", "null", #"{"rate_limits":null}"#, #"{"rate_limits":{"seven_day":null}}"#,
+                      #"{"rate_limits":{"seven_day":{"used_percentage":"23","resets_at":\#(reset)}}}"#,
+                      #"{"rate_limits":{"seven_day":{"used_percentage":101,"resets_at":\#(reset)}}}"#,
+                      #"{"rate_limits":{"seven_day":{"used_percentage":-1,"resets_at":\#(reset)}}}"#,
+                      #"{"rate_limits":{"seven_day":{"used_percentage":1e-9,"resets_at":\#(reset)}}}"#,
+                      #"{"rate_limits":{"seven_day":{"used_percentage":20,"resets_at":"soon"}}}"#,
+                      #"{"rate_limits":{"seven_day":{"used_percentage":20,"resets_at":\#(now + 30 * 86_400)}}}"#,
+                      #"{"rate_limits":{"seven_day":{"used_percentage":20}}}"#,
+                      #"{"rate_limits":{"seven_day":{"nested":{"used_percentage":20,"resets_at":\#(reset)}}}}"#,
                       "\u{0}\u{1}binary"]
         for input in inputs {
             let run = try box.run(input)
@@ -135,7 +139,7 @@ struct StatusLineSandbox {
         let received = box.scratch.appendingPathComponent("received")
         try box.setPrevious("cat > " + ClaudeStatusLineLocation.quoted(received.path) + "; printf 'previous\\n'")
         let padding = String(repeating: "x", count: 1_100_000)
-        let input = Sandbox.input(fiveHour: (10, now + 3_600), extra: #","padding":"\#(padding)""#) + "\n\n"
+        let input = Sandbox.input(sevenDay: (10, now + 3_600), extra: #","padding":"\#(padding)""#) + "\n\n"
         let run = try box.run(input)
         #expect(run.status == 0 && run.output == "previous\n")
         #expect(try Data(contentsOf: received) == Data(input.utf8))
@@ -147,45 +151,44 @@ struct StatusLineSandbox {
         let box = try Sandbox(); defer { box.remove() }
         let received = box.scratch.appendingPathComponent("received")
         try box.setPrevious("cat > " + ClaudeStatusLineLocation.quoted(received.path) + "; printf 'first\\nsecond\\n'")
-        let input = Sandbox.input(fiveHour: (5, now + 630)) + "\n"
+        let input = Sandbox.input(sevenDay: (5, now + 630)) + "\n"
         let run = try box.run(input)
-        #expect(run.status == 0 && run.output == "first\nsecond\n5h 5% · resets 10m\n")
+        #expect(run.status == 0 && run.output == "first\nsecond\n7d 5% · resets 10m\n")
         #expect(try Data(contentsOf: received) == Data(input.utf8))
         // A failing replaced command would have left Claude Code's line blank; its partial output stays hidden.
         try box.setPrevious("printf 'partial'; exit 3")
         let failed = try box.run(input)
-        #expect(failed.status == 0 && failed.output == "5h 5% · resets 10m\n")
+        #expect(failed.status == 0 && failed.output == "7d 5% · resets 10m\n")
         // Without readings the replaced line is shown unchanged and nothing is added.
         try box.setPrevious("printf 'only mine\\n'")
         #expect(try box.run(#"{"model":{}}"#).output == "only mine\n")
         // An unwritable Lunlet directory still chains and still exits 0.
         try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: box.location.directory.path)
-        let locked = try box.run(Sandbox.input(fiveHour: (6, now + 630)))
-        #expect(locked.status == 0 && locked.output == "only mine\n5h 6% · resets 10m\n")
+        let locked = try box.run(Sandbox.input(sevenDay: (6, now + 630)))
+        #expect(locked.status == 0 && locked.output == "only mine\n7d 6% · resets 10m\n")
     }
 
     // Refs: US-33, AC-33.09.
     @Test func olderResponsesFromIdleSessionsNeverLowerAWindow() throws {
         let box = try Sandbox(); defer { box.remove() }
-        let start = now, five = start + 4 * 3_600, week = start + 5 * 86_400
-        _ = try box.run(Sandbox.input(fiveHour: (40, five), sevenDay: (30, week)))
+        let start = now, week = start + 5 * 86_400
+        _ = try box.run(Sandbox.input(sevenDay: (30, week)))
         // An idle session re-runs its line with its last, lower response and with a window that already reset.
-        let replay = try box.run(Sandbox.input(fiveHour: (12, five + 60), sevenDay: (20, week - 7 * 86_400 + 600)))
-        #expect(replay.output == "5h 40% · 7d 30% · resets 4h0m\n" || replay.output == "5h 40% · 7d 30% · resets 3h59m\n")
-        let limits = try #require(box.text(box.location.limits))
-        #expect(limits.contains("five_hour 40 \(five) ") && limits.contains("seven_day 30 \(week) "))
-        // More use in the same window, and a later window, replace the stored value.
-        _ = try box.run(Sandbox.input(fiveHour: (41.75, five), sevenDay: (31, week)))
-        #expect(try #require(box.text(box.location.limits)).contains("five_hour 41.75 \(five) "))
+        let replay = try box.run(Sandbox.input(sevenDay: (20, week - 7 * 86_400 + 600)))
+        #expect(replay.output == "7d 30% · resets 5d0h\n" || replay.output == "7d 30% · resets 4d23h\n")
+        #expect(try #require(box.text(box.location.limits)).contains("seven_day 30 \(week) "))
+        // More use in the same window replaces the stored value.
+        _ = try box.run(Sandbox.input(sevenDay: (31.75, week)))
+        #expect(try #require(box.text(box.location.limits)).contains("seven_day 31.75 \(week) "))
         // Once a window has reset, the next window's first value replaces it even though it is lower.
-        let passed = try #require(box.text(box.location.limits)).replacingOccurrences(of: "five_hour 41.75 \(five)",
-                                                                                     with: "five_hour 41.75 \(start - 60)")
+        let passed = try #require(box.text(box.location.limits)).replacingOccurrences(of: "seven_day 31.75 \(week)",
+                                                                                     with: "seven_day 31.75 \(start - 60)")
         try Data(passed.utf8).write(to: box.location.limits)
-        _ = try box.run(Sandbox.input(fiveHour: (2, start + 5 * 3_600)))
-        #expect(try #require(box.text(box.location.limits)).contains("five_hour 2 \(start + 5 * 3_600) "))
+        _ = try box.run(Sandbox.input(sevenDay: (2, start + 7 * 86_400)))
+        #expect(try #require(box.text(box.location.limits)).contains("seven_day 2 \(start + 7 * 86_400) "))
         // The weekly log never records the replayed lower reading.
         let log = try #require(box.text(box.location.weeklyLog)).split(separator: "\n").map { $0.split(separator: " ")[1] }
-        #expect(log == ["30", "31"])
+        #expect(log == ["30", "31.75", "2"])
     }
 
     // Refs: US-33, AC-33.09; US-04, AC-04.05.

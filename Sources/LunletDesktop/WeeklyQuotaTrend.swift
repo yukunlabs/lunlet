@@ -47,16 +47,25 @@ private struct QuotaResetEvent {
     let after: QuotaReading
 }
 
+/// The chart's span: the selected number of local calendar days of observations, including today, then the forecast
+/// through the reported reset (AC-32.01, AC-18.02).
 enum QuotaChartTimeline {
     static func start(now: Date, days: Int, calendar: Calendar = .current) -> Date? {
         guard (1...7).contains(days) else { return nil }
         return calendar.date(byAdding: .day, value: 1 - days, to: calendar.startOfDay(for: now))
     }
-    static func dates(now: Date, reset: Date, days: Int, calendar: Calendar = .current) -> [Date] {
-        guard reset > now, let first = start(now: now, days: days, calendar: calendar) else { return [] }
-        let end = calendar.startOfDay(for: reset)
-        guard let count = calendar.dateComponents([.day], from: first, to: end).day, (0...15).contains(count) else { return [] }
-        return (0...count).compactMap { calendar.date(byAdding: .day, value: $0, to: first) }
+
+    /// Local midnights from the span's start to before the reset, as day ticks; the reset itself is labeled apart.
+    static func dayTicks(start: Date, reset: Date, calendar: Calendar = .current) -> [Date] {
+        var day = calendar.startOfDay(for: start)
+        if day < start { day = calendar.date(byAdding: .day, value: 1, to: day) ?? reset }
+        var ticks: [Date] = []
+        while day < reset, ticks.count < 16 {
+            ticks.append(day)
+            guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { break }
+            day = next
+        }
+        return ticks
     }
 }
 
@@ -119,35 +128,61 @@ struct WeeklyQuotaTrend: Equatable {
     /// Changes smaller than this, in percentage points, are invisible at the chart's scale and add no point; the pace
     /// still sees every reading.
     static let chartResolution = 1.0
+    /// Between two kept points at least this much time passes, unless use jumps by `chartJump` points sooner; hourly
+    /// one-point moves then draw as one smooth slope rather than a staircase.
+    static let chartCadence: TimeInterval = 4 * 3600
+    static let chartJump = 5.0
 
     /// The points and detected resets of comparable readings for one window, shared by every agent's chart. The
-    /// readings within the shown days are drawn at the chart's resolution, so a window observed on one or two days
-    /// still shows its course: a reading is kept when it moves a visible step from the last kept one, when the next
-    /// reading moves a visible step from it (so a slope starts where it started), and at each day's and window's
-    /// edges, so a flat stretch still draws from day to day and a detected reset keeps both sides (AC-32.01,
-    /// AC-33.09). Invisible drift between those points is left out.
+    /// readings within the shown days are drawn at the chart's cadence, so a window observed on one or two days still
+    /// shows its course: a reading is kept when it moved a visible step from the last kept one after `chartCadence`,
+    /// sooner when it jumped by `chartJump`, at the span's ends and on either side of a change of window, so a
+    /// detected reset keeps both sides (AC-32.01, AC-33.09). Readings held or drifting between kept points are not
+    /// drawn, so the line runs as a curve rather than a staircase; when two kept readings lie more than a day apart,
+    /// each intervening day's first and last reading bridge them, so a quiet stretch still draws from day to day and
+    /// a day without readings still breaks the line.
     static func chart(_ comparable: [QuotaReading], resetAt: Date, now: Date, since: Date,
                       calendar: Calendar = .current) -> (points: [QuotaReading], resets: [QuotaResetMarker]) {
         // The chart shows at most seven days, never the guard's extra day, and no unidentified later window.
         let start = max(since, now.addingTimeInterval(-WeeklyQuotaEstimator.week))
+        // In time order, whatever order the account and local readings arrived in, so the span's ends are its ends.
         let shown = comparable.filter {
             $0.at >= start && $0.resetAt.timeIntervalSince(resetAt) <= WeeklyQuotaEstimator.resetTimeTolerance
-        }
+        }.sorted { $0.at < $1.at }
         let events = Self.resetEvents(shown)
-        func edge(_ a: QuotaReading?, _ b: QuotaReading?) -> Bool {
-            guard let a, let b else { return true }
-            return !calendar.isDate(a.at, inSameDayAs: b.at)
-                || abs(a.resetAt.timeIntervalSince(b.resetAt)) > WeeklyQuotaEstimator.resetTimeTolerance
+        func sameWindow(_ a: QuotaReading, _ b: QuotaReading) -> Bool {
+            abs(a.resetAt.timeIntervalSince(b.resetAt)) <= WeeklyQuotaEstimator.resetTimeTolerance
         }
         var drawn: [QuotaReading] = []
         for (index, reading) in shown.enumerated() {
             let previous = index > 0 ? shown[index - 1] : nil, next = index + 1 < shown.count ? shown[index + 1] : nil
-            let step = drawn.last.map { abs($0.remaining - reading.remaining) >= Self.chartResolution } ?? true
-            let slopeStart = next.map { abs($0.remaining - reading.remaining) >= Self.chartResolution } ?? false
-            if step || slopeStart || edge(previous, reading) || edge(reading, next) { drawn.append(reading) }
+            let keep = drawn.last.map { last in
+                let moved = abs(last.remaining - reading.remaining)
+                return moved >= Self.chartJump
+                    || (moved >= Self.chartResolution && reading.at.timeIntervalSince(last.at) >= Self.chartCadence)
+            } ?? true
+            let windowEdge = previous.map { !sameWindow($0, reading) } ?? true || next.map { !sameWindow(reading, $0) } ?? true
+            if keep || windowEdge { drawn.append(reading) }
+        }
+        var bridged: [QuotaReading] = []
+        for (index, point) in drawn.enumerated() {
+            bridged.append(point)
+            guard index + 1 < drawn.count else { break }
+            let following = drawn[index + 1]
+            let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: point.at),
+                                               to: calendar.startOfDay(for: following.at)).day ?? 0
+            guard days > 1, sameWindow(point, following) else { continue }
+            let between = shown.filter { $0.at > point.at && $0.at < following.at }
+            for (day, readings) in Dictionary(grouping: between, by: { calendar.startOfDay(for: $0.at) }) {
+                let first = readings.min { $0.at < $1.at }, last = readings.max { $0.at < $1.at }
+                if !calendar.isDate(day, inSameDayAs: point.at), let first { bridged.append(first) }
+                if !calendar.isDate(day, inSameDayAs: following.at), let last, last.at != first?.at || calendar.isDate(day, inSameDayAs: point.at) {
+                    bridged.append(last)
+                }
+            }
         }
         var unique: [Date: QuotaReading] = [:]
-        for point in events.flatMap({ [$0.before, $0.after] }) + drawn { unique[point.at] = point }
+        for point in events.flatMap({ [$0.before, $0.after] }) + bridged { unique[point.at] = point }
         return (unique.values.sorted { $0.at < $1.at }, events.map(\.marker))
     }
 

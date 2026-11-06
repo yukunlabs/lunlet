@@ -131,6 +131,21 @@ struct WeeklyQuotaTrendTests {
         #expect(oneDay.pace == sevenDays.pace)
         #expect(oneDay.points.count < sevenDays.points.count)
     }
+    @Test func dayTicksRunFromTheRangeStartToBeforeTheReset() throws {
+        // Ticks are local midnights from the selected range's start; the reset itself is labeled apart (AC-18.02).
+        var calendar = Calendar(identifier: .gregorian); calendar.timeZone = TimeZone(identifier: "UTC")!
+        let morning = try #require(calendar.date(from: DateComponents(year: 2026, month: 11, day: 6, hour: 9)))
+        let evening = try #require(calendar.date(from: DateComponents(year: 2026, month: 11, day: 12, hour: 20)))
+        let today = try #require(QuotaChartTimeline.start(now: morning, days: 1, calendar: calendar))
+        #expect(today == calendar.date(from: DateComponents(year: 2026, month: 11, day: 6)))
+        let ticks = QuotaChartTimeline.dayTicks(start: today, reset: evening, calendar: calendar)
+        #expect(ticks.first == today && ticks.count == 7)
+        #expect(ticks.last == calendar.date(from: DateComponents(year: 2026, month: 11, day: 12)))
+        #expect(ticks.allSatisfy { calendar.component(.hour, from: $0) == 0 && $0 < evening })
+        let midnight = try #require(calendar.date(from: DateComponents(year: 2026, month: 11, day: 13)))
+        #expect(QuotaChartTimeline.dayTicks(start: today, reset: midnight, calendar: calendar).count == 7)
+        #expect(QuotaChartTimeline.start(now: morning, days: 8, calendar: calendar) == nil)
+    }
     @Test func matchingLocalQuotaHistoryFeedsTheChartAndInterleavedWindowsAreRejected() throws {
         // AC-32.01, AC-32.03: a different reset between same-window readings suggests a second account.
         var trend = WeeklyQuotaTrend()
@@ -287,29 +302,47 @@ struct WeeklyQuotaTrendTests {
                                   remaining: 90 - Double(index) * 0.2, bucketID: "codex", plan: "pro")
         }
         let chart = trend.display(local: rows, now: start.addingTimeInterval(72 * 3600)).points
-        // About 24 visible steps of one point, two points each at most, plus the day edges and the current reading.
-        #expect(chart.count >= 24 && chart.count <= 60)
+        // About one point per four hours of visible drift, plus the span's ends and the current reading.
+        #expect(chart.count >= 12 && chart.count <= 24)
         #expect(chart.first?.remaining == 90 && chart.last?.remaining == 60)
     }
-    // AC-32.01, AC-33.09: readings minutes apart that each move a visible step all appear; the chart no longer keeps
-    // only each day's last reading.
-    @Test func chartKeepsEveryVisibleStepWithinADay() throws {
+    // AC-32.01: one-point moves within the chart's four-hour cadence are not drawn one by one, so hourly readings make
+    // one smooth slope rather than a staircase; a flat day still keeps its first and last reading.
+    @Test func chartDrawsHoldsAsSlopesNotSteps() throws {
+        var trend = WeeklyQuotaTrend()
+        trend.record(try sample(hours: 8, remaining: 60))
+        let reset = start.addingTimeInterval(7 * 86_400)
+        // All within one local day, so only the cadence, a jump and the span's ends can keep a point.
+        let values = [(0.0, 90.0), (1.0, 90.0), (1.5, 89.0), (4.5, 89.0), (6.5, 89.0), (7.0, 88.0)].map {
+            LocalQuotaObservation(at: start.addingTimeInterval($0.0 * 3600), resetAt: reset,
+                                  remaining: $0.1, bucketID: "codex", plan: "pro")
+        }
+        let calendar = Calendar.current
+        try #require(values.allSatisfy { calendar.isDate($0.at, inSameDayAs: start) })
+        let result = trend.display(local: values, now: start.addingTimeInterval(8 * 3600)).points
+        #expect(result.map { ($0.at.timeIntervalSince(start) / 3600, $0.remaining) }.map { "\($0.0):\($0.1)" }
+                == ["0.0:90.0", "4.5:89.0", "8.0:60.0"])
+    }
+    // AC-32.01, AC-33.09: readings minutes apart draw as one slope, but a jump of five points within the cadence is
+    // kept, so a burst of use within a day still shows; the chart never keeps only each day's last reading.
+    @Test func chartKeepsJumpsWithinADayButNotEverySmallStep() throws {
         var trend = WeeklyQuotaTrend()
         trend.record(try sample(hours: 72, remaining: 60))
         let reset = start.addingTimeInterval(7 * 86_400)
-        let values = [(0.0, 90.0), (0.1, 89.0), (0.2, 88.0)].map {
+        let values = [(0.0, 90.0), (0.1, 89.0), (0.2, 88.0), (0.3, 80.0)].map {
             LocalQuotaObservation(at: start.addingTimeInterval($0.0 * 3600), resetAt: reset,
                                   remaining: $0.1, bucketID: "codex", plan: "pro")
         }
         let result = trend.display(local: values, now: start.addingTimeInterval(72 * 3600)).points
-        #expect(result.map(\.remaining) == [90, 89, 88, 60])
+        #expect(result.map(\.remaining) == [90, 80, 60])
     }
-    @Test func timelineIncludesEveryDateThroughReset() throws {
+    @Test func timelineTicksEveryDateFromTheRangeStartThroughTheResetDay() throws {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!
         let now = try #require(ISO8601DateFormatter().date(from: "2026-10-28T12:00:00Z"))
         let reset = try #require(ISO8601DateFormatter().date(from: "2026-11-04T06:35:00Z"))
-        let days = QuotaChartTimeline.dates(now: now, reset: reset, days: 5, calendar: calendar)
+        let start = try #require(QuotaChartTimeline.start(now: now, days: 5, calendar: calendar))
+        let days = QuotaChartTimeline.dayTicks(start: start, reset: reset, calendar: calendar)
         #expect(days.count == 12)
         #expect(calendar.component(.day, from: try #require(days.first)) == 24)
         #expect(calendar.component(.day, from: try #require(days.last)) == 4)

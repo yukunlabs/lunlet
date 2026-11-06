@@ -49,7 +49,7 @@ final class RenderPower: IdleSleepControlling { func setEnabled(_ enabled: Bool)
         let fixture = try ClaudeLimitsFixture(); defer { fixture.remove() }
         _ = try fixture.connection.connect()
         let t = Int(Date().timeIntervalSince1970)
-        try fixture.write(state: "lunlet-claude-limits 1\nfive_hour 5 \(t + 5_400) \(t - 300)\nseven_day 15 \(t + 4 * 86_400) \(t - 300)\n",
+        try fixture.write(state: "lunlet-claude-limits 1\nseven_day 15 \(t + 4 * 86_400) \(t - 300)\n",
                           log: "\(t - 2 * 86_400) 6 \(t + 4 * 86_400)\n\(t - 86_400) 11 \(t + 4 * 86_400)\n")
         let limits = ClaudePlanLimitsModel(service: fixture.connection)
         limits.setActive(true)

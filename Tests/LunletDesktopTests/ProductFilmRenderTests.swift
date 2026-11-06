@@ -249,8 +249,7 @@ final class FilmWindow: NSWindow {
         let log = stride(from: claudeStart + 3_600, to: epoch - 1_800, by: 4 * 3_600).map { at in
             "\(at) \(Int((41 * pow(Double(at - claudeStart) / Double(epoch - claudeStart), 0.95)).rounded())) \(claudeReset)"
         }.joined(separator: "\n") + "\n"
-        try fixture.write(state: "lunlet-claude-limits 1\nfive_hour 22 \(epoch + 2 * 3_600 + 1_200) \(epoch - 60)\n"
-                          + "seven_day 41 \(claudeReset) \(epoch - 60)\n", log: log)
+        try fixture.write(state: "lunlet-claude-limits 1\nseven_day 41 \(claudeReset) \(epoch - 60)\n", log: log)
         let limits = ClaudePlanLimitsModel(service: fixture.connection)
         limits.setActive(true)
         try await ClaudeLimitsFixture.settle(limits) { limits.limits?.sevenDay != nil && limits.account != nil }

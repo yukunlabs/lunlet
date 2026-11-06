@@ -118,8 +118,8 @@ struct SessionCardTests {
     // with the project and local time below; the request as a tinted block, the reply in a bordered block; no controls.
     @Test func notificationCardsShowTheGistInAStructuredLayout() throws {
         var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = try #require(TimeZone(identifier: "Asia/Shanghai"))
-        let finished = Date(timeIntervalSince1970: 1_793_435_520) // 2026-10-31 16:32 in Shanghai
+        calendar.timeZone = try #require(TimeZone(identifier: "UTC"))
+        let finished = Date(timeIntervalSince1970: 1_793_464_320) // 2026-10-31 16:32 UTC
         let value = SessionSnapshot(observation: .init(sessionID: UUID(), connectionID: UUID(), liveness: .alive,
                                                        phase: .idle(completedTurnID: "turn")),
                                     project: "lunlet", publicConclusion: "## Done\n\n- Parser keeps Unicode\n- Tests pass",

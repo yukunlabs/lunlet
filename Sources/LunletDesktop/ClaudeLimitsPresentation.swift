@@ -6,13 +6,10 @@ import Foundation
 import LunletClaude
 import LunletCore
 
-/// Claude windows in the same terms as Codex: percent left, reset times and the reading's
-/// age; the weekly forecast uses the shared Codex wording. Claude windows are never combined with Codex allowances.
+/// Claude's weekly window in the same terms as Codex: percent left, reset time and the reading's age; the forecast
+/// uses the shared Codex wording. Claude limits are never combined with Codex allowances.
 enum ClaudeLimitsText {
-    enum Window {
-        case session, week
-        var title: String { self == .session ? "Current session" : "This week" }
-    }
+    static let weekTitle = "This week"
 
     /// A window that applies now: nil when unknown or once its reset has passed.
     static func current(_ reading: LimitWindowReading?, now: Date) -> LimitWindowReading? {
@@ -37,8 +34,7 @@ enum ClaudeLimitsText {
 
     /// The reading's age, shown once it is more than a minute old.
     static func asOf(_ limits: ClaudePlanLimits?, now: Date, calendar: Calendar = .current) -> String? {
-        guard let at = [limits?.fiveHour?.at, limits?.sevenDay?.at].compactMap({ $0 }).max(),
-              now.timeIntervalSince(at) > 60 else { return nil }
+        guard let at = limits?.sevenDay?.at, now.timeIntervalSince(at) > 60 else { return nil }
         return "as of " + moment(at, now: now, calendar: calendar)
     }
 

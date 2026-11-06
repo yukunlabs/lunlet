@@ -279,8 +279,19 @@ struct PanelTinted<Content: View>: View {
         self.preferences = preferences; self.skins = skins; self.agent = agent; self.content = content()
     }
     var body: some View {
-        content.tint(agent.map { AgentPalette.color($0, accentHex: skins.accentHex(for: preferences.value)).color }
-            ?? skins.controlTint(for: preferences.value).color)
+        let agentColor = agent.map { AgentPalette.color($0, accentHex: skins.accentHex(for: preferences.value)).color }
+        content.tint(agentColor ?? skins.controlTint(for: preferences.value).color)
+            .environment(\.agentChartColor, agentColor)
+    }
+}
+
+private struct AgentChartColorKey: EnvironmentKey { static let defaultValue: Color? = nil }
+extension EnvironmentValues {
+    /// The agent's palette color on a separately hosted chart, for fills that need a concrete color; nil falls back
+    /// to the tint.
+    var agentChartColor: Color? {
+        get { self[AgentChartColorKey.self] }
+        set { self[AgentChartColorKey.self] = newValue }
     }
 }
 

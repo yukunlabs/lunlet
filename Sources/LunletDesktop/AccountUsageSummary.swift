@@ -62,7 +62,8 @@ struct AccountUsageSummary: View {
                             Text("Resets in " + remaining)
                         } else { Text("Reset due") }
                         Spacer(minLength: PanelStyle.Space.tight)
-                        Text(reset, format: .dateTime.weekday(.abbreviated).month(.abbreviated).day().hour().minute())
+                        // One reset wording everywhere: a time today, otherwise the weekday and time.
+                        Text(ClaudeLimitsText.moment(reset, now: now))
                     } else {
                         Text("Reset —")
                         Spacer(minLength: PanelStyle.Space.tight)

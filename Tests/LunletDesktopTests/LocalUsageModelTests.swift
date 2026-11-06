@@ -168,7 +168,10 @@ private actor RangeHistoryReader: LocalUsageReading {
         #expect(LocalUsageText.costHelp(mixed).contains("Known subtotal"))
         #expect(LocalUsageText.coverage([mixed]) == "Prices cover 50% of recorded tokens.")
         #expect(LocalUsageText.coverage([]) == "Price coverage unavailable.")
-        #expect(LocalUsageText.costBar(mixed) == "≥$0.0003")
+        // Bar labels carry no lower-bound sign: the chart's footnote says it once.
+        #expect(LocalUsageText.costBar(mixed) == "≈$0.0003")
+        #expect(LocalUsageText.tokenBar(.init(tokens: 536_000_000, estimatedUSD: nil, partial: true)) == "536M")
+        #expect(LocalUsageText.tokenBar(.init(tokens: nil, estimatedUSD: nil, partial: true)) == "—")
         #expect(LocalUsageText.costBar(.init(tokens: nil, estimatedUSD: nil, partial: false)) == "—")
         #expect(LocalUsageText.costBar(.init(tokens: 1, estimatedUSD: 0.00000001, partial: false)) == "≈$1e-08")
         #expect(LocalUsageText.costBar(.init(tokens: 1, estimatedUSD: 1234.56, partial: false)) == "≈$1.2K")

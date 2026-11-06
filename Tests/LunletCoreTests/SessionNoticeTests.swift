@@ -131,8 +131,8 @@ struct SessionNoticeTests {
     // Refs: US-06, AC-06.01: the footer gives the local time and never offers replies without a control.
     @Test func footerShowsLocalTimeAndTheMacBoundary() throws {
         var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = try #require(TimeZone(identifier: "Asia/Shanghai"))
-        let finished = Date(timeIntervalSince1970: 1_793_435_520) // 2026-10-31 16:32 in Shanghai
+        calendar.timeZone = try #require(TimeZone(identifier: "UTC"))
+        let finished = Date(timeIntervalSince1970: 1_793_464_320) // 2026-10-31 16:32 UTC
         let notice = SessionNotice.prepare(snapshot(at: finished))
         let footer = notice.footer(now: finished.addingTimeInterval(60), calendar: calendar, locale: Locale(identifier: "en_GB"))
         #expect(footer == "Finished 16:32 · Approvals stay on your Mac · Replies from your phone aren't available yet")

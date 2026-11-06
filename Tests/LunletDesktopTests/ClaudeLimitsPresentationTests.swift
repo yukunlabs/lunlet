@@ -59,9 +59,9 @@ import LunletCore
         let week = reading(13, resetIn: 3 * 86_400)
         #expect(moment(week.resetsAt) == week.resetsAt.formatted(.dateTime.weekday(.abbreviated).hour().minute()))
         // The reading's age appears once it is more than a minute old.
-        let fresh = ClaudePlanLimits(fiveHour: reading(1, resetIn: 60, age: 30), sevenDay: nil, weekly: [])
+        let fresh = ClaudePlanLimits(sevenDay: reading(1, resetIn: 60, age: 30), weekly: [])
         #expect(ClaudeLimitsText.asOf(fresh, now: now) == nil)
-        let older = ClaudePlanLimits(fiveHour: reading(1, resetIn: 60, age: 600), sevenDay: nil, weekly: [])
+        let older = ClaudePlanLimits(sevenDay: reading(1, resetIn: 60, age: 600), weekly: [])
         #expect(ClaudeLimitsText.asOf(older, now: now, calendar: calendar) == "as of " + moment(now.addingTimeInterval(-600)))
         #expect(ClaudeLimitsText.asOf(nil, now: now) == nil)
     }
@@ -72,7 +72,7 @@ import LunletCore
             let reset = now.addingTimeInterval(resetIn)
             let weekly = points.map { QuotaReading(at: now.addingTimeInterval(-$0.0), remaining: 100 - $0.1, resetAt: reset) }
             let last = points.last!
-            return .init(fiveHour: nil, sevenDay: .init(usedPercent: last.1, resetsAt: reset, at: now.addingTimeInterval(-last.0)),
+            return .init(sevenDay: .init(usedPercent: last.1, resetsAt: reset, at: now.addingTimeInterval(-last.0)),
                          weekly: weekly)
         }
         // A window that began three hours ago, with no earlier window: too early.
@@ -92,7 +92,7 @@ import LunletCore
             Issue.record("expected exhausted"); return
         }
         // Without a weekly window there is no forecast.
-        #expect(ClaudeLimitsText.pace(.init(fiveHour: nil, sevenDay: nil, weekly: []), now: now) == nil)
+        #expect(ClaudeLimitsText.pace(.init(sevenDay: nil, weekly: []), now: now) == nil)
     }
 
     // Refs: US-33, AC-33.10; US-19, AC-19.05.
@@ -124,15 +124,15 @@ import LunletCore
         try await ClaudeLimitsFixture.settle(model) { model.connection == .connected && !model.isChanging }
         #expect(model.connection == .connected && fixture.settings?.contains("\"statusLine\"") == true)
         let t = Int(Date().timeIntervalSince1970)
-        try fixture.write(state: "lunlet-claude-limits 1\nfive_hour 47 \(t + 3_600) \(t - 5)\nseven_day 13 \(t + 86_400) \(t - 5)\n")
+        try fixture.write(state: "lunlet-claude-limits 1\nseven_day 13 \(t + 86_400) \(t - 5)\n")
         model.setActive(true)
-        try await ClaudeLimitsFixture.settle(model) { model.limits?.fiveHour != nil }
-        #expect(model.limits?.fiveHour?.usedPercent == 47 && model.limits?.sevenDay?.usedPercent == 13 && !model.readFailed)
+        try await ClaudeLimitsFixture.settle(model) { model.limits?.sevenDay != nil }
+        #expect(model.limits?.sevenDay?.usedPercent == 13 && !model.readFailed)
         // A damaged reading file keeps the earlier values, labeled stale, instead of inventing zero.
         try fixture.write(state: "lunlet-claude-limits 9\n")
         model.refresh()
         try await ClaudeLimitsFixture.settle(model) { model.readFailed }
-        #expect(model.readFailed && model.limits?.fiveHour?.usedPercent == 47)
+        #expect(model.readFailed && model.limits?.sevenDay?.usedPercent == 13)
         model.disconnect()
         try await ClaudeLimitsFixture.settle(model) { model.connection == .notConnected && !model.isChanging }
         #expect(fixture.settings == "{\n  \"theme\": \"dark\"\n}\n" && model.limits == nil)

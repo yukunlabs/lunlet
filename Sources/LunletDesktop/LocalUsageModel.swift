@@ -76,10 +76,14 @@ enum LocalUsageText {
         return prefix + value.formatted(.number.locale(locale)
             .precision(.fractionLength(value > 0 && value < 0.01 ? 4 : 2)))
     }
+    /// A bar label without the lower-bound sign, which the chart's footnote states once.
+    static func tokenBar(_ amount: LocalUsageAmount) -> String {
+        amount.tokens.map { $0.formatted(.number.notation(.compactName)) } ?? "—"
+    }
     /// A bounded bar label; exact USD and price coverage are available in help text.
     static func costBar(_ amount: LocalUsageAmount) -> String {
         guard let value = amount.estimatedUSD else { return "—" }
-        let prefix = amount.costPartial ? "≥$" : "≈$"
+        let prefix = "≈$"
         let locale = Locale(identifier: "en_US_POSIX")
         for (scale, suffix) in [(1e12, "T"), (1e9, "B"), (1e6, "M"), (1e3, "K")] {
             if value >= scale { return prefix + String(format: "%.1f", locale: locale, value / scale) + suffix }

@@ -306,13 +306,12 @@ struct VineEntryTests {
     @Test @MainActor func entryAllowancesFollowSelectionAndUseOnlyAConnectedUnexpiredClaudeWeek() {
         let now = Date(timeIntervalSince1970: 1_793_390_400)
         func limits(used: Double, resetIn: TimeInterval) -> ClaudePlanLimits {
-            .init(fiveHour: .init(usedPercent: 90, resetsAt: now.addingTimeInterval(600), at: now),
-                  sevenDay: .init(usedPercent: used, resetsAt: now.addingTimeInterval(resetIn), at: now), weekly: [])
+            .init(sevenDay: .init(usedPercent: used, resetsAt: now.addingTimeInterval(resetIn), at: now), weekly: [])
         }
         let week = limits(used: 30, resetIn: 86_400)
         #expect(NotchEntryController.allowances(providers: [.codex, .claude], codex: 72, claude: week, claudeConnected: true, now: now)
                 == [.init(provider: .codex, remaining: 72), .init(provider: .claude, remaining: 70)])
-        // Selection order is kept; the Claude value never depends on Codex's, and the five-hour window is not used.
+        // Selection order is kept; the Claude value never depends on Codex's.
         #expect(NotchEntryController.allowances(providers: [.claude, .codex], codex: nil, claude: week, claudeConnected: true, now: now)
                 == [.init(provider: .claude, remaining: 70), .init(provider: .codex, remaining: nil)])
         #expect(NotchEntryController.allowances(providers: [.claude], codex: 72, claude: week, claudeConnected: true, now: now)

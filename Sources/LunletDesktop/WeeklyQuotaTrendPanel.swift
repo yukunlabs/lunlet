@@ -102,6 +102,7 @@ struct WeeklyTrendInput {
     let title: String
     let display: QuotaTrendDisplay
     let resetAt: Date?
+    /// The selected number of local calendar days of observations shown before the forecast.
     let days: Int
     /// The forecast sentence: the hover tip over the estimate, or a short note when there is no estimate.
     let summary: String
@@ -119,12 +120,12 @@ struct WeeklyQuotaTrendPanel: View {
     var body: some View {
         TimelineView(.periodic(from: .now, by: 60)) { context in
             let trend = account.weeklyTrend
-            let start = QuotaChartTimeline.start(now: context.date, days: history.historyDays) ?? context.date
             // Points and resets follow the selected range; the pace uses every comparable reading.
+            let start = QuotaChartTimeline.start(now: context.date, days: history.historyDays) ?? context.date
             let display = trend.display(local: history.snapshot?.quotaHistory ?? [], now: context.date, since: start)
             let stale = account.latestReadFailed
             WeeklyTrendChart(input: .init(
-                title: "Weekly allowance", display: display, resetAt: trend.resetAt, days: history.historyDays,
+                title: "Weekly limit", display: display, resetAt: trend.resetAt, days: history.historyDays,
                 summary: QuotaForecastText.header(display.pace, stale: stale, now: context.date),
                 summaryHelp: QuotaForecastText.help(display.pace, stale: stale, resetAt: trend.resetAt),
                 evenPace: QuotaForecastText.evenPace(display.pace, now: context.date),
@@ -163,13 +164,21 @@ struct ClaudeWeeklyTrendPanel: View {
     }
 }
 
-/// The weekly trend chart shared by every agent: observed readings, even pace, the estimate with its range, and
-/// resets.
+/// The weekly trend chart shared by every agent: the selected days of observed readings as a smooth curve through
+/// the readings that changed, over a faint fill, then the estimate with its range through the reset; the even budget
+/// as a faint guide and dashed markers at detected resets.
 struct WeeklyTrendChart: View {
     let input: WeeklyTrendInput
     let now: Date
     var chartHeight: CGFloat = 84
     @ViewState private var hoverLocation: CGFloat?
+    @Environment(\.agentChartColor) private var agentColor
+
+    /// The fill under the observed line: the agent's color fading downwards, or a flat tint where no color is known.
+    private var observedFill: AnyShapeStyle {
+        agentColor.map { AnyShapeStyle(LinearGradient(colors: [$0.opacity(0.18), $0.opacity(0)], startPoint: .top, endPoint: .bottom)) }
+            ?? AnyShapeStyle(.tint.opacity(0.08))
+    }
 
     var body: some View {
         let display = input.display
@@ -191,31 +200,33 @@ struct WeeklyTrendChart: View {
                 }
             }
             if let pace = display.pace, let reset = input.resetAt {
-                chart(points: display.points, resets: display.resets, reset: reset, now: now,
-                      days: input.days, pace: pace, summary: input.summary)
+                chart(points: display.points, resets: display.resets, reset: reset, now: now, days: input.days, pace: pace,
+                      summary: input.summary)
                 if let even = input.evenPace {
                     Text(even).font(Font.caption).foregroundStyle(.secondary)
                         .help("Even pace is what an even budget across this weekly window would show at the latest "
                             + "reading's time. It is not a forecast.")
                 }
-                legend
+                legend(resets: !display.resets.isEmpty)
             } else {
                 Text(input.unavailable)
                     .font(Font.caption).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, minHeight: 90, alignment: .center)
             }
         }
-        .help("Even pace runs evenly across this weekly window to its reset. Observed values come from recorded "
-            + "readings. Vertical lines mark detected resets; their positions can be approximate. The estimate starts at "
-            + "the latest reading; its shaded range uses every comparable reading from the past seven days, whatever range "
-            + "is displayed, and assumes no additional reset. It is recalculated when a reading arrives.")
+        .help("The chart shows the selected days of recorded readings, then the estimate through the next reset at the "
+            + "right edge. The faint straight line is an even budget across the current window. The estimate starts at the "
+            + "latest reading; its shaded range uses every comparable reading from the past seven days, whatever range is "
+            + "displayed, and assumes no additional reset. It is recalculated when a reading arrives. Dashed vertical lines "
+            + "mark detected resets; hover one for its time, which can be approximate.")
     }
 
     private func title(reset: Date?) -> some View {
         VStack(alignment: .leading, spacing: 1) {
             Text(input.title).font(PanelStyle.Text.title).lineLimit(1).fixedSize()
             if let reset {
-                Text("Resets " + reset.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day().hour().minute()))
+                // The same wording as the limit rows: a time today, otherwise the weekday and time.
+                Text("Resets " + ClaudeLimitsText.moment(reset, now: now))
                     .font(Font.caption).foregroundStyle(.secondary).lineLimit(1).fixedSize()
             }
         }
@@ -252,34 +263,48 @@ struct WeeklyTrendChart: View {
             estimate.map { QuotaEstimateGeometry.lines($0, from: latest, reset: reset, visibleFrom: windowStart) }
         }
         let band = lines.map(QuotaEstimateGeometry.band) ?? []
-        let idealStart = max(windowStart, reset.addingTimeInterval(-7 * 86_400))
+        let idealStart = max(windowStart, reset.addingTimeInterval(-WeeklyQuotaEstimator.week))
         let ideal = WeeklyQuotaEstimator.idealRemaining(at: idealStart, resetAt: reset)
         let segments = QuotaObservedSegments.split(points)
-        let shown = resets.filter { $0.at >= windowStart && $0.at <= reset }
+        let shown = resets.filter { $0.at >= windowStart && $0.at < reset }
+        // The "Reset" label at the right edge needs room: weekday labels within two days of it, or within about a seventh
+        // of the span, are left out.
+        let clearance = max(48 * 3600, reset.timeIntervalSince(windowStart) * 0.15)
+        let ticks = QuotaChartTimeline.dayTicks(start: windowStart, reset: reset).filter { reset.timeIntervalSince($0) > clearance }
         return Chart {
             ForEach(Array(band.enumerated()), id: \.offset) { _, point in
                 AreaMark(x: .value("Time", point.at), yStart: .value("Low", point.low), yEnd: .value("High", point.high),
                          series: .value("Series", "Estimate range"))
-                    .foregroundStyle(.tint.opacity(0.18))
+                    .foregroundStyle(.tint.opacity(0.1))
                     .accessibilityLabel("Estimate range")
                     .accessibilityValue(bandDescription(point))
             }
             if let ideal {
                 ForEach([(idealStart, ideal), (reset, 0.0)], id: \.0) { at, remaining in
                     LineMark(x: .value("Time", at), y: .value("Remaining", remaining), series: .value("Series", "Even pace"))
-                        .foregroundStyle(Color.secondary.opacity(0.7))
-                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [1.5, 3]))
+                        .foregroundStyle(Color.secondary.opacity(0.35))
+                        .lineStyle(StrokeStyle(lineWidth: 0.75, dash: [2, 3]))
                         .accessibilityLabel("Even pace")
                         .accessibilityValue(percent(remaining) + " at " + time(at))
                 }
             }
             ForEach(Array(segments.enumerated()), id: \.offset) { index, segment in
+                // The fill needs some width to read as a fill; under a stub of a few hours it would be a sliver.
+                if let first = segment.first, let last = segment.last, last.at.timeIntervalSince(first.at) >= 6 * 3600 {
+                    ForEach(segment, id: \.at) { point in
+                        AreaMark(x: .value("Time", point.at), y: .value("Remaining", point.remaining),
+                                 series: .value("Series", "Observed fill \(index)"))
+                            .foregroundStyle(observedFill)
+                            .interpolationMethod(.monotone)
+                            .accessibilityHidden(true)
+                    }
+                }
                 ForEach(segment, id: \.at) { point in
                     LineMark(x: .value("Time", point.at), y: .value("Remaining", point.remaining),
                              series: .value("Series", "Observed \(index)"))
                         .foregroundStyle(.tint)
-                        .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
-                        .symbol { Circle().fill(.tint).frame(width: 3.5, height: 3.5) }
+                        .lineStyle(StrokeStyle(lineWidth: 1.75, lineCap: .round, lineJoin: .round))
+                        .interpolationMethod(.monotone)
                         .accessibilityLabel("Observed")
                         .accessibilityValue(percent(point.remaining) + " at " + time(point.at))
                 }
@@ -288,40 +313,41 @@ struct WeeklyTrendChart: View {
                 ForEach(central, id: \.at) { point in
                     LineMark(x: .value("Time", point.at), y: .value("Remaining", point.remaining),
                              series: .value("Series", "Estimate"))
-                        .foregroundStyle(.tint.opacity(0.6))
-                        .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+                        .foregroundStyle(.tint.opacity(0.75))
+                        .lineStyle(StrokeStyle(lineWidth: 1.5, lineCap: .round, dash: [5, 4]))
                         .accessibilityLabel("Estimate")
                         .accessibilityValue(percent(point.remaining) + " at " + time(point.at))
                 }
             }
             if let latest = pace.latest, latest.at >= windowStart {
                 PointMark(x: .value("Time", latest.at), y: .value("Remaining", latest.remaining))
-                    .foregroundStyle(.tint).symbolSize(28)
+                    .foregroundStyle(.tint).symbolSize(30)
                     .accessibilityLabel("Latest reading")
                     .accessibilityValue(percent(latest.remaining) + " at " + time(latest.at))
             }
             ForEach(Array(shown.enumerated()), id: \.offset) { _, marker in
                 RuleMark(x: .value("Reset", marker.at))
-                    .foregroundStyle(Color.secondary.opacity(0.7)).lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                    .foregroundStyle(Color.secondary.opacity(0.6)).lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
                     .accessibilityLabel(marker.approximate ? "Detected reset, approximate" : "Detected reset")
                     .accessibilityValue(time(marker.at))
             }
-            RuleMark(x: .value("Reset", reset))
-                .foregroundStyle(Color.secondary.opacity(0.8)).lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
-                .accessibilityLabel("Next scheduled reset").accessibilityValue(time(reset))
         }
         .chartXScale(domain: windowStart...reset)
-        .chartYScale(domain: 0...100)
+        .chartYScale(domain: 0...100, range: .plotDimension(endPadding: 4))
         .chartYAxis {
             AxisMarks(position: .leading, values: [0, 50, 100]) { value in
-                AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [2, 3]))
+                AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5)).foregroundStyle(Color.secondary.opacity(0.2))
                 AxisValueLabel { Text("\(value.as(Int.self) ?? 0)%").font(Font.caption) }
             }
         }
         .chartXAxis {
-            AxisMarks(values: QuotaChartTimeline.dates(now: now, reset: reset, days: days)) { _ in
-                AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [2, 3]))
-                AxisValueLabel(format: .dateTime.day(), centered: false).font(Font.caption)
+            // Weekday labels; when the span is long, colliding labels give way in order.
+            AxisMarks(values: ticks) { value in
+                if let date = value.as(Date.self) {
+                    AxisValueLabel(collisionResolution: .greedy(minimumSpacing: 6)) {
+                        Text(date.formatted(.dateTime.weekday(.abbreviated))).font(Font.caption).foregroundStyle(.secondary)
+                    }
+                }
             }
         }
         .chartPlotStyle { $0.clipped() }
@@ -329,6 +355,11 @@ struct WeeklyTrendChart: View {
             GeometryReader { geometry in
                 if let anchor = proxy.plotFrame {
                     let frame = geometry[anchor]
+                    // The next reset is the right edge: named there, in the axis label row.
+                    Text("Reset").font(Font.caption).foregroundStyle(.primary)
+                        .frame(width: 60, alignment: .trailing)
+                        .position(x: frame.maxX - 30, y: frame.maxY + 10)
+                        .allowsHitTesting(false).accessibilityHidden(true)
                     Rectangle().fill(.clear).contentShape(Rectangle())
                         .frame(width: frame.width, height: frame.height).offset(x: frame.minX, y: frame.minY)
                         .onContinuousHover { phase in
@@ -336,7 +367,7 @@ struct WeeklyTrendChart: View {
                         }
                     if let x = hoverLocation,
                        let marker = QuotaResetHitTesting.nearest(x: x, width: frame.width, start: windowStart, reset: reset,
-                                                                 markers: resets) {
+                                                                 markers: shown) {
                         let markerX = frame.width * marker.at.timeIntervalSince(windowStart) / max(1, reset.timeIntervalSince(windowStart))
                         hoverTip(QuotaResetHitTesting.label(marker), x: markerX, frame: frame)
                     } else if let x = hoverLocation, estimate != nil, let latest = pace.latest,
@@ -351,33 +382,33 @@ struct WeeklyTrendChart: View {
         .accessibilityChartDescriptor(QuotaTrendDescriptor(points: points, band: band, central: lines?.central ?? [],
                                                            start: windowStart, reset: reset, summary: summary,
                                                            title: input.title))
-        .help(resets.isEmpty ? "Right edge: next scheduled reset. No resets detected in the displayed history." :
-            "Right edge: next scheduled reset. Detected resets: " + resets.prefix(5).map {
+        .help(shown.isEmpty ? "Right edge: the next reset. No resets detected in the displayed days." :
+            "Right edge: the next reset. Detected resets: " + shown.prefix(5).map {
                 $0.at.formatted(date: .abbreviated, time: .shortened) + ($0.approximate ? " (approx.)" : "")
             }.joined(separator: ", "))
     }
 
-    private var legend: some View {
+    private func legend(resets: Bool) -> some View {
         ViewThatFits(in: .horizontal) {
-            HStack(spacing: PanelStyle.Space.module) { legendItems }
+            HStack(spacing: PanelStyle.Space.module) { legendItems(resets: resets) }
             VStack(alignment: .leading, spacing: PanelStyle.Space.tight) {
                 HStack(spacing: PanelStyle.Space.module) {
                     LegendLine(label: "Observed", style: AnyShapeStyle(.tint), dash: nil)
                     LegendBand()
                 }
                 HStack(spacing: PanelStyle.Space.module) {
-                    LegendLine(label: "Even pace", style: AnyShapeStyle(Color.secondary), dash: [1.5, 3])
-                    LegendReset()
+                    LegendLine(label: "Even pace", style: AnyShapeStyle(Color.secondary.opacity(0.6)), dash: [2, 3])
+                    if resets { LegendReset() }
                 }
             }
         }
         .font(Font.caption)
     }
-    @ViewBuilder private var legendItems: some View {
+    @ViewBuilder private func legendItems(resets: Bool) -> some View {
         LegendLine(label: "Observed", style: AnyShapeStyle(.tint), dash: nil)
         LegendBand()
-        LegendLine(label: "Even pace", style: AnyShapeStyle(Color.secondary), dash: [1.5, 3])
-        LegendReset()
+        LegendLine(label: "Even pace", style: AnyShapeStyle(Color.secondary.opacity(0.6)), dash: [2, 3])
+        if resets { LegendReset() }
     }
 
     private func percent(_ value: Double) -> String { value.formatted(.number.precision(.fractionLength(0))) + "%" }
@@ -391,7 +422,7 @@ private struct LegendLine: View {
     var body: some View {
         HStack(spacing: PanelStyle.Space.tight) {
             Path { path in path.move(to: .init(x: 0, y: 2)); path.addLine(to: .init(x: 14, y: 2)) }
-                .stroke(style, style: StrokeStyle(lineWidth: dash == nil ? 2 : 1.5, lineCap: .round, dash: dash ?? []))
+                .stroke(style, style: StrokeStyle(lineWidth: dash == nil ? 1.75 : 1, lineCap: .round, dash: dash ?? []))
                 .frame(width: 14, height: 4).accessibilityHidden(true)
             Text(label).foregroundStyle(.secondary)
         }
@@ -402,9 +433,9 @@ private struct LegendBand: View {
     var body: some View {
         HStack(spacing: PanelStyle.Space.tight) {
             ZStack {
-                RoundedRectangle(cornerRadius: 1).fill(.tint.opacity(0.18)).frame(width: 14, height: 8)
+                RoundedRectangle(cornerRadius: 1).fill(.tint.opacity(0.12)).frame(width: 14, height: 8)
                 Path { path in path.move(to: .init(x: 0, y: 2)); path.addLine(to: .init(x: 14, y: 2)) }
-                    .stroke(.tint.opacity(0.6), style: StrokeStyle(lineWidth: 1.5, dash: [3, 2])).frame(width: 14, height: 4)
+                    .stroke(.tint.opacity(0.75), style: StrokeStyle(lineWidth: 1.5, lineCap: .round, dash: [4, 3])).frame(width: 14, height: 4)
             }.accessibilityHidden(true)
             Text("Estimate range").foregroundStyle(.secondary)
         }.help("Dashed: central estimate from the latest reading. Shaded: estimated range. Not a guarantee.")
@@ -418,8 +449,7 @@ private struct LegendReset: View {
                 .stroke(Color.secondary, style: StrokeStyle(lineWidth: 1, dash: [3, 3])).frame(width: 4, height: 10)
                 .accessibilityHidden(true)
             Text("Reset").foregroundStyle(.secondary)
-        }.help("Vertical dashed lines mark detected resets and the next scheduled reset. Hover a line for its time; "
-            + "historical timing can be approximate.")
+        }.help("A dashed vertical line marks a detected reset. Hover it for its time; historical timing can be approximate.")
     }
 }
 

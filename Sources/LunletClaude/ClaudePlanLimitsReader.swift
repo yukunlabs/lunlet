@@ -5,17 +5,16 @@ import Darwin
 import Foundation
 import LunletCore
 
-/// Claude plan limits as Claude Code reported them to Lunlet's status line: official percent-used values,
-/// never estimates. A window that was not reported, or failed validation, stays nil (unknown).
+/// Claude's weekly plan limit as Claude Code reported it to Lunlet's status line: official percent-used values,
+/// never estimates. A window that was not reported, or failed validation, stays nil (unknown). Claude Code stopped
+/// reporting a five-hour window on 2026-11-05; it is no longer read or shown.
 public struct ClaudePlanLimits: Equatable, Sendable {
-    public let fiveHour: LimitWindowReading?
     public let sevenDay: LimitWindowReading?
     /// Seven-day readings for the provider-independent pace estimator, as remaining percentages, oldest first.
     public let weekly: [QuotaReading]
-    public init(fiveHour: LimitWindowReading?, sevenDay: LimitWindowReading?, weekly: [QuotaReading]) {
-        self.fiveHour = fiveHour; self.sevenDay = sevenDay; self.weekly = weekly
+    public init(sevenDay: LimitWindowReading?, weekly: [QuotaReading]) {
+        self.sevenDay = sevenDay; self.weekly = weekly
     }
-    public static let fiveHourWindow: TimeInterval = 5 * 3600
     public static let sevenDayWindow: TimeInterval = WeeklyQuotaEstimator.week
 }
 
@@ -37,20 +36,14 @@ public struct ClaudePlanLimitsReader: Sendable {
         var lines = String(decoding: state, as: UTF8.self).split(separator: "\n", omittingEmptySubsequences: false)
         guard lines.first == "lunlet-claude-limits 1" else { throw ClaudeStatusLineFailure.storageUnavailable }
         lines.removeFirst()
-        var fiveHour: LimitWindowReading?, sevenDay: LimitWindowReading?
+        var sevenDay: LimitWindowReading?
         for line in lines {
+            // Any other window, including a five_hour line an earlier build stored, is ignored.
             let fields = line.split(separator: " ", omittingEmptySubsequences: false).map(String.init)
-            guard fields.count == 4 else { continue }
-            let span: TimeInterval
-            switch fields[0] {
-            case "five_hour": span = ClaudePlanLimits.fiveHourWindow
-            case "seven_day": span = ClaudePlanLimits.sevenDayWindow
-            default: continue
-            }
-            let reading = Self.window(fields[1], fields[2], fields[3], span: span, now: now)
-            if fields[0] == "five_hour" { fiveHour = reading } else { sevenDay = reading }
+            guard fields.count == 4, fields[0] == "seven_day" else { continue }
+            sevenDay = Self.window(fields[1], fields[2], fields[3], span: ClaudePlanLimits.sevenDayWindow, now: now)
         }
-        return .init(fiveHour: fiveHour, sevenDay: sevenDay, weekly: weeklyReadings(latest: sevenDay, now: now))
+        return .init(sevenDay: sevenDay, weekly: weeklyReadings(latest: sevenDay, now: now))
     }
 
     /// Logged readings within the estimator's input horizon plus the latest, at most one per instant. Within one

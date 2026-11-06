@@ -132,7 +132,8 @@ struct ProviderOverview: View {
         // The provider pages' frame: a card of the provider cards' height, a header row, then a module of the session
         // list's height, so switching between any two tabs never moves a section (AC-19.05).
         VStack(alignment: .leading, spacing: 0) {
-            OverviewLimitsCard(account: account, limits: claudeLimits ?? .placeholder, providers: providers, accentHex: accentHex)
+            OverviewLimitsCard(account: account, limits: claudeLimits ?? .placeholder, codexHistory: codexHistory,
+                               claudeHistory: claudeHistory, providers: providers, accentHex: accentHex)
             usageHeader.padding(.top, PanelStyle.Grid.margin)
             chartCard.padding(.top, PanelStyle.Grid.group)
         }
@@ -309,12 +310,14 @@ struct ProviderOverview: View {
     private func history(_ provider: SessionProvider) -> LocalUsageModel { provider == .codex ? codexHistory : claudeHistory }
 }
 
-/// The Overview's first card, exactly the provider cards' height: a title, then one compact window per agent window
-/// — the agent's color, name, window and reset over its own meter, with percent left — as on the Claude card. Values
-/// are never combined (AC-19.05).
+/// The Overview's first card, exactly the provider cards' height: a title, then one block per agent — the agent's
+/// color, name, window and reset over its own meter with percent left, then the reset countdown and today's recorded
+/// usage on this Mac. Values are never combined (AC-19.05).
 private struct OverviewLimitsCard: View {
     @ObservedObject var account: AccountUsageModel
     @ObservedObject var limits: ClaudePlanLimitsModel
+    @ObservedObject var codexHistory: LocalUsageModel
+    @ObservedObject var claudeHistory: LocalUsageModel
     let providers: [SessionProvider]
     let accentHex: String?
 
@@ -324,8 +327,8 @@ private struct OverviewLimitsCard: View {
             VStack(alignment: .leading, spacing: 0) {
                 Text("Limits").font(PanelStyle.Text.title).frame(height: PanelStyle.Layout.line)
                     .accessibilityAddTraits(.isHeader)
-                // Three compact windows and the title fill the card: 20 + 10 + 3 × 24 + 2 × 10 = 122 inside the padding.
-                VStack(alignment: .leading, spacing: PanelStyle.Space.module) {
+                // Two agent blocks and the title fill the card: 20 + 8 + 2 × (14 + 4 + 6 + 4 + 14) + 8 = 120 inside the padding.
+                VStack(alignment: .leading, spacing: PanelStyle.Space.medium) {
                     ForEach(providers, id: \.self) { provider in
                         switch provider {
                         case .codex: codex(now: now)
@@ -333,7 +336,7 @@ private struct OverviewLimitsCard: View {
                         }
                     }
                 }
-                .padding(.top, PanelStyle.Space.module)
+                .padding(.top, PanelStyle.Space.medium)
                 Spacer(minLength: 0)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -349,28 +352,36 @@ private struct OverviewLimitsCard: View {
     @ViewBuilder private func codex(now: Date) -> some View {
         let remaining = weekly?.remainingPercent
         row(.codex, window: "week", reset: weekly?.resetsAt.map { "resets " + ClaudeLimitsText.moment($0, now: now) } ?? "reset —",
-            remaining: remaining, missing: account.state == .loading ? "Refreshing…" : "Unknown") {
+            remaining: remaining, missing: account.state == .loading ? "Refreshing…" : "Unknown",
+            countdown: Self.countdown(weekly?.resetsAt, now: now), today: Self.today(codexHistory)) {
             AllowanceBar(remaining: remaining, accentHex: accentHex)
         }
     }
 
     @ViewBuilder private func claude(now: Date) -> some View {
         let missing = limits.connection == .notConnected ? "Not connected" : "Unknown"
-        ForEach([ClaudeLimitsText.Window.session, .week], id: \.self) { window in
-            let reading = window == .session ? readings?.fiveHour : readings?.sevenDay
-            let remaining = ClaudeLimitsText.remaining(reading, now: now)
-            row(.claude, window: window == .session ? "session" : "week", reset: ClaudeLimitsText.resetLine(reading, now: now),
-                remaining: remaining, missing: missing) {
-                AllowanceBar(remaining: remaining, accentHex: accentHex, agent: .claude,
-                             label: "Claude Code " + (window == .session ? "session" : "weekly") + " limit remaining")
-            }
+        let reading = readings?.sevenDay
+        let remaining = ClaudeLimitsText.remaining(reading, now: now)
+        row(.claude, window: "week", reset: ClaudeLimitsText.resetLine(reading, now: now), remaining: remaining, missing: missing,
+            countdown: Self.countdown(reading?.resetsAt, now: now), today: Self.today(claudeHistory)) {
+            AllowanceBar(remaining: remaining, accentHex: accentHex, agent: .claude, label: "Claude Code weekly limit remaining")
         }
     }
 
-    /// One compact window: the agent's color dot and name, the window and its reset, and the percent left in one
-    /// secondary line, then the agent's meter at full width.
+    /// The reset countdown as the provider cards word it.
+    private static func countdown(_ reset: Date?, now: Date) -> String {
+        guard let reset else { return "Reset —" }
+        return AccountUsagePresentation.countdown(until: reset, now: now).map { "Resets in " + $0 } ?? "Reset due"
+    }
+    /// Today's recorded tokens on this Mac, as the provider cards show them.
+    private static func today(_ history: LocalUsageModel) -> String {
+        OverviewUsage.today(history.snapshot).map { "Today " + LocalUsageText.tokens($0) } ?? "Today —"
+    }
+
+    /// One agent block: the color dot and name, the window and its reset, and the percent left in one secondary line;
+    /// the agent's meter at full width; then the reset countdown and today's recorded usage.
     private func row(_ provider: SessionProvider, window: String, reset: String, remaining: Double?, missing: String,
-                     @ViewBuilder meter: () -> some View) -> some View {
+                     countdown: String, today: String, @ViewBuilder meter: () -> some View) -> some View {
         let percent = remaining.map { ($0 > 0 && $0 < 1 ? "<1" : String(Int($0))) + "%" }
         return VStack(alignment: .leading, spacing: PanelStyle.Space.tight) {
             HStack(spacing: PanelStyle.Space.tight) {
@@ -389,16 +400,23 @@ private struct OverviewLimitsCard: View {
             .font(PanelStyle.Text.secondary).lineLimit(1)
             .frame(height: PanelStyle.Layout.secondaryLine)
             meter()
+            HStack(spacing: PanelStyle.Space.tight) {
+                Text(countdown)
+                Spacer(minLength: PanelStyle.Space.tight)
+                Text(today)
+            }
+            .font(PanelStyle.Text.secondary).foregroundStyle(.secondary).lineLimit(1)
+            .frame(height: PanelStyle.Layout.secondaryLine)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(provider.displayName + " " + window)
-        .accessibilityValue((percent.map { $0 + " left" } ?? missing) + ", " + reset)
+        .accessibilityValue((percent.map { $0 + " left" } ?? missing) + ", " + reset + ", " + countdown + ", " + today)
     }
 }
 
-/// The Claude page's plan limits in Claude's own terms, then recorded usage with cost first. Percent used and reset
-/// times come from Claude Code's status line; model-specific weekly limits and the plan tier are not reported there
-/// and are not shown. Recorded usage on this Mac opens in a hover chart, as Codex usage does.
+/// The Claude page's weekly plan limit in Claude's own terms, then recorded usage with cost first. Percent used and
+/// the reset time come from Claude Code's status line; model-specific weekly limits, usage credits and the plan tier
+/// are not reported there and are not shown. Recorded usage on this Mac opens in a hover chart, as Codex usage does.
 struct ClaudeUsageSummary: View {
     @ObservedObject var history: LocalUsageModel
     let hoverPanel: UsageHoverPanelController
@@ -424,8 +442,8 @@ private struct ClaudeUsageCard: View {
         TimelineView(.periodic(from: .now, by: 60)) { context in content(now: context.date) }
     }
 
-    /// The Codex card's rhythm and height: a title line, the status line, the two windows stacked in the limits group
-    /// (each a compact line over a full-width meter) and a footnote. One size per line.
+    /// The Codex card's rhythm and height: a title line, the account line, the limits group (the remaining figure,
+    /// the meter and the reset line) and a footnote. One size per line.
     private func content(now: Date) -> some View {
         let readings = limits.connection == .connected ? limits.limits : nil
         let pace = ClaudeLimitsText.pace(readings, now: now)
@@ -442,12 +460,9 @@ private struct ClaudeUsageCard: View {
                 .frame(height: PanelStyle.Layout.secondaryLine)
                 .padding(.top, PanelStyle.Grid.row)
             VStack(alignment: .leading, spacing: 0) {
-                VStack(alignment: .leading, spacing: PanelStyle.Space.tight) {
-                    window(.session, readings?.fiveHour, even: nil, now: now)
-                    window(.week, readings?.sevenDay, even: pace?.evenPace, now: now,
-                           estimate: hasReadings ? QuotaForecastText.header(pace, stale: limits.readFailed, now: now) : nil,
-                           estimateHelp: QuotaForecastText.help(pace, stale: limits.readFailed, resetAt: readings?.sevenDay?.resetsAt))
-                }
+                limitsGroup(readings?.sevenDay, even: pace?.evenPace, now: now,
+                            estimate: hasReadings ? QuotaForecastText.header(pace, stale: limits.readFailed, now: now) : nil,
+                            estimateHelp: QuotaForecastText.help(pace, stale: limits.readFailed, resetAt: readings?.sevenDay?.resetsAt))
                 usage.frame(height: PanelStyle.Layout.secondaryLine).padding(.top, PanelStyle.Grid.group)
             }
             .padding(.top, PanelStyle.Grid.group)
@@ -487,7 +502,7 @@ private struct ClaudeUsageCard: View {
                 Text("Status line added").foregroundStyle(.secondary).help(Self.connectHelp)
             } else if limits.limits == nil && limits.readFailed {
                 Text("Unavailable · Refresh").foregroundStyle(.secondary)
-            } else if let at = [limits.limits?.fiveHour?.at, limits.limits?.sevenDay?.at].compactMap({ $0 }).max() {
+            } else if let at = limits.limits?.sevenDay?.at {
                 // The same wording as the Codex card: the user needs the age, not where it came from.
                 Text(AccountUsagePresentation.updatedLabel(at: at, now: now) ?? "Updated")
                     .foregroundStyle(.secondary).monospacedDigit()
@@ -524,59 +539,78 @@ private struct ClaudeUsageCard: View {
         + "setting exactly."
 
     private var hasReadings: Bool {
-        limits.connection == .connected && (limits.limits?.fiveHour != nil || limits.limits?.sevenDay != nil)
+        limits.connection == .connected && limits.limits?.sevenDay != nil
     }
 
-    /// One compact window: its label, reset time and percent left on one secondary line, then the meter.
-    private func window(_ window: ClaudeLimitsText.Window, _ reading: LimitWindowReading?, even: Double?, now: Date,
-                        estimate: String? = nil, estimateHelp: String? = nil) -> some View {
+    /// The weekly limit in the Codex card's rhythm: the remaining figure, the meter and the reset line, so both cards
+    /// keep one height and switching tabs never shifts the page (AC-33.09).
+    private func limitsGroup(_ reading: LimitWindowReading?, even: Double?, now: Date,
+                             estimate: String? = nil, estimateHelp: String? = nil) -> some View {
         let remaining = ClaudeLimitsText.remaining(reading, now: now)
         let spoken = remaining.map { _ in
             ClaudeLimitsText.left(reading, now: now) + ", " + ClaudeLimitsText.resetLine(reading, now: now)
                 + (even.map { ", even pace " + String(Int($0)) + "% left" } ?? "") + (estimate.map { ". " + $0 } ?? "")
         }
-        return VStack(alignment: .leading, spacing: PanelStyle.Space.tight) {
-            HStack(spacing: PanelStyle.Space.tight) {
-                Text(window.title).foregroundStyle(.primary)
-                Text(verbatim: "· " + ClaudeLimitsText.resetLine(reading, now: now)).foregroundStyle(.secondary)
-                Spacer(minLength: PanelStyle.Space.tight)
-                Text(ClaudeLimitsText.left(reading, now: now)).foregroundStyle(remaining == nil ? .secondary : .primary)
+        return VStack(alignment: .leading, spacing: PanelStyle.Grid.row) {
+            HStack(alignment: .firstTextBaseline, spacing: PanelStyle.Space.tight) {
+                if let remaining {
+                    Text((remaining > 0 && remaining < 1 ? "<1" : String(Int(remaining))) + "%")
+                    Text("left").fontWeight(.regular).foregroundStyle(.secondary)
+                } else {
+                    Text(limits.connection == .notConnected ? "Not connected" : "Unknown").fontWeight(.regular).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
             }
-            .font(PanelStyle.Text.secondary).lineLimit(1)
-            .frame(height: PanelStyle.Layout.secondaryLine)
+            .font(PanelStyle.Text.figure)
+            .frame(height: PanelStyle.Layout.line)
             AllowanceBar(remaining: remaining, accentHex: accentHex, agent: .claude, evenPace: remaining == nil ? nil : even,
-                         label: window.title + " remaining")
+                         label: ClaudeLimitsText.weekTitle + " remaining")
+            HStack {
+                if let reading {
+                    if let countdown = AccountUsagePresentation.countdown(until: reading.resetsAt, now: now) {
+                        Text("Resets in " + countdown)
+                        Spacer(minLength: PanelStyle.Space.tight)
+                        Text(ClaudeLimitsText.moment(reading.resetsAt, now: now))
+                    } else {
+                        Text("Reset due")
+                        Spacer(minLength: PanelStyle.Space.tight)
+                    }
+                } else {
+                    Text("Reset —")
+                    Spacer(minLength: PanelStyle.Space.tight)
+                }
+            }
+            .font(PanelStyle.Text.secondary).foregroundStyle(.secondary)
+            .frame(height: PanelStyle.Layout.secondaryLine)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .help(estimate.map { $0 + (estimateHelp.map { "\n" + $0 } ?? "") } ?? "")
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(window.title)
+        .accessibilityLabel(ClaudeLimitsText.weekTitle)
         .accessibilityValue(spoken ?? "Unknown")
     }
 
-    /// Recorded usage today with tokens first and the categories listed separately, so cache reads can be read apart
-    /// (AC-33.10); the API-price estimate is in the help. A footnote in one size, with the total in the primary color.
+    /// Recorded usage today in the Codex footnote's shape: two labeled facts, tokens first and the API-price estimate
+    /// second (AC-33.10); the token categories, so cache reads can be read apart, are in the help.
     private var usage: some View {
         let today = OverviewUsage.today(history.snapshot)
         let recorded = today.flatMap(ClaudeLimitsText.spokenBreakdown).map { " Recorded: " + $0 + "." } ?? ""
         return HStack(spacing: PanelStyle.Space.tight) {
-            // The help names the source; the short label keeps every token category on the footnote line.
             Text("Today").foregroundStyle(.secondary)
             if let today {
-                Text(LocalUsageText.tokens(today)).foregroundStyle(.primary)
-                if let categories = ClaudeLimitsText.breakdown(today) {
-                    Text(verbatim: "· " + categories).foregroundStyle(.secondary).truncationMode(.tail)
-                }
+                Text(LocalUsageText.tokens(today))
+                Spacer(minLength: PanelStyle.Space.medium)
+                Text("Est. cost").foregroundStyle(.secondary)
+                Text(LocalUsageText.cost(today))
             } else {
                 Text(history.isLoading ? "Reading…" : history.unavailable ? "Unavailable · Refresh to try again" : "Unavailable")
                     .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
             }
-            Spacer(minLength: 0)
         }
         .font(PanelStyle.Text.secondary).lineLimit(1)
         .accessibilityElement(children: .combine)
-        .help("Recorded on this Mac from local Claude Code transcripts, each response counted once; a lower bound. "
-            + (today.map { "Estimated cost " + LocalUsageText.cost($0) + " at " } ?? "Cost uses ")
-            + "published Claude API list prices, not a subscription bill." + recorded)
+        .help("Recorded on this Mac from local Claude Code transcripts, each response counted once; a lower bound."
+            + recorded + " Cost uses published Claude API list prices, not a subscription bill.")
     }
 }

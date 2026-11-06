@@ -97,11 +97,11 @@ import Testing
         process.standardInput = input; process.standardOutput = output
         try process.run()
         let reset = Int(Date().timeIntervalSince1970) + 630  // 30 s of slack so a slow run still prints "10m"
-        input.fileHandleForWriting.write(Data(StatusLineSandbox.input(fiveHour: (7, reset)).utf8))
+        input.fileHandleForWriting.write(Data(StatusLineSandbox.input(sevenDay: (7, reset)).utf8))
         try input.fileHandleForWriting.close()
         let printed = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
         process.waitUntilExit()
-        #expect(process.terminationStatus == 0 && printed == "mine\n5h 7% · resets 10m\n")
+        #expect(process.terminationStatus == 0 && printed == "mine\n7d 7% · resets 10m\n")
         // A single-line file stays on one line.
         #expect(fixture.text?.contains("\n") == false)
         #expect(fixture.text?.hasPrefix(#"{"statusLine":{"type":"command", "command":"/bin/sh '"#) == true)
