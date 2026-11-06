@@ -1,0 +1,46 @@
+# Design notes
+
+Presentation rules and algorithm details that the stories in [requirements](requirements.md) rely on. They bind the implementation as the criteria do, change only with the criteria that cite them, and never add behavior a story has not confirmed. Evidence stays in [feasibility](feasibility.md).
+
+## Panel presentation
+
+Refs: US-03, US-04, US-13, US-17, US-19, US-33.
+
+- A small blue-purple lettering mark rests close to the left of the unchanged hardware notch, without a black backing; the expanded surface uses native translucent frosted material, restrained branding and compact system typography.
+- The default panel shows three complete session rows when the display allows, ending cleanly after the third; further rows scroll. Account, reset, credit and usage information stays above them.
+- The hover usage chart floats to the left of the panel, aligned with its bottom, and shows the trend and daily charts without scrolling within the visible screen; screen bounds may require a fallback placement. Token/Cost uses the session tabs' capsule style. The unfolded layout keeps vertical spacing below the hardware notch tight.
+- System text styles with nothing below 10 pt and a 4-point spacing scale; status symbols with labels (attention orange, running blue, green only for confirmed success); the expanded panel flush with the top screen edge with concave shoulders, its header in the notch band and plain system material without custom gradients or haze; a black task cue continuing the notch; deeper entry lettering on light menu bars; an orange waiting badge; allowance bars with the 20/40/60/80 and 10% warning marks and no minor ticks; Swift Charts for the usage and trend charts.
+- The panel uses translucent frosted glass — Liquid Glass where available (macOS 26 and later) with a vibrant behind-window material fallback, and opaque bordered surfaces under Reduce Transparency or Increase Contrast — with smooth spring transitions; every segmented switch (provider tabs and Active/History) uses one segmented style, an elevated sliding selection pill that looks identical whether or not the panel is key, in a regular and a small size. The black task-cue island stays opaque (AC-13.08).
+- Panel pages use four text roles — title 13 pt semibold, primary 13 pt, secondary 11 pt in the secondary color and a 15 pt semibold figure only for the Overview totals and each provider card's remaining percentage — with one size per line and monospaced digits; a 4-point grid with 12 pt card padding and section gaps, rows 6 apart and groups 8, so card text, segmented labels and session rows share one leading edge; and one 6 pt meter for every allowance and plan-limit bar. The page budget stays fixed so switching tabs never resizes the panel; each page's last element fills it instead of leaving blank space.
+- Overview daily chart: a line joins each day's total at the top center of its bar; a dashed daily-average line is labeled at its trailing end; hovering a day shows that day's per-agent detail; the totals row shows the other metric on hover (AC-19.07, AC-19.08).
+
+## Notch entry and cues
+
+Refs: US-03, US-13, US-17.
+
+- The entry beside the notch is the lettering plus the selected skin's allowance strand (vine, or lanterns under US-17); the vine strand is slightly thicker and gently spiraling along the lettering's lower edge, letter strokes grow into sparse shoots, and both words react together to hover and task cues.
+- Cues and the panel expand from the resting silhouette, which matches the display's system-reported notch exclusion area; the task cue is a black island continuous with the notch (AC-13.08). Reduce Motion keeps the attached geometry without transitions (AC-03.10).
+
+## Navigation binding
+
+Refs: US-03.
+
+- A Superset organization without a database holds no binding, and that absence is rechecked before navigation is offered; symbolic links, unreadable databases, duplicate bindings and oversized discovery fail closed.
+
+## Weekly trend chart and pace estimator
+
+Refs: US-32, US-04, US-33.
+
+the trend chart shows the selected number of local calendar days of observations, including today, then the forecast through the reported reset, with local midnights as day ticks labeled by weekday and the reset named at the right edge. It draws an observed curve without per-reading symbols over a faint area fill, through readings kept at a four-hour cadence (sooner for a jump of five points, and at the span's ends, day bridges and reset sides) so hourly one-point moves read as one slope, one marker at the latest reading, the forecast as a thin dashed central line with a light range band, and the even budget from 100% at the window's start to 0% at reset as a faint straight guide; 0%, 50% and 100% ticks with hairline grid lines, and a little headroom above 100% so a full allowance is not clipped. Preserve the recorded points immediately before and after each detected reset, and do not invent values for missing dates; forecast inputs do not depend on the displayed range. Forecasts use every comparable official reading from the past seven days at its recorded resolution, including account reads and readings recorded on this Mac, not the daily chart points. They compare changes only within matching reset windows and never count a reset jump, the interval containing it, or time spent at 0% as consumption. For pace only, a reported reset minus seven days is treated as that window's 100% start unless a reading contradicts it; it is never drawn as a reading. Vertical dashed markers show detected reset transitions; the next scheduled reset is the chart's right edge; inferred historical times are explicitly approximate in chart help. Reset timestamps within five minutes are treated as the same window to tolerate observed timestamp drift. Pace is the calendar rate over the past seven days, so daily and weekly patterns average out. When this window's use so far differs from the same hours one week earlier by more than a factor of two, the earlier window is ignored and the estimate is labeled rough until a day of data exists. The forecast starts at the latest comparable reading, assumes no additional reset before the reported reset, and is recalculated when a reading arrives. Hovering a reset line displays its time; inferred times are labeled approximate. Historical rollout records do not identify the account; matching bucket, reset and available plan is not proof of account identity. Missing or inconsistent data does not produce a forecast; AC-32.06 through AC-32.08 define the range, staleness, early-window and exhausted states. The independent estimator does not attribute quota changes to individual models or infer quota from token totals.
+
+## Agent colors
+
+Refs: US-16, US-04, US-17.
+
+- Claude Code's color is the selected palette turned 70 degrees around the hue circle away from the yellow and orange warning hues, more saturated and deeper, so the two agents differ in hue and lightness: at least 25 CIEDE2000 apart on the built-in palettes (AC-16.03).
+
+## Messaging transports
+
+Refs: US-20, US-36.
+
+- Slack uses Socket Mode and Telegram long polling, for pairing and for replies; Telegram never sets a webhook and preserves an existing one. Listeners run only while a notice can take a reply (AC-36.04); on channel change, cancel, disconnect or quit, pending network work is canceled and owned resources are joined before the next channel can act (AC-20.05).

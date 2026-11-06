@@ -81,6 +81,7 @@ Every change traces to a confirmed user story in [the requirements](docs/require
 
 - [Requirements](docs/requirements.md): user stories, acceptance criteria and release scope.
 - [Feasibility](docs/feasibility.md): technical evidence and open validation gates.
+- [Design notes](docs/design.md): presentation rules and algorithm details the stories rely on.
 - [Messaging setup](docs/messaging.md) and [custom skins](docs/skins.md).
 - [Release preparation](docs/releases.md): packaging, signing, the product page and how releases are iterated.
 - [Product page](https://yukunlabs.github.io/lunlet/) with the one-minute walkthrough.

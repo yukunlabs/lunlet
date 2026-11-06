@@ -2,7 +2,7 @@
 
 This file holds the working instructions for AI coding agents and maintainers of this repository; contributors should start with [CONTRIBUTING.md](CONTRIBUTING.md).
 
-- Read `README.md`, `docs/requirements.md`, and `docs/feasibility.md` before working. The requirements document is the source of truth for product scope and acceptance criteria.
+- Read `README.md`, `docs/requirements.md`, `docs/design.md` and `docs/feasibility.md` before working. The requirements document is the source of truth for product scope and acceptance criteria; design notes hold the presentation and algorithm rules the criteria cite; feasibility holds evidence.
 - Use English for all repository-authored content: documentation, filenames, code identifiers, comments, UI copy, configuration descriptions, test fixtures, and future commit messages. Do not add Chinese text or bilingual copies.
 - Group requirements into user-outcome Epics, with exactly one primary Epic per story and explicit dependencies across Epics. Keep product approval, release membership, implementation evidence and runtime acceptance distinct. Express user-facing requirements as standard user stories: "As a [role], I want [goal], so that [benefit]." Give each story a stable ID and testable Given/When/Then acceptance criteria. Keep implementation choices and feasibility evidence separate.
 - Keep the product lightweight: macOS first, Linux later; local Codex and Claude Code observation across supported clients, with original-CLI continuation separately gated; one user-owned Feishu/Lark, Slack or Telegram channel for short periods away from the computer, with Feishu card input as the first continuation target. Validate session continuation before expanding the UI or adding agents.

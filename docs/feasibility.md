@@ -153,7 +153,7 @@ Validation order: (1) terminal-independent identification and continuation of ex
 
 - While the Mac is confirmed locked, saved owner enrollment delivers new verified completions (US-05 / AC-05.04–06; US-06 / AC-06.01–05; US-01 / AC-01.08; US-12 / AC-12.02, AC-12.04). A notice carries the outcome, project, agent and session, a request excerpt and the agent's final reply cut only at the channel's limit; Feishu cards follow Feishu's card conventions; Slack and Telegram notices carry no footer because those channels show the time themselves. Startup/recovery snapshots and duplicate turns are suppressed; failed or uncertain sends are visible and not retried.
 - An owned idle-system-sleep assertion is held during that path and released on unlock, disconnect or quit; display sleep is allowed and power preferences are never changed. A newly configured sender is checked once without sending a message.
-- There is no main-panel Away Mode switch. Lock state comes from the I/O registry root `IOConsoleLocked`, a private-schema key.
+- Delivery follows the lock and has no switch of its own; the only switch is phone replies (AC-05.08). Lock state comes from the I/O registry root `IOConsoleLocked`, a private-schema key.
 
 ### Verified
 
