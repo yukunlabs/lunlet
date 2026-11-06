@@ -7,8 +7,10 @@ import Foundation
 import LunletCore
 
 enum EntryPresentation: String, Codable, CaseIterable {
-    case notch, menuBar
-    var title: String { self == .notch ? "Notch widget" : "Menu bar" }
+    case notch, menuBar, pet
+    var title: String {
+        switch self { case .notch: "Notch widget"; case .menuBar: "Menu bar"; case .pet: "Desktop pet" }
+    }
 }
 enum AgentProvider: String, Codable, CaseIterable, Identifiable {
     case codex, claude
@@ -47,8 +49,14 @@ struct LunletPreferences: Codable, Equatable {
     var providers: [AgentProvider] = [.codex]
     var channel = CommunicationChannel.feishu
 
+    /// Where the pet sits on one display, as the window's origin in that display's coordinates (AC-39.02).
+    struct PetPosition: Codable, Equatable { var x: Double; var y: Double }
+    var petCoat: PetCoat = .golden
+    /// Keyed by display number, so each display keeps its own place.
+    var petPositions: [String: PetPosition] = [:]
+
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, presentation, skinID, accentOverrides, accentHex, historyDays, providers, channel
+        case schemaVersion, presentation, skinID, accentOverrides, accentHex, historyDays, providers, channel, petCoat, petPositions
     }
     init() {}
     init(from decoder: any Decoder) throws {
@@ -63,6 +71,8 @@ struct LunletPreferences: Codable, Equatable {
         }
         historyDays = try data.decodeIfPresent(Int.self, forKey: .historyDays) ?? 5
         providers = try data.decodeIfPresent([AgentProvider].self, forKey: .providers) ?? [.codex]
+        petCoat = try data.decodeIfPresent(PetCoat.self, forKey: .petCoat) ?? .golden
+        petPositions = try data.decodeIfPresent([String: PetPosition].self, forKey: .petPositions) ?? [:]
         let savedChannel = try data.decodeIfPresent(String.self, forKey: .channel) ?? "feishu"
         if savedChannel == "whatsapp" { channel = .feishu }
         else if let supported = CommunicationChannel(rawValue: savedChannel) { channel = supported }
@@ -75,6 +85,8 @@ struct LunletPreferences: Codable, Equatable {
         try data.encode(skinID, forKey: .skinID); try data.encode(accentOverrides, forKey: .accentOverrides)
         try data.encode(historyDays, forKey: .historyDays); try data.encode(providers, forKey: .providers)
         try data.encode(channel, forKey: .channel)
+        try data.encode(petCoat, forKey: .petCoat)
+        if !petPositions.isEmpty { try data.encode(petPositions, forKey: .petPositions) }
     }
     func validate() throws {
         // Same identifier rule as SkinDefinition.validate, so a saved choice can name a real skin.
@@ -84,6 +96,9 @@ struct LunletPreferences: Codable, Equatable {
             $0.key.range(of: skinIDRule, options: .regularExpression) != nil
                 && $0.value.range(of: "^#[0-9A-Fa-f]{6}$", options: .regularExpression) != nil
         }) else { throw PreferenceFailure.invalidValue }
+        guard petPositions.count <= 16, petPositions.values.allSatisfy({ $0.x.isFinite && $0.y.isFinite }) else {
+            throw PreferenceFailure.invalidValue
+        }
         guard (1...7).contains(historyDays), !providers.isEmpty,
               Set(providers).count == providers.count,
               skinID.range(of: skinIDRule, options: .regularExpression) != nil else {
@@ -126,7 +141,7 @@ struct LunletPreferences: Codable, Equatable {
     private static func decode(_ data: Data) throws -> LunletPreferences {
         guard data.count <= 65_536 else { throw PreferenceFailure.oversized }
         let fields: Set<String> = ["schemaVersion", "presentation", "skinID", "accentOverrides", "accentHex", "historyDays",
-                                   "providers", "channel"]
+                                   "providers", "channel", "petCoat", "petPositions"]
         guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               Set(object.keys).isSubset(of: fields) else { throw PreferenceFailure.invalidValue }
         return try JSONDecoder().decode(LunletPreferences.self, from: data)

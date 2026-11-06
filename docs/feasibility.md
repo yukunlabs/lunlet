@@ -180,6 +180,7 @@ Validation order: (1) terminal-independent identification and continuation of ex
 
 - A native AppKit/SwiftUI shell provides a notch entry (connected lun / let lettering with an allowance vine, or lanterns) and an exclusive menu-bar fallback with a monochrome wordmark; one reusable owned panel centered at the screen top with frosted glass, concave shoulders and the header in the notch band; non-key, non-activating black task-cue islands; and categorized native Settings with Vine and Lantern skins, validated declarative custom skins and per-skin color controls. With both agents selected, the vine twists two strands and the lantern skin hangs two crossing cords.
 - [Runtime assembly](../Sources/LunletDesktop/CompanionRuntime.swift) directly wires Codex, Claude Code and each channel; [custom skins](../Sources/LunletDesktop/SkinCatalog.swift) use constrained paths and two render types, not arbitrary plugins.
+- The desktop pet (US-39) is a code-drawn dog in a floating window; the survey of what other companions animate with, the runtimes weighed and the Codex pet pack format behind the proposed import (US-40) are in [pet animation research](research.md).
 
 ### Verified
 

@@ -94,7 +94,8 @@ struct PanelStyleTests {
         #expect(sizes == [13, 13, 11, 15], "role sizes \(sizes)")
         #expect(Role.allCases.filter { $0.weight == .semibold } == [.title, .figure])
         let page = PanelStyle.Layout.pageHeight
-        #expect(page >= 3 * PanelStyle.Layout.rowHeight + 2 * PanelStyle.Layout.listVerticalInset)
+        let threeRows: CGFloat = 3 * PanelStyle.Layout.rowHeight + 2 * PanelStyle.Layout.listVerticalInset
+        #expect(page >= threeRows)
         #expect(PanelStyle.Layout.iconButton >= 28 && PanelStyle.Layout.inlineButton >= 20)
         // The row inset plus row padding, and the segmented label inset, equal the card padding: one text edge.
         #expect(PanelStyle.Layout.listInset + PanelStyle.Layout.rowPadding == PanelStyle.Grid.margin)

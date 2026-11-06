@@ -82,10 +82,11 @@ enum LunletWordmark {
         } else { panel.toggle(on: sender.window?.screen) }
     }
     @objc private func openPanel() { panel.show(on: item?.button?.window?.screen) }
-    func setNotchEntryAvailable(_ available: Bool) {
-        let showFallback = !available
-        guard let item, item.isVisible != showFallback else { return }
-        item.isVisible = showFallback
+    func setNotchEntryAvailable(_ available: Bool) { setVisible(!available) }
+    /// Shown in menu-bar mode and as the fallback without a notch entry; never beside the desktop pet (AC-21.03, AC-39.01).
+    func setVisible(_ visible: Bool) {
+        guard let item, item.isVisible != visible else { return }
+        item.isVisible = visible
     }
     func shutdown() {
         subscriptions.removeAll()

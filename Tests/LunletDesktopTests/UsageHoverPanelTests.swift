@@ -37,6 +37,11 @@ struct UsageHoverPlacementTests {
 
 @Suite(.serialized, .enabled(if: ProcessInfo.processInfo.environment["LUNLET_TEST_PANEL"] == "1"))
 @MainActor struct UsageHoverPanelTests {
+    /// Waits for the hover delay to open the chart; a busy main actor may hold the open past its delay.
+    private func opened(_ controller: UsageHoverPanelController) async throws {
+        let deadline = ContinuousClock.now + .seconds(3)
+        while !controller.isVisible, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
+    }
     private func fixture() -> (UsageHoverPanelController, NSPanel, NSView) {
         _ = NSApplication.shared
         let parent = NSPanel(contentRect: .init(x: 600, y: 400, width: 470, height: 340),
@@ -57,7 +62,7 @@ struct UsageHoverPlacementTests {
         controller.visibilityChanged = { visibility.append($0) }
         controller.anchorHoverChanged(true, anchor: anchor)
         #expect(!controller.isVisible)
-        try await Task.sleep(for: .milliseconds(300))
+        try await opened(controller)
         #expect(controller.isVisible && controller.window?.isKeyWindow == false)
         let popup = try #require(controller.window)
         #expect(popup.frame.maxX < parent.frame.minX)
@@ -111,7 +116,7 @@ struct UsageHoverPlacementTests {
         #expect(!controller.isVisible)
         controller.anchorHoverChanged(false, anchor: anchor)
         controller.anchorHoverChanged(true, anchor: anchor)
-        try await Task.sleep(for: .milliseconds(300))
+        try await opened(controller)
         #expect(controller.isVisible)
         controller.hide()
         controller.popupHoverChanged(true)
@@ -129,7 +134,7 @@ struct UsageHoverPlacementTests {
         #expect(!controller.isVisible)
         controller.prepareForParentPresentation()
         controller.anchorHoverChanged(true, anchor: anchor)
-        try await Task.sleep(for: .milliseconds(300))
+        try await opened(controller)
         #expect(controller.isVisible)
     }
 
@@ -140,7 +145,7 @@ struct UsageHoverPlacementTests {
         controller.interactionOccurred = { interactions += 1 }
         controller.dismissalRequested = { dismissals += 1; controller.hide() }
         controller.anchorHoverChanged(true, anchor: anchor)
-        try await Task.sleep(for: .milliseconds(300))
+        try await opened(controller)
         controller.handleInteraction(.scrollWheel, in: parent)
         #expect(interactions == 0)
         controller.handleInteraction(.leftMouseDown, in: controller.window)
@@ -169,7 +174,7 @@ struct UsageHoverPlacementTests {
         try await Task.sleep(for: .milliseconds(300))
         #expect(!controller.isVisible)
         controller.anchorHoverChanged(true, anchor: anchor)
-        try await Task.sleep(for: .milliseconds(300))
+        try await opened(controller)
         #expect(controller.isVisible)
         controller.anchorRemoved(anchor)
         #expect(!controller.isVisible)
@@ -182,7 +187,7 @@ struct UsageHoverPlacementTests {
         let (controller, parent, anchor) = fixture()
         defer { controller.shutdown(); parent.close() }
         controller.anchorHoverChanged(true, anchor: anchor)
-        try await Task.sleep(for: .milliseconds(300))
+        try await opened(controller)
         let popup = try #require(controller.window)
         parent.orderOut(nil)
         controller.reposition()
@@ -193,7 +198,7 @@ struct UsageHoverPlacementTests {
         #expect(!controller.isVisible)
         parent.orderFrontRegardless()
         controller.anchorHoverChanged(true, anchor: anchor)
-        try await Task.sleep(for: .milliseconds(300))
+        try await opened(controller)
         #expect(popup.isVisible)
         controller.shutdown()
         #expect(controller.window == nil && !popup.isVisible && popup.contentView == nil)

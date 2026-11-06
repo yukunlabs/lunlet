@@ -29,7 +29,7 @@ These Epics group existing confirmed stories by user outcome. Stories retain the
 | EPIC-02 | Understand allowance and recorded usage | US-04, US-18, US-32, US-37 |
 | EPIC-03 | Connect one private channel and receive useful updates | US-01, US-20, US-22, US-05, US-06 |
 | EPIC-04 | Continue the correct existing CLI conversation safely | US-07, US-08, US-09, US-10, US-11, US-36, US-38 |
-| EPIC-05 | Personalize a focused and durable macOS interface | US-31, US-16, US-17, US-21, US-19, US-26, US-39 |
+| EPIC-05 | Personalize a focused and durable macOS interface | US-31, US-16, US-17, US-21, US-19, US-26, US-39, US-40 |
 | EPIC-06 | Keep control of access and application reliability | US-12, US-14, US-24, US-25 |
 | EPIC-07 | Publish and support a trustworthy product | US-28, US-27, US-29, US-30, US-34, US-35 |
 
@@ -76,7 +76,7 @@ Approval, release scope, delivery and acceptance are separate facts. A story's S
 | US-16 | Wired native RGB/hue and shared warning palette | Owner visual acceptance |
 | US-17 | Wired Vine/Lantern and validated declarative skins | Physical style and imported-skin acceptance |
 | US-21 | Wired exclusive notch/menu modes and full artwork | Physical lock/wake and display-transition acceptance |
-| US-39 | Not started; sketches of the five poses and three coats reviewed by the owner on 2026-11-06 | On-device acceptance of the floating window across Spaces, full-screen apps and locking |
+| US-39 | Pet entry with five poses and three coats, cues routed to the dog, the panel beside it, position kept per display, hover status and accessibility label; poses rendered and checked against the sketches | On-device acceptance of the floating window across Spaces, full-screen apps and locking, and of click-through on transparent space |
 | US-19 | Codex and Claude Code selectable; one provider shown directly, several with a segmented Overview of totals and parallel provider tabs | On-device tab acceptance; Cursor remains later scope |
 | US-26 | Wired validated non-secret preferences and recovery | Preferences and credentials surviving a real in-app update (US-35) |
 | US-12 | Wired Quit/cleanup; phone-reply switch and disconnect invalidate issued controls | Live stale-control invalidation and complete live connection shutdown |
@@ -115,7 +115,7 @@ Work that is not finished or not yet accepted. Confirmed behavior not listed her
 
 Pending on-device acceptance:
 
-- Live acceptance pending: Feishu cards in the phone app (US-06); the execution-approval challenge through the mobile path (US-09); original VS Code and Codex App acceptance of integrated-terminal discovery (US-02); physical lock, wake and display-transition recovery of the notch entry (US-03, US-21); the two-cord lantern skin on the device (US-17).
+- Live acceptance pending: the desktop pet across Spaces, over full-screen apps, while locked and its click-through on transparent space (US-39); Feishu cards in the phone app (US-06); the execution-approval challenge through the mobile path (US-09); original VS Code and Codex App acceptance of integrated-terminal discovery (US-02); physical lock, wake and display-transition recovery of the notch entry (US-03, US-21); the two-cord lantern skin on the device (US-17).
 - Release gates: a real update installed on a clean Mac when the second version ships (US-35; the key and the `v0.1.0` appcast exist), which also confirms that the saved bot connection survives the update without a prompt (US-26, AC-27.05); Developer ID signing and notarization are deferred by the owner's decision of 2026-11-01 to ship an unsigned preview first (AC-27.05); the remaining branding review before a binary release (US-29); an approved support destination (US-30).
 
 Bugs:
@@ -128,7 +128,6 @@ Not started:
 - Phone-reply switch and initial-state cards (US-05 / AC-05.08, AC-05.02): the Settings switch that allows phone replies and the cards for sessions already waiting or idle when delivery begins are not built; replies currently follow the locked-Mac window and card lifetime alone. Not started.
 - Answering a session's question from the phone (US-07 / AC-07.01 through AC-07.05, US-09 / AC-09.01): question cards, question provenance, the original-CLI answer path and the approval notice that points back to the Mac are not built; the completion-card follow-up (US-08) is the only live input path. Not started.
 - Claude limit resets, per-model weekly shares and usage credits (US-37): deferred; see the story for the reason. Not started.
-- Desktop pet entry (US-39): confirmed on 2026-11-06 with the owner's choice of a golden dog with state bubbles; follows US-38. Not started.
 
 Open questions:
 
@@ -704,12 +703,36 @@ Acceptance criteria:
 - **AC-39.02**: **Given** the pet entry, **When** Lunlet runs, **Then** a dog about 110 points tall sits in a transparent, non-activating window above other windows on every Space, where I last dragged it on that display, never takes keyboard focus, and passes clicks on its transparent area to the window beneath; it hides while the screen is locked or a full-screen app is in front, and returns with the desktop.
 - **AC-39.03**: **Given** verified sessions, **When** their state changes, **Then** the dog shows one of five poses chosen by precedence: Waiting for you (a session awaits my answer or approval) over Done (a turn finished, for the AC-13.02 cue duration) over Working (a turn is running) over Idle (sessions exist, none running) over Asleep (no verified session, or observation unavailable); an unknown state never invents a pose, and a duplicate or replayed event never retriggers Done (AC-13.04).
 - **AC-39.04**: **Given** a Waiting or Done pose, **When** it appears, **Then** a bubble above the dog shows "?" or "✓" and nothing else, and hovering the dog shows the compact status line of the session behind the pose: project or directory, agent and state, as the panel's row does.
-- **AC-39.05**: **Given** the pet, **When** I click it, **Then** the session panel opens beside the dog with the tab and conversation of the pose's session selected, as AC-13.09 does from a cue, and closes under the AC-03.06 rules; a right-click offers Refresh, Settings and Quit.
+- **AC-39.05**: **Given** the pet, **When** I click it, **Then** the session panel opens beside the dog, above it when there is room and below it otherwise, without notch shoulders, with the conversation of the pose's session selected, and closes under the AC-03.06 rules; a right-click offers Open Lunlet, Refresh, Settings and Quit.
 - **AC-39.06**: **Given** the drawing, **When** it is rendered, **Then** it is vector shapes drawn in code at any size, with the golden coat by default and Cream and Slate as the other built-in coats, a lantern-red collar with a lantern tag that is lit while Working, pulsing while Waiting, dim while Idle and off while Asleep, and gentle loops (breathing, tail wag, head bob) that stop under Reduce Motion, while the screen is locked and while the window is hidden.
 - **AC-39.07**: **Given** assistive tools, **When** they inspect the pet, **Then** its accessibility label states the pose and the session count, such as "Lunlet: two sessions, one waiting for you", and the panel and Settings stay reachable from the keyboard through the application menu while the pet is the entry (US-24).
 - **AC-39.08**: **Given** the pet runs all day, **When** its cost is measured, **Then** it redraws only on a state change and, for its loops, at no more than 12 frames per second, within the budgets recorded in [feasibility](feasibility.md#performance-and-resources) (US-25).
 
-Implementation choices, to be recorded in [design notes](design.md) on confirmation: the pose model and the drawing description (shapes, colors, loop timings) live in a platform-free module so that later Linux and Windows entries draw the same dog; the macOS window is a floating, non-activating panel that joins all Spaces; the reviewed sketches (five poses, three coats, pet-size previews over light and dark wallpapers) are kept outside the repository until the story is confirmed.
+Proposed revision, 2026-11-06: the loops keep AC-39.08's 12 frames per second, and the revision would add that a blink, an ear flick, a pose transition, a click bounce, the Done hop and the moments the pointer or the open panel hold the dog's attention may run at 30, because a blink lasts about a seventh of a second and does not read at 12.
+
+Implementation choices (rules in [design notes](design.md#desktop-pet)): the pose rule and the state assistive tools read live in the core module, free of AppKit, so a later Linux or Windows entry reuses them; the drawing is a SwiftUI canvas over a 220 × 190 design space, scaled to the window, and every blink, glance, ear flick and bounce is a function of the time so that the frame needs no stored animation state; the macOS window is a floating, non-activating panel on every Space that ignores the pointer except over the dog's own silhouette; the panel opens as the dog's speech bubble, with a tail toward its head, grown from the dog and shrunk back into it; task cues reach the island or the pet, never both.
+
+Implementation: [pose rule and state](../Sources/LunletCore/PetPose.swift), [drawing, canvas and host view](../Sources/LunletDesktop/PetView.swift), [motion between states](../Sources/LunletDesktop/PetMotion.swift), [entry controller and cue router](../Sources/LunletDesktop/PetEntryController.swift), [bubble placement and tail](../Sources/LunletDesktop/PanelPlacement.swift), [bubble silhouette](../Sources/LunletDesktop/NotchSurfaceView.swift), [anchored companion panel](../Sources/LunletDesktop/CompanionPanelController.swift), [one entry at a time](../Sources/LunletDesktop/MenuBarController.swift), [runtime](../Sources/LunletDesktop/CompanionRuntime.swift), [preferences](../Sources/LunletDesktop/PreferencesStore.swift), [appearance settings](../Sources/LunletDesktop/PreferencesPane.swift); [pose tests](../Tests/LunletCoreTests/PetPoseRuleTests.swift), [entry, placement, preferences and silhouette tests](../Tests/LunletDesktopTests/PetEntryControllerTests.swift).
+
+### US-40: Bring your own pet
+
+Status: Proposed, 2026-11-06. Basis: [pet animation research](research.md). Depends on US-39 for the pet entry, its pose rule and its window, US-26 for preference validation and US-25 for the resource budget. The built-in dog stays as it is; this story adds pets the user brings.
+
+**As a developer, I want to use a pet of my own in Lunlet, including a pet I already made for Codex, so that the companion looks the way I like without my learning a new format.**
+
+Acceptance criteria:
+
+- **AC-40.01**: **Given** Settings › Appearance with the pet entry, **When** I look at the pet choice, **Then** the built-in dog with its coats and every valid pet pack in Lunlet's pets folder (`~/Library/Application Support/com.lunlet/pets/<id>/`) and in Codex's (`~/.codex/pets/<id>/`) are listed by display name, the dog is chosen by default, choosing one applies at once and survives upgrades (US-26), and Refresh and Open pets folder are beside the list.
+- **AC-40.02**: **Given** a pet pack in the Codex format (`pet.json` naming a WebP or PNG sheet through `spritesheetPath`; 8 columns of 192 × 208 cells; 9 rows, or 11 rows with `spriteVersionNumber: 2`), **When** Lunlet reads it, **Then** it is used in place, unchanged and uncopied, and Lunlet never writes into `~/.codex`; a pack whose manifest or sheet does not match the format is listed as invalid with the reason, and never crashes, blanks or replaces the current pet (AC-26.02).
+- **AC-40.03**: **Given** a chosen pack, **When** the pose of AC-39.03 changes, **Then** Asleep shows the first idle frame still, Idle loops idle, Working loops running, Waiting loops waiting and Done loops review for the cue duration; a click plays jumping once, dragging the pet plays running-left or running-right in the direction it moves, and a pack with look directions turns the pet toward the pointer within the dog's gaze range and toward the open panel, with neutral falling back to idle; rows a pack lacks fall back to idle.
+- **AC-40.04**: **Given** a looping row, **When** it plays, **Then** each frame holds for the duration the format assigns it, Reduce Motion shows the row's first frame still, and a hidden window or an unavailable display stops the loop within the AC-39.08 budget.
+- **AC-40.05**: **Given** a pack is the pet, **When** AC-39.04 and AC-39.05 apply, **Then** the "?" / "✓" bubble, the hover status line, the accessibility label and the panel opening as the pet's bubble work as for the dog, the panel's tail pointing at the top center of the pet's cell; the dog's collar and lantern are not drawn over a pack.
+- **AC-40.06**: **Given** a pack is the pet, **When** I click or drag, **Then** only the opaque pixels of the current frame count as the pet and clicks on its transparent space reach the window beneath (AC-39.02); the pet is drawn at about the dog's height, crisp on Retina displays.
+- **AC-40.07**: **Given** no pack is valid or the chosen pack disappears, **When** Lunlet starts or refreshes, **Then** the dog returns and Settings says which pack was missing or invalid.
+
+Out of scope: generating pets (Codex's `/pet` and its hatch-pet skill do that), bundling third-party pets, skeletal or vector runtimes (Rive, Spine, Live2D, Lottie), Codex's failed, waving and look rows beyond the uses above, and any change to the dog.
+
+Implementation choices (to be confirmed with the story): the pack reader, its validation and the pose-to-row mapping live in the core module on Foundation alone so a later Linux or Windows entry reuses them; decoding and drawing are in the desktop module; frames are drawn from the sheet by cell rectangle, never split into files; the hit test samples the current frame's alpha; preferences store the chosen pack's id and folder, never its pixels.
 
 ### US-26: Keep customization stable across upgrades
 

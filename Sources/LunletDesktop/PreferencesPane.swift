@@ -98,6 +98,13 @@ struct PreferencesPane: View {
                 Picker("Presentation", selection: binding(\.presentation)) {
                     ForEach(EntryPresentation.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
+                .help("The notch widget flanks a hardware notch; the menu bar entry is a standard status item; the desktop "
+                    + "pet is a small dog on every Space that shows what your agents are doing and opens the panel beside it.")
+                if preferences.value.presentation == .pet {
+                    Picker("Coat", selection: binding(\.petCoat)) {
+                        ForEach(PetCoat.allCases, id: \.self) { Text($0.title).tag($0) }
+                    }
+                }
                 Picker("Skin", selection: binding(\.skinID)) {
                     ForEach(skins.skins) { Text($0.title).tag($0.id) }
                     if !skins.skins.contains(where: { $0.id == preferences.value.skinID }) {

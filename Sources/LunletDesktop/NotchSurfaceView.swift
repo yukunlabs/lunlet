@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
 // Refs: US-03, AC-03.05, AC-03.08, AC-03.10, AC-03.11; US-13, AC-13.06, AC-13.07, AC-13.08.
-// Refs: US-24, AC-24.02.
+// Refs: US-24, AC-24.02; US-39, AC-39.05.
 import AppKit
 import SwiftUI
 import QuartzCore
@@ -53,6 +53,42 @@ enum NotchSurfaceGeometry {
     /// Horizontal room for the shoulders on each side of a panel body below a notch.
     static func bodyInset(notchWidth: CGFloat?) -> CGFloat { notchWidth == nil ? 0 : shoulderRadius }
 
+    /// The panel as the dog's speech bubble (AC-39.05): a rounded panel with a tail on the edge that faces the dog.
+    /// At progress 0 it is a point at the tail's tip, so the bubble grows out of the dog and shrinks back into it.
+    static func bubble(size: CGSize, tail: BubbleTail, progress: CGFloat) -> CGPath {
+        let p = min(1, max(0, progress))
+        // The body in unflipped coordinates, the tail always built along the bottom edge and flipped for a top tail.
+        let body = CGRect(x: 0, y: BubbleTail.height, width: size.width, height: max(0, size.height - BubbleTail.height))
+        let tipX = min(max(tail.x, BubbleTail.width / 2 + cornerRadius), size.width - BubbleTail.width / 2 - cornerRadius)
+        let tip = CGPoint(x: tipX, y: 0)
+        // Everything scales toward the tip; the corner radius follows so the resting shape stays round.
+        let grown = CGRect(x: tip.x + (body.minX - tip.x) * p, y: tip.y + (body.minY - tip.y) * p,
+                           width: body.width * p, height: body.height * p)
+        let radius = min(cornerRadius * p, grown.width / 2, grown.height / 2), k = radius * kappa
+        let half = BubbleTail.width / 2 * p
+        let minX = grown.minX, maxX = grown.maxX, bottom = grown.minY, top = grown.maxY
+        let path = CGMutablePath()
+        path.move(to: .init(x: minX, y: top - radius))
+        path.addCurve(to: .init(x: minX + radius, y: top), control1: .init(x: minX, y: top - radius + k),
+                      control2: .init(x: minX + radius - k, y: top))
+        path.addLine(to: .init(x: maxX - radius, y: top))
+        path.addCurve(to: .init(x: maxX, y: top - radius), control1: .init(x: maxX - radius + k, y: top),
+                      control2: .init(x: maxX, y: top - radius + k))
+        path.addLine(to: .init(x: maxX, y: bottom + radius))
+        path.addCurve(to: .init(x: maxX - radius, y: bottom), control1: .init(x: maxX, y: bottom + radius - k),
+                      control2: .init(x: maxX - radius + k, y: bottom))
+        path.addLine(to: .init(x: tip.x + half, y: bottom))
+        path.addLine(to: tip)
+        path.addLine(to: .init(x: tip.x - half, y: bottom))
+        path.addLine(to: .init(x: minX + radius, y: bottom))
+        path.addCurve(to: .init(x: minX, y: bottom + radius), control1: .init(x: minX + radius - k, y: bottom),
+                      control2: .init(x: minX, y: bottom + radius - k))
+        path.closeSubpath()
+        guard tail.edge == .top else { return path }
+        var flip = CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: 0, ty: size.height)
+        return path.copy(using: &flip) ?? path
+    }
+
     private static func resting(size: CGSize, notchWidth: CGFloat, notchHeight: CGFloat, notchCenter: CGFloat?) -> CGRect {
         let width = min(size.width, notchWidth), height = min(size.height, notchHeight)
         return CGRect(x: (notchCenter ?? size.width / 2) - width / 2, y: size.height - height, width: width, height: height)
@@ -82,14 +118,27 @@ enum NotchSurfaceGeometry {
     }
 }
 
+/// The tail a panel beside the pet grows toward the dog: on the window's bottom edge when the panel sits above
+/// the dog, on its top edge below it, with its tip `x` points from the window's leading edge (AC-39.05).
+struct BubbleTail: Equatable {
+    enum Edge { case top, bottom }
+    let edge: Edge
+    let x: CGFloat
+    /// The tail's height is part of the window frame; the body sits inside it.
+    static let height: CGFloat = 14
+    static let width: CGFloat = 28
+}
+
 /// The expanded panel silhouette as a SwiftUI shape, so glass and the behind-window mask follow its outline.
 struct NotchSilhouette: Shape, Equatable {
     var notchWidth: CGFloat?
     var notchHeight: CGFloat = 0
     var notchCenter: CGFloat?
+    var tail: BubbleTail?
     func path(in rect: CGRect) -> Path {
-        let outline = NotchSurfaceGeometry.path(size: rect.size, notchWidth: notchWidth, notchHeight: notchHeight,
-                                                progress: 1, notchCenter: notchCenter)
+        let outline = tail.map { NotchSurfaceGeometry.bubble(size: rect.size, tail: $0, progress: 1) }
+            ?? NotchSurfaceGeometry.path(size: rect.size, notchWidth: notchWidth, notchHeight: notchHeight,
+                                         progress: 1, notchCenter: notchCenter)
         // The outline is unflipped (its top edge at maxY); SwiftUI's y axis points down.
         return Path(outline).applying(CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: rect.minX, ty: rect.maxY))
     }
@@ -127,6 +176,8 @@ struct NotchSilhouette: Shape, Equatable {
     var notchWidth: CGFloat? { didSet { needsLayout = true } }
     var notchHeight: CGFloat = 0 { didSet { needsLayout = true } }
     var notchCenterX: CGFloat? { didSet { needsLayout = true } }
+    /// Set while the panel is the dog's bubble; nil hangs it from the notch or the top edge.
+    var tail: BubbleTail? { didSet { needsLayout = true } }
 
     init(content: AnyView, style: Style = .panel) {
         self.style = style
@@ -156,9 +207,16 @@ struct NotchSilhouette: Shape, Equatable {
     nonisolated static func spring(response: TimeInterval) -> CASpringAnimation {
         CASpringAnimation(perceptualDuration: response, bounce: 0)
     }
-    /// The panel body inside the shoulders; it holds the content, including the header in the notch band.
+    /// The panel body inside the shoulders, or above or below a bubble tail; it holds the content, including the
+    /// header in the notch band.
     var bodyFrame: CGRect {
-        bounds.insetBy(dx: style == .panel ? NotchSurfaceGeometry.bodyInset(notchWidth: notchWidth) : 0, dy: 0)
+        guard style == .panel else { return bounds }
+        if let tail {
+            // The view is unflipped: a tail on the window's bottom edge takes room at minY.
+            return CGRect(x: 0, y: tail.edge == .bottom ? BubbleTail.height : 0, width: bounds.width,
+                          height: max(0, bounds.height - BubbleTail.height))
+        }
+        return bounds.insetBy(dx: NotchSurfaceGeometry.bodyInset(notchWidth: notchWidth), dy: 0)
     }
     override func layout() {
         super.layout()
@@ -166,7 +224,7 @@ struct NotchSilhouette: Shape, Equatable {
         backdrop.frame = bounds
         content.frame = bodyFrame
         if let material = backdrop as? NSHostingView<PanelMaterial> {
-            let outline = NotchSilhouette(notchWidth: notchWidth, notchHeight: notchHeight, notchCenter: notchCenterX)
+            let outline = NotchSilhouette(notchWidth: notchWidth, notchHeight: notchHeight, notchCenter: notchCenterX, tail: tail)
             if material.rootView.outline != outline { material.rootView = PanelMaterial(outline: outline) }
         }
         silhouette.frame = bounds
@@ -202,12 +260,19 @@ struct NotchSilhouette: Shape, Equatable {
         fade.beginTime = CACurrentMediaTime() + (value ? Fade.delay : 0)
         fade.fillMode = .backwards
         content.layer?.add(fade, forKey: "content-reveal")
-        guard style == .island else { return }
-        // Additive and in the surface's unflipped coordinates: a positive offset sits toward the notch.
+        // Island content slides out from under the notch; bubble content rises out of the dog. Additive and in the
+        // surface's unflipped coordinates: a positive offset sits toward the notch, a negative one toward a tail below.
+        let distance: CGFloat
+        switch (style, tail?.edge) {
+        case (.island, _): distance = Self.slideDistance
+        case (.panel, .bottom?): distance = -Self.slideDistance
+        case (.panel, .top?): distance = Self.slideDistance
+        case (.panel, nil): return
+        }
         let slide = Self.spring(response: value ? Self.expandResponse : Fade.conceal)
         slide.keyPath = "position.y"
         slide.isAdditive = true
-        slide.fromValue = value ? Self.slideDistance : 0; slide.toValue = value ? 0 : Self.slideDistance
+        slide.fromValue = value ? distance : 0; slide.toValue = value ? 0 : distance
         slide.duration = value ? Self.expandDuration : Fade.conceal
         slide.beginTime = fade.beginTime; slide.fillMode = .backwards
         content.layer?.add(slide, forKey: "content-slide")
@@ -217,6 +282,7 @@ struct NotchSilhouette: Shape, Equatable {
     }
     private func silhouettePath(expanded: Bool) -> CGPath {
         let progress: CGFloat = expanded ? 1 : 0
+        if style == .panel, let tail { return NotchSurfaceGeometry.bubble(size: bounds.size, tail: tail, progress: progress) }
         if style == .island, let notchWidth {
             return NotchSurfaceGeometry.island(size: bounds.size, notchWidth: notchWidth, notchHeight: notchHeight,
                                                progress: progress, notchCenter: notchCenterX)

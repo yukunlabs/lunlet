@@ -50,8 +50,11 @@ import SwiftUI
     let away: AwayModeModel
     let panel: CompanionPanelController
     private let entry: NotchEntryController
+    private let pet: PetEntryController
     private let cues: TransientCuePanel
+    private let cueRouter: CueRouter
     private var menu: MenuBarController?
+    private var notchAvailable = false
     /// Sparkle, only in a configured release build; previews and unconfigured builds never check (AC-35.04).
     private var updater: AppUpdater?
     private var started = false
@@ -75,7 +78,9 @@ import SwiftUI
         self.claudeHistory = claudeHistory; self.claudeUsageHover = claudeUsageHover
         let panel = CompanionPanelController()
         let cues = TransientCuePanel(expanded: { [weak panel] in panel?.isVisible == true })
-        let sessions = SessionListModel(presenter: cues)
+        let cueRouter = CueRouter(island: cues)
+        self.cueRouter = cueRouter
+        let sessions = SessionListModel(presenter: cueRouter)
         // The entry draws one strand per selected agent, so it follows Claude's limits as it follows Codex usage.
         // Plan limits connect on their own while Claude Code is selected, unless the owner disconnected them (AC-33.08).
         let claudeLimits = ClaudePlanLimitsModel(connectsAutomatically: true, choices: .standard)
@@ -85,6 +90,10 @@ import SwiftUI
         let entry = NotchEntryController(companion: panel, usage: usage, claudeLimits: claudeLimits, preferences: preferences,
                                          skinCatalog: skins, sessions: sessions)
         self.entry = entry
+        let pet = PetEntryController(companion: panel, sessions: sessions, preferences: preferences, skins: skins)
+        self.pet = pet
+        cueRouter.pet = pet
+        cueRouter.mode = preferences.value.presentation
         self.notifications = notifications
         // Sources start only for selected providers; deselecting one stops its source.
         let observation = SessionObservationModel(model: sessions, providers: Set(preferences.value.sessionProviders)) { provider in
@@ -121,6 +130,10 @@ import SwiftUI
                 self?.claudeHook.setActive(providers.contains(.claude))
             }
         }.store(in: &preferenceObservations)
+        preferences.$value.map(\.presentation).removeDuplicates().sink { [weak self] presentation in
+            self?.cueRouter.mode = presentation
+            self?.updateMenuVisibility(presentation: presentation)
+        }.store(in: &preferenceObservations)
         preferences.$value.map(\.channel).removeDuplicates().sink { [weak self] channel in
             // Published emits before value changes; this owns routing during that transition.
             self?.selectedChannel = channel
@@ -128,8 +141,9 @@ import SwiftUI
             self?.configureNotifications(channel: channel)
         }
             .store(in: &preferenceObservations)
-        panel.visibilityChanged = { [weak entry, weak claudeLimits] visible in
+        panel.visibilityChanged = { [weak entry, weak pet, weak panel, weak claudeLimits] visible in
             entry?.panelVisibilityChanged(visible)
+            pet?.panelVisibilityChanged(visible, frame: panel?.window?.frame)
             // Claude limits are read on file events only while the panel can show them.
             claudeLimits?.setWatching(visible)
         }
@@ -183,8 +197,13 @@ import SwiftUI
         // panel out of the way.
         updater = AppUpdater.start()
         updater?.willPresent = { [weak panel] in panel?.hide() }
-        entry.notchAvailabilityChanged = { [weak menu] in menu?.setNotchEntryAvailable($0) }
+        entry.notchAvailabilityChanged = { [weak self] available in
+            self?.notchAvailable = available
+            self?.updateMenuVisibility()
+        }
+        pet.refreshAction = { [weak self] in self?.refresh() }
         entry.start()
+        pet.start()
         started = true
         usage.start(); history.refreshIfNeeded(); observation.start()
         if preferences.value.sessionProviders.contains(.claude) { claudeHistory.refreshIfNeeded() }
@@ -203,6 +222,12 @@ import SwiftUI
         panel.show()
     }
 
+    /// One application entry at a time: the menu-bar item appears in menu-bar mode and as the fallback without a
+    /// notch entry, never beside the pet (AC-21.03, AC-39.01).
+    private func updateMenuVisibility(presentation: EntryPresentation? = nil) {
+        let mode = presentation ?? preferences.value.presentation
+        menu?.setVisible(mode == .menuBar || (mode == .notch && !notchAvailable))
+    }
     func refresh() {
         guard closing == nil else { return }
         usage.refresh(); history.refresh()
@@ -232,7 +257,7 @@ import SwiftUI
         preferenceObservations.removeAll()
         menu?.shutdown(); menu = nil
         updater?.willPresent = nil
-        entry.shutdown()
+        entry.shutdown(); pet.shutdown()
         panel.shutdown(); usageHover.shutdown(); claudeUsageHover.shutdown()
         // Each stage is logged by number as it finishes, or as `uncertain` with `timeout` when it overran its bound,
         // so a quit never waits on a provider or a socket and the log names the cleanup that stalled (AC-12.04,
