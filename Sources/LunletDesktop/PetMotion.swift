@@ -36,7 +36,9 @@ enum PetMotion {
     /// the pointer or the panel holds the dog's attention run at thirty, so that the quick things read.
     static let calmInterval: TimeInterval = 1.0 / 12.0
     static let livelyInterval: TimeInterval = 1.0 / 30.0
-    /// A pack standing still (asleep, or a look cell) is checked twice a second for something new.
+    /// Asleep, only breathing and the drifting sleep marks move: six frames a second carry them.
+    static let restfulInterval: TimeInterval = 1.0 / 6.0
+    /// A pack holding a look cell is checked twice a second for something new; the pointer moving redraws it sooner.
     static let restingInterval: TimeInterval = 0.5
 
     /// A stable pseudo-random value in 0…1 for an integer segment of time.
@@ -116,73 +118,87 @@ enum PetMotion {
     // MARK: Tempo
 
     /// Whether something quick is happening at `t`: attention from the pointer or the panel, a pose transition, a
-    /// bounce, the Done hop, a blink or an ear flick, each padded by one lively frame on both sides.
+    /// bounce, the Done hop, a blink or an ear flick, each padded by one lively frame on both sides. Closed eyes do
+    /// not blink, so a sleeping dog has no blink moments.
     static func lively(at t: TimeInterval, input: PetMotionInput) -> Bool {
         if input.hovered || input.panelOpen || input.gaze != nil || input.pose == .done { return true }
         if t - input.poseChangedAt < transitionDuration + livelyInterval { return true }
         if let impulseAt = input.impulseAt, t - impulseAt < impulseDuration + livelyInterval { return true }
-        return moments(near: t).contains { t >= $0.start - livelyInterval && t <= $0.start + $0.duration + livelyInterval }
+        return moments(near: t, blinking: input.pose != .asleep)
+            .contains { t >= $0.start - livelyInterval && t <= $0.start + $0.duration + livelyInterval }
     }
     /// The next quick moment that starts after `t`, if one lies within the segments around it.
-    static func nextLivelyMoment(after t: TimeInterval) -> TimeInterval? {
-        moments(near: t).map { $0.start - livelyInterval }.filter { $0 > t }.min()
+    static func nextLivelyMoment(after t: TimeInterval, blinking: Bool = true) -> TimeInterval? {
+        moments(near: t, blinking: blinking).map { $0.start - livelyInterval }.filter { $0 > t }.min()
     }
-    private static func moments(near t: TimeInterval) -> [(start: TimeInterval, duration: TimeInterval)] {
+    private static func moments(near t: TimeInterval, blinking: Bool) -> [(start: TimeInterval, duration: TimeInterval)] {
         var found: [(start: TimeInterval, duration: TimeInterval)] = []
-        for offset in [0.0, 4.0] { found += blinkMoments(inSegmentOf: t + offset).map { ($0, blinkDuration) } }
+        if blinking { for offset in [0.0, 4.0] { found += blinkMoments(inSegmentOf: t + offset).map { ($0, blinkDuration) } } }
         for offset in [0.0, 6.0] { if let at = twitchMoment(inSegmentOf: t + offset) { found.append((at, twitchDuration)) } }
         return found
     }
 }
 
-/// The latest motion input, shared by reference with the drawing and its schedule so a pointer move or a click
-/// changes the next frame without rebuilding the view.
-final class PetTempo: @unchecked Sendable {
-    private let lock = NSLock()
-    private var current = PetMotionInput()
-    private var sheet: PetSpriteVersion?
-    var input: PetMotionInput {
-        get { lock.withLock { current } }
-        set { lock.withLock { current = newValue } }
-    }
+/// The pet's frame clock. It publishes the time of each frame at the tempo of what is happening: twelve a second
+/// for the loops, six while asleep, thirty while something quick happens, and a pack's own frame boundaries; nothing
+/// runs between frames. A timer armed for the next frame costs a fraction of a SwiftUI timeline, whose display link
+/// keeps waking at the screen's rate however few frames it draws (AC-39.08).
+@MainActor final class PetFrameClock: ObservableObject {
+    /// The time the current frame shows; nil while the pet stands still.
+    @Published private(set) var frame: TimeInterval?
+    var input = PetMotionInput()
     /// The pack's layout while a pack is the pet; nil for the dog.
-    var sprite: PetSpriteVersion? {
-        get { lock.withLock { sheet } }
-        set { lock.withLock { sheet = newValue } }
-    }
-}
+    var sprite: PetSpriteVersion?
+    private var timer: Timer?
+    private let now: () -> TimeInterval
 
-/// Frames twelve times a second while the dog only breathes, thirty while something quick happens, landing exactly
-/// on the start of the next blink or flick so that a calm frame never skips over one (AC-39.08).
-struct PetTempoSchedule: TimelineSchedule {
-    let tempo: PetTempo
-    struct Entries: Sequence, IteratorProtocol {
-        let tempo: PetTempo
-        let calm: TimeInterval
-        var upcoming: Date
-        mutating func next() -> Date? {
-            let current = upcoming
-            let t = current.timeIntervalSinceReferenceDate
-            let input = tempo.input
-            var step: TimeInterval
-            if let version = tempo.sprite {
-                // A pack changes cells at its own frame durations; attention keeps the look direction fresh.
-                let attentive = input.gaze != nil || input.hovered || input.panelOpen
-                step = attentive ? PetMotion.livelyInterval : PetMotion.restingInterval
-                if let change = PetSpriteRule.nextChange(after: t, cue: PetSpriteDrawing.cue(from: input, version: version)), change - t < step {
-                    step = Swift.max(change - t, 0.004)
-                }
-            } else {
-                step = PetMotion.lively(at: t, input: input) ? PetMotion.livelyInterval : calm
-                if step > PetMotion.livelyInterval, let soon = PetMotion.nextLivelyMoment(after: t), soon - t < step {
-                    step = Swift.max(soon - t, PetMotion.livelyInterval)
-                }
-            }
-            upcoming = Date(timeIntervalSinceReferenceDate: t + step)
-            return current
-        }
+    init(now: @escaping () -> TimeInterval = { Date().timeIntervalSinceReferenceDate }) { self.now = now }
+    var isRunning: Bool { timer != nil }
+
+    /// Shows a frame now and keeps framing until `stop()`; called again, it shows the latest input at once.
+    func start() { show(at: now()) }
+    func stop() {
+        timer?.invalidate(); timer = nil
+        if frame != nil { frame = nil }
     }
-    func entries(from startDate: Date, mode: Mode) -> Entries {
-        Entries(tempo: tempo, calm: mode == .lowFrequency ? 1 : PetMotion.calmInterval, upcoming: startDate)
+    private func show(at t: TimeInterval) {
+        frame = t
+        timer?.invalidate()
+        let next = Self.nextFrame(after: t, input: input, sprite: sprite)
+        let timer = Timer(fire: Date(timeIntervalSinceReferenceDate: next), interval: 0, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                // A frame that comes late, as after the Mac slept, shows the present rather than catching up.
+                let current = self.now()
+                self.show(at: current - next > PetMotion.livelyInterval ? current : next)
+            }
+        }
+        timer.tolerance = min(0.008, (next - t) * 0.1)
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+    }
+
+    /// The moment of the frame after one at `t`. The dog's loops are framed twelve times a second, six while
+    /// asleep, thirty while something quick happens, landing exactly on the start of the next blink or flick so that
+    /// a calm frame never skips over one. A pack changes cells at its own frame durations; only Lunlet's bubble
+    /// popping in needs quick frames, and a look cell stands still until the pointer moves, which the host redraws.
+    nonisolated static func nextFrame(after t: TimeInterval, input: PetMotionInput, sprite: PetSpriteVersion?) -> TimeInterval {
+        var step: TimeInterval
+        if let version = sprite {
+            let popping = input.pose.bubble != nil && !input.panelOpen
+                && t - input.poseChangedAt < PetMotion.bubbleDuration + PetMotion.livelyInterval
+            step = popping ? PetMotion.livelyInterval : input.pose == .asleep ? PetMotion.restfulInterval : PetMotion.restingInterval
+            if let change = PetSpriteRule.nextChange(after: t, cue: PetSpriteDrawing.cue(from: input, version: version)), change - t < step {
+                step = Swift.max(change - t, 0.004)
+            }
+        } else {
+            let rest = input.pose == .asleep ? PetMotion.restfulInterval : PetMotion.calmInterval
+            step = PetMotion.lively(at: t, input: input) ? PetMotion.livelyInterval : rest
+            if step > PetMotion.livelyInterval, let soon = PetMotion.nextLivelyMoment(after: t, blinking: input.pose != .asleep),
+               soon - t < step {
+                step = Swift.max(soon - t, PetMotion.livelyInterval)
+            }
+        }
+        return t + step
     }
 }

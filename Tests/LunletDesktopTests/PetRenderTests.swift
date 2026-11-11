@@ -77,8 +77,8 @@ import LunletCore
                 Self.drawDog(pose: pose, coat: .golden, at: CGPoint(x: CGFloat(column) * window.width, y: window.height), size: window, panelOpen: false)
                 let state = PetState(pose: pose, sessionID: nil, sessionCount: 1, waitingCount: 0, runningCount: 0, summary: nil)
                 var input = PetMotionInput(); input.pose = pose
-                let tempo = PetTempo(); tempo.input = input; tempo.sprite = sheet.version
-                let view = PetCanvasView(state: state, appearance: .sprite(sheet), tempo: tempo, animating: false)
+                let clock = PetFrameClock(); clock.input = input; clock.sprite = sheet.version
+                let view = PetCanvasView(state: state, appearance: .sprite(sheet), clock: clock)
                 let renderer = ImageRenderer(content: view.frame(width: window.width, height: window.height))
                 renderer.scale = 2
                 renderer.nsImage?.draw(in: CGRect(origin: CGPoint(x: CGFloat(column) * window.width, y: 0), size: window))
@@ -93,8 +93,8 @@ import LunletCore
         let state = PetState(pose: pose, sessionID: nil, sessionCount: 1, waitingCount: 0, runningCount: 0, summary: nil)
         var input = PetMotionInput(); input.pose = pose; input.panelOpen = panelOpen
         if panelOpen { input.gaze = CGPoint(x: 0, y: -0.8) }
-        let tempo = PetTempo(); tempo.input = input
-        let view = PetCanvasView(state: state, appearance: .dog(palette), tempo: tempo, animating: false)
+        let clock = PetFrameClock(); clock.input = input
+        let view = PetCanvasView(state: state, appearance: .dog(palette), clock: clock)
         let renderer = ImageRenderer(content: view.frame(width: size.width, height: size.height))
         renderer.scale = 2
         guard let image = renderer.nsImage else { return }

@@ -188,9 +188,13 @@ enum PetDrawing {
         default: glow = 0.6
         }
         if glow > 0 {
-            var halo = c
-            halo.addFilter(.blur(radius: 5))
-            halo.fill(Path(ellipseIn: CGRect(x: h.x - 12, y: cy + 9, width: 24, height: 24)), with: .color(PetPalette.lanternGlow.opacity(glow)))
+            // A soft halo as a radial gradient; a blur filter would cost an offscreen pass every frame (AC-39.08).
+            let center = CGPoint(x: h.x, y: cy + 21), reach: CGFloat = 18
+            let halo = Gradient(stops: [.init(color: PetPalette.lanternGlow.opacity(glow), location: 0),
+                                        .init(color: PetPalette.lanternGlow.opacity(glow * 0.75), location: 0.45),
+                                        .init(color: PetPalette.lanternGlow.opacity(0), location: 1)])
+            c.fill(Path(ellipseIn: CGRect(x: center.x - reach, y: center.y - reach, width: reach * 2, height: reach * 2)),
+                   with: .radialGradient(halo, center: center, startRadius: 0, endRadius: reach))
         }
         let cap = palette.collar.opacity(0.75)
         c.fill(Path(roundedRect: CGRect(x: h.x - 6, y: cy + 9, width: 12, height: 4), cornerRadius: 1.5), with: .color(cap))
@@ -222,7 +226,8 @@ enum PetDrawing {
 }
 
 extension PetDrawing {
-    /// A white bubble with its glyph whose tail ends at `tip`, growing from the tip by `scale` (AC-39.04).
+    /// A white bubble with its glyph whose tail ends at `tip`, growing from the tip by `scale` (AC-39.04). The glyph
+    /// is a stroked shape, so a frame lays out no text.
     static func drawBubble(in c: inout GraphicsContext, tip: CGPoint, glyph: String, scale: CGFloat, ink: Color) {
         let bx = tip.x - 6, by = tip.y - 42
         var bubble = Path(roundedRect: CGRect(x: bx, y: by, width: 40, height: 34), cornerRadius: 12)
@@ -230,19 +235,35 @@ extension PetDrawing {
         let grow = CGAffineTransform(translationX: tip.x, y: tip.y).scaledBy(x: scale, y: scale).translatedBy(x: -tip.x, y: -tip.y)
         c.fill(bubble.applying(grow), with: .color(.white))
         c.stroke(bubble.applying(grow), with: .color(ink), style: .init(lineWidth: 2, lineJoin: .round))
-        if scale > 0.6 {
-            c.draw(Text(glyph).font(.system(size: 22 * scale, weight: .bold)).foregroundColor(glyph == "✓" ? PetPalette.check : ink),
-                   at: CGPoint(x: tip.x + 14 * scale, y: tip.y - 25 * scale))
+        guard scale > 0.6 else { return }
+        let s = scale, cx = tip.x + 14 * s, cy = tip.y - 25 * s
+        var shape = Path()
+        if glyph == "✓" {
+            shape.move(to: .init(x: cx - 7 * s, y: cy + 0.5 * s)); shape.addLine(to: .init(x: cx - 2 * s, y: cy + 5.5 * s))
+            shape.addLine(to: .init(x: cx + 8 * s, y: cy - 6 * s))
+            c.stroke(shape, with: .color(PetPalette.check), style: .init(lineWidth: 3.4 * s, lineCap: .round, lineJoin: .round))
+        } else {
+            // A question mark: an arch, a short stem and a dot.
+            shape.move(to: .init(x: cx - 5.5 * s, y: cy - 4 * s))
+            shape.addCurve(to: .init(x: cx + 5.5 * s, y: cy - 4 * s), control1: .init(x: cx - 5.5 * s, y: cy - 11.5 * s), control2: .init(x: cx + 5.5 * s, y: cy - 11.5 * s))
+            shape.addCurve(to: .init(x: cx, y: cy + 3 * s), control1: .init(x: cx + 5.5 * s, y: cy + 1 * s), control2: .init(x: cx, y: cy - 1 * s))
+            shape.addLine(to: .init(x: cx, y: cy + 5 * s))
+            c.stroke(shape, with: .color(ink), style: .init(lineWidth: 3 * s, lineCap: .round, lineJoin: .round))
+            c.fill(Path(ellipseIn: CGRect(x: cx - 1.9 * s, y: cy + 7.6 * s, width: 3.8 * s, height: 3.8 * s)), with: .color(ink))
         }
     }
-    /// Three drifting "z" letters rising from `origin`; still when `time` is nil.
+    /// Three drifting "z" marks rising from `origin`, each a stroked zigzag; still when `time` is nil.
     static func drawSleep(in c: inout GraphicsContext, origin: CGPoint, time t: TimeInterval?, ink: Color) {
         for (index, size) in [14.0, 18.0, 22.0].enumerated() {
             let phase = t.map { (($0 + Double(index) * 0.6).truncatingRemainder(dividingBy: 2.4) / 2.4) } ?? Double(index) / 3
             let opacity = t != nil ? (phase < 0.3 ? phase / 0.3 : 1 - (phase - 0.3) / 0.7) * 0.9 : 0.7
             let drift = CGFloat(phase) * 18
-            c.draw(Text("z").font(.system(size: size, weight: .bold)).foregroundColor(ink.opacity(opacity)),
-                   at: .init(x: origin.x + 9 * CGFloat(index) + drift * 0.5, y: origin.y - 15 * CGFloat(index) - drift))
+            let p = CGPoint(x: origin.x + 9 * CGFloat(index) + drift * 0.5, y: origin.y - 15 * CGFloat(index) - drift)
+            let w = CGFloat(size) * 0.3, h = CGFloat(size) * 0.32
+            var z = Path()
+            z.move(to: .init(x: p.x - w, y: p.y - h)); z.addLine(to: .init(x: p.x + w, y: p.y - h))
+            z.addLine(to: .init(x: p.x - w, y: p.y + h)); z.addLine(to: .init(x: p.x + w, y: p.y + h))
+            c.stroke(z, with: .color(ink.opacity(opacity)), style: .init(lineWidth: CGFloat(size) * 0.16, lineCap: .round, lineJoin: .round))
         }
     }
 }
@@ -261,37 +282,26 @@ enum PetAppearance: Equatable {
     var spriteVersion: PetSpriteVersion? { if case .sprite(let sheet) = self { sheet.version } else { nil } }
 }
 
-/// The dog, redrawn on a state change and, while it moves, at the tempo of what is happening: twelve frames a
-/// second for its loops, thirty for the quick things (AC-39.08). The motion input is read at draw time.
+/// The dog, redrawn on a state change and, while it moves, at each frame the clock publishes: twelve a second for
+/// its loops, thirty for the quick things (AC-39.08). The motion input is read from the clock at draw time; a clock
+/// without a frame draws the pet standing still.
 struct PetCanvasView: View {
     let state: PetState
     let appearance: PetAppearance
-    let tempo: PetTempo
-    let animating: Bool
+    @ObservedObject var clock: PetFrameClock
 
     var body: some View {
-        Group {
-            if animating {
-                TimelineView(PetTempoSchedule(tempo: tempo)) { timeline in
-                    canvas(time: timeline.date.timeIntervalSinceReferenceDate)
-                }
-            } else {
-                canvas(time: nil)
+        Canvas(rendersAsynchronously: false) { context, size in
+            switch appearance {
+            case .dog(let palette):
+                PetDrawing.draw(in: &context, size: size, state: state, palette: palette, input: clock.input, time: clock.frame)
+            case .sprite(let sheet):
+                PetSpriteDrawing.draw(in: &context, size: size, state: state, sheet: sheet, input: clock.input, time: clock.frame)
             }
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(state.accessibilityLabel)
         .accessibilityAddTraits(.isButton)
-    }
-    private func canvas(time: TimeInterval?) -> some View {
-        Canvas(rendersAsynchronously: false) { context, size in
-            switch appearance {
-            case .dog(let palette):
-                PetDrawing.draw(in: &context, size: size, state: state, palette: palette, input: tempo.input, time: time)
-            case .sprite(let sheet):
-                PetSpriteDrawing.draw(in: &context, size: size, state: state, sheet: sheet, input: tempo.input, time: time)
-            }
-        }
     }
 }
 
@@ -299,7 +309,7 @@ struct PetCanvasView: View {
 /// (AC-39.02), the secondary button opens the menu, and hovering shows the status line as a tooltip (AC-39.04).
 final class PetHostView: HoverTrackingView {
     private let hosting: NSHostingView<PetCanvasView>
-    private let tempo = PetTempo()
+    private let clock = PetFrameClock()
     private(set) var state = PetState(pose: .asleep, sessionID: nil, sessionCount: 0, waitingCount: 0, runningCount: 0, summary: nil)
     private(set) var input = PetMotionInput()
     /// What is shown; `appearance` is NSView's own.
@@ -307,13 +317,12 @@ final class PetHostView: HoverTrackingView {
     private var animating = false
     var clicked: (() -> Void)?
     var contextMenu: (() -> NSMenu)?
-    var moved: (() -> Void)?
     var dragStarted: (() -> Void)?
     var dragEnded: (() -> Void)?
 
     init(palette: PetPalette) {
         shown = .dog(palette)
-        hosting = NSHostingView(rootView: PetCanvasView(state: state, appearance: .dog(palette), tempo: tempo, animating: false))
+        hosting = NSHostingView(rootView: PetCanvasView(state: state, appearance: .dog(palette), clock: clock))
         super.init(frame: .zero)
         hosting.translatesAutoresizingMaskIntoConstraints = false
         addSubview(hosting)
@@ -323,18 +332,26 @@ final class PetHostView: HoverTrackingView {
     }
     @available(*, unavailable) required init?(coder: NSCoder) { nil }
 
-    /// A changed state, appearance or animation flag rebuilds the view, as does any motion change but the gaze (a
-    /// click, a drag, attention), which the next frame must show at once; a gaze change alone reaches the next
-    /// frame through the shared tempo, or redraws at once while the pet stands still.
+    /// A changed state or appearance rebuilds the view. While the pet moves, any motion change but the gaze (a click,
+    /// a drag, attention) shows in a frame at once, as does a gaze that turns a pack to another look cell (AC-40.03);
+    /// the dog's gaze alone reaches the next quick frame through the clock. Standing still, every change redraws.
     func update(_ state: PetState, appearance: PetAppearance, input: PetMotionInput, animating: Bool) {
         var prompt = input, previous = self.input
         prompt.gaze = nil; previous.gaze = nil
         let rebuild = state != self.state || appearance != self.shown || animating != self.animating || prompt != previous
         let motionChanged = input != self.input
+        let now = Date().timeIntervalSinceReferenceDate
+        let cellChanged = motionChanged && appearance.spriteVersion.map { version in
+            PetSpriteDrawing.frame(at: now, input: input, version: version) != PetSpriteDrawing.frame(at: now, input: self.input, version: version)
+        } ?? false
         self.state = state; self.shown = appearance; self.input = input; self.animating = animating
-        tempo.input = input; tempo.sprite = appearance.spriteVersion
-        if rebuild || (motionChanged && !animating) {
-            hosting.rootView = PetCanvasView(state: state, appearance: appearance, tempo: tempo, animating: animating)
+        clock.input = input; clock.sprite = appearance.spriteVersion
+        if rebuild { hosting.rootView = PetCanvasView(state: state, appearance: appearance, clock: clock) }
+        if animating {
+            if rebuild || cellChanged || !clock.isRunning { clock.start() }
+        } else {
+            clock.stop()
+            if motionChanged, !rebuild { hosting.rootView = PetCanvasView(state: state, appearance: appearance, clock: clock) }
         }
         guard rebuild else { return }
         toolTip = state.summary ?? state.pose.title
@@ -390,7 +407,7 @@ final class PetHostView: HoverTrackingView {
         window.performDrag(with: event)
         dragEnded?()
         let delta = hypot(window.frame.origin.x - origin.x, window.frame.origin.y - origin.y)
-        if delta < 3 { clicked?() } else { moved?() }
+        if delta < 3 { clicked?() }
     }
     override func rightMouseDown(with event: NSEvent) {
         guard let menu = contextMenu?() else { return }

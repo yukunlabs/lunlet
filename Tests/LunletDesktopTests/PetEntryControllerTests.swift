@@ -66,6 +66,65 @@ import LunletCore
         entry.shutdown()
     }
 
+    private final class Counter { var count = 0 }
+
+    @Test func displayAvailabilityIsReadWhenTheDisplayChangesNotOnEveryUpdate() throws {
+        let preferences = try store(), screen = try #require(NSScreen.main)
+        preferences.update { $0.presentation = .pet }
+        let reads = Counter()
+        let companion = CompanionPanelController(motionAllowed: { false }, observesSystemEvents: false)
+        let sessions = SessionListModel(displayAvailable: { true }, elapsed: { 0 }, presenter: NoCues())
+        let entry = PetEntryController(companion: companion, sessions: sessions, preferences: preferences,
+                                       display: { screen }, available: { reads.count += 1; return true }, motionAllowed: { false })
+        defer { entry.shutdown() }
+        entry.refresh()
+        let afterRefresh = reads.count
+        #expect(afterRefresh >= 1)
+        // Cues, the panel and the pointer change the pose or the gaze many times a second; none of them is a display change.
+        entry.show([TaskCue(sessionID: "s", connectionID: "c", turnID: "t", title: "Synthetic project", phase: .finished(.succeeded))])
+        entry.hide()
+        entry.panelVisibilityChanged(true, frame: CGRect(x: 0, y: 0, width: 100, height: 100))
+        entry.panelVisibilityChanged(false, frame: nil)
+        #expect(reads.count == afterRefresh)
+    }
+
+    @Test func aDragSavesThePositionOnceWhenItEnds() throws {
+        let preferences = try store(), screen = try #require(NSScreen.main)
+        preferences.update { $0.presentation = .pet }
+        let (entry, _) = controller(preferences, screen: screen)
+        defer { entry.shutdown() }
+        entry.refresh()
+        let window = try #require(entry.window)
+        let saves = Counter()
+        let observation = preferences.$value.dropFirst().sink { _ in saves.count += 1 }
+        defer { observation.cancel() }
+        let origin = window.frame.origin
+        entry.dragStarted()
+        for step in 1...3 { window.setFrameOrigin(CGPoint(x: origin.x - CGFloat(step) * 8, y: origin.y)) }
+        // The window moves with every pointer event; the preference is written when the drag ends.
+        #expect(saves.count == 0)
+        entry.dragEnded()
+        #expect(saves.count == 1)
+        let saved = preferences.value.petPositions[PetEntryController.key(for: screen)]
+        #expect(saved?.x == origin.x - 24 && saved?.y == origin.y)
+        // The display it was left on is remembered, so a relaunch brings it back there (AC-39.02).
+        #expect(preferences.value.petDisplay == PetEntryController.key(for: screen))
+    }
+
+    @Test func thePetReturnsToTheDisplayItWasLastPlacedOn() {
+        let connected = ["1", "7"]
+        func chosen(last: String?, placed: Set<String>) -> String? {
+            PetEntryController.preferredDisplay(last: last, placed: placed, among: connected, key: { $0 }, fallback: "7")
+        }
+        // The display it was last on wins while it is connected, whatever display has the focused window.
+        #expect(chosen(last: "1", placed: ["1", "7"]) == "1")
+        // Disconnected, the one connected display that ever held it is next; otherwise the runtime's choice stands.
+        #expect(chosen(last: "9", placed: ["9", "1"]) == "1")
+        #expect(chosen(last: "9", placed: ["9", "1", "7"]) == "7")
+        #expect(chosen(last: nil, placed: ["1"]) == "1")
+        #expect(chosen(last: nil, placed: []) == "7")
+    }
+
     @Test func panelOpensAsTheDogsBubbleWithoutNotchShoulders() {
         let screen = PanelScreen(frame: CGRect(x: 0, y: 0, width: 1512, height: 982), visibleFrame: CGRect(x: 0, y: 80, width: 1512, height: 870),
                                  safeTop: 32, notch: CGRect(x: 650, y: 950, width: 212, height: 32))
@@ -126,13 +185,15 @@ import LunletCore
     @Test func petPreferencesRoundTripAndDefaultToTheGoldenCoat() throws {
         var value = LunletPreferences()
         #expect(value.petCoat == .golden && value.presentation == .notch && EntryPresentation(rawValue: "pet") == .pet)
-        value.presentation = .pet; value.petCoat = .slate; value.petPositions["1"] = .init(x: 12, y: 34)
+        value.presentation = .pet; value.petCoat = .slate; value.petPositions["1"] = .init(x: 12, y: 34); value.petDisplay = "1"
         let data = try JSONEncoder().encode(value)
         let decoded = try JSONDecoder().decode(LunletPreferences.self, from: data)
         #expect(decoded == value)
         var oversized = value
         for index in 0..<17 { oversized.petPositions[String(index)] = .init(x: 0, y: 0) }
         #expect(throws: PreferenceFailure.invalidValue) { try oversized.validate() }
+        var blank = value; blank.petDisplay = ""
+        #expect(throws: PreferenceFailure.invalidValue) { try blank.validate() }
     }
 
     @Test func silhouetteCoversTheDogAndNotTheCorners() {

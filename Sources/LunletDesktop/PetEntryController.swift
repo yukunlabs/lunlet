@@ -51,6 +51,10 @@ import LunletCore
     private var sheetLoad: Task<Void, Never>?
     private var dragging = false
     private var dragOrigin: CGPoint?
+    private var dragMoved = false
+    /// Whether the display can show the pet, read when the display state changes (AC-39.02); a pose or gaze update
+    /// many times a second never asks the OS again.
+    private var displayAvailable = false
     private var active = false
     private var repositioning = false
     private var closed = false
@@ -76,7 +80,6 @@ import LunletCore
             motion.hovered = inside; updateState()
         }
         host.contextMenu = { [weak self] in self?.menu() ?? NSMenu() }
-        host.moved = { [weak self] in self?.moved() }
         host.dragStarted = { [weak self] in self?.dragStarted() }
         host.dragEnded = { [weak self] in self?.dragEnded() }
         if let preferences {
@@ -159,7 +162,8 @@ import LunletCore
 
     func refresh() {
         guard !closed else { return }
-        guard active, available(), let screen = display() else { hideWindow(); return }
+        displayAvailable = available()
+        guard active, displayAvailable, let screen = chosenScreen() else { hideWindow(); return }
         if window == nil {
             let panel = FloatingPanel(identifier: "Lunlet.pet", title: "Lunlet pet", frame: CGRect(origin: .zero, size: Self.windowSize),
                                       acceptsKey: false, level: .floating)
@@ -188,6 +192,22 @@ import LunletCore
         host.update(state, appearance: appearance, input: motion, animating: false)
     }
 
+    /// The display to show the pet on: the one it was last placed on while it is connected, else the runtime's
+    /// choice (the display with the focused window, or the first), so a relaunch or a display change never moves
+    /// the pet to another display on its own (AC-39.02).
+    private func chosenScreen() -> NSScreen? {
+        Self.preferredDisplay(last: preferences?.value.petDisplay, placed: Set(preferences?.value.petPositions.keys ?? [:].keys),
+                              among: NSScreen.screens, key: Self.key(for:), fallback: display())
+    }
+    /// The display named `last` when it is among `screens`; without one, the single connected display that holds a
+    /// saved place; otherwise `fallback`.
+    static func preferredDisplay<Screen>(last: String?, placed: Set<String>, among screens: [Screen], key: (Screen) -> String,
+                                         fallback: Screen?) -> Screen? {
+        if let last, let kept = screens.first(where: { key($0) == last }) { return kept }
+        let held = screens.filter { placed.contains(key($0)) }
+        return held.count == 1 ? held[0] : fallback
+    }
+
     /// The saved place on this display, clamped to its visible area, or the lower trailing corner.
     func frame(on screen: NSScreen) -> CGRect {
         let visible = screen.visibleFrame, size = Self.windowSize
@@ -199,33 +219,37 @@ import LunletCore
     }
     static func key(for screen: NSScreen) -> String { screen.displayNumber.map { String($0.intValue) } ?? "main" }
 
-    /// The dog was dragged: its place is kept, an open bubble follows it, and a pack runs the way it moves
-    /// (AC-39.02, AC-39.05, AC-40.03).
+    /// The dog moved: during a drag an open bubble follows it and a pack runs the way it goes, and its place is saved
+    /// once the drag ends; a move that is no drag is saved at once (AC-39.02, AC-39.05, AC-40.03).
     private func moved() {
-        savePosition()
         if dragging, let window {
+            dragMoved = true
             let dx = window.frame.origin.x - (dragOrigin?.x ?? window.frame.origin.x)
             dragOrigin = window.frame.origin
             if abs(dx) >= 0.5 { motion.drag = dx > 0 ? .right : .left } else if motion.drag == nil { motion.drag = .right }
             updateState()
+        } else {
+            savePosition()
         }
         guard companion.isVisible, let anchor = bubbleAnchor else { return }
         companion.move(near: anchor)
         panelVisibilityChanged(true, frame: companion.window?.frame)
     }
-    private func dragStarted() {
-        dragging = true; dragOrigin = window?.frame.origin
+    /// The host view reports the drag it is performing; the next frames show a pack running (AC-40.03).
+    func dragStarted() {
+        dragging = true; dragMoved = false; dragOrigin = window?.frame.origin
         motion.dragStartedAt = Date().timeIntervalSinceReferenceDate
     }
-    private func dragEnded() {
+    func dragEnded() {
         dragging = false; dragOrigin = nil
+        if dragMoved { dragMoved = false; savePosition() }
         guard motion.drag != nil else { return }
         motion.drag = nil; updateState()
     }
     private func savePosition() {
         guard let window, let screen = window.screen ?? display(), let preferences else { return }
-        let origin = window.frame.origin
-        preferences.update { $0.petPositions[Self.key(for: screen)] = .init(x: origin.x, y: origin.y) }
+        let origin = window.frame.origin, key = Self.key(for: screen)
+        preferences.update { $0.petPositions[key] = .init(x: origin.x, y: origin.y); $0.petDisplay = key }
     }
 
     // MARK: Cues
@@ -239,7 +263,7 @@ import LunletCore
             motion.previousPose = motion.pose; motion.pose = state.pose; motion.poseChangedAt = now
         }
         if case .dog(let shown) = appearance, shown != palette { appearance = .dog(palette) }
-        let animating = window?.isVisible == true && available() && motionAllowed()
+        let animating = window?.isVisible == true && displayAvailable && motionAllowed()
         host.update(state, appearance: appearance, input: motion, animating: animating)
     }
 

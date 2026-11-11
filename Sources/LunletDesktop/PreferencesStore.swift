@@ -54,11 +54,14 @@ struct LunletPreferences: Codable, Equatable {
     var petCoat: PetCoat = .golden
     /// Keyed by display number, so each display keeps its own place.
     var petPositions: [String: PetPosition] = [:]
+    /// The display number the pet was last placed on, so a relaunch brings it back there while it is connected.
+    var petDisplay: String?
     /// The chosen pet pack as `source/folder` (AC-40.01); nil is the built-in dog.
     var petPack: String?
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, presentation, skinID, accentOverrides, accentHex, historyDays, providers, channel, petCoat, petPositions, petPack
+        case schemaVersion, presentation, skinID, accentOverrides, accentHex, historyDays, providers, channel, petCoat, petPositions, petDisplay,
+             petPack
     }
     init() {}
     init(from decoder: any Decoder) throws {
@@ -75,6 +78,7 @@ struct LunletPreferences: Codable, Equatable {
         providers = try data.decodeIfPresent([AgentProvider].self, forKey: .providers) ?? [.codex]
         petCoat = try data.decodeIfPresent(PetCoat.self, forKey: .petCoat) ?? .golden
         petPositions = try data.decodeIfPresent([String: PetPosition].self, forKey: .petPositions) ?? [:]
+        petDisplay = try data.decodeIfPresent(String.self, forKey: .petDisplay)
         petPack = try data.decodeIfPresent(String.self, forKey: .petPack)
         let savedChannel = try data.decodeIfPresent(String.self, forKey: .channel) ?? "feishu"
         if savedChannel == "whatsapp" { channel = .feishu }
@@ -90,6 +94,7 @@ struct LunletPreferences: Codable, Equatable {
         try data.encode(channel, forKey: .channel)
         try data.encode(petCoat, forKey: .petCoat)
         if !petPositions.isEmpty { try data.encode(petPositions, forKey: .petPositions) }
+        try data.encodeIfPresent(petDisplay, forKey: .petDisplay)
         try data.encodeIfPresent(petPack, forKey: .petPack)
     }
     func validate() throws {
@@ -103,6 +108,7 @@ struct LunletPreferences: Codable, Equatable {
         guard petPositions.count <= 16, petPositions.values.allSatisfy({ $0.x.isFinite && $0.y.isFinite }) else {
             throw PreferenceFailure.invalidValue
         }
+        if let petDisplay { guard !petDisplay.isEmpty, petDisplay.count <= 32 else { throw PreferenceFailure.invalidValue } }
         if let petPack { guard PetPackReference(key: petPack) != nil else { throw PreferenceFailure.invalidValue } }
         guard (1...7).contains(historyDays), !providers.isEmpty,
               Set(providers).count == providers.count,
@@ -146,7 +152,7 @@ struct LunletPreferences: Codable, Equatable {
     private static func decode(_ data: Data) throws -> LunletPreferences {
         guard data.count <= 65_536 else { throw PreferenceFailure.oversized }
         let fields: Set<String> = ["schemaVersion", "presentation", "skinID", "accentOverrides", "accentHex", "historyDays",
-                                   "providers", "channel", "petCoat", "petPositions", "petPack"]
+                                   "providers", "channel", "petCoat", "petPositions", "petDisplay", "petPack"]
         guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               Set(object.keys).isSubset(of: fields) else { throw PreferenceFailure.invalidValue }
         return try JSONDecoder().decode(LunletPreferences.self, from: data)
