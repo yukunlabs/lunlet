@@ -56,9 +56,10 @@ enum PanelStyle {
         /// Inline chart and copy buttons keep the 20 x 20 minimum within dense rows.
         static let inlineButton: CGFloat = 20
         /// Both provider cards: a title line, a secondary line, the limits group and a footnote, inside the card
-        /// padding. Codex fills the group with a figure line, the meter and a reset line; Claude with two compact
-        /// windows, each a secondary line over its meter, so the cards match and switching tabs never shifts.
-        static let limitsGroup: CGFloat = line + Grid.row + meterHeight + Grid.row + secondaryLine
+        /// padding. Codex fills the group with a figure line, the meter, a reset line and the five-hour line
+        /// (AC-04.15); Claude with the same figure, meter and reset line over a blank line, so the cards match
+        /// and switching tabs never shifts.
+        static let limitsGroup: CGFloat = line + Grid.row + meterHeight + Grid.row + secondaryLine + Grid.row + secondaryLine
         static let cardHeight: CGFloat = 2 * Grid.margin + line + Grid.row + secondaryLine + Grid.group + limitsGroup
             + Grid.group + secondaryLine
         /// One compact Claude window: its line, a tight gap and the meter; two with a tight gap fill a limits group.

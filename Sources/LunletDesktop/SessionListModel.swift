@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
 // Refs: US-15, AC-15.06; US-13, AC-13.09.
+// Refs: US-41, AC-41.05.
 // Refs: US-13, AC-13.07.
 // Refs: US-02, AC-02.02, AC-02.03, AC-02.05; US-03, AC-03.01, AC-03.02, AC-03.03, AC-03.04.
 // Refs: US-13, AC-13.01, AC-13.02, AC-13.03, AC-13.04, AC-13.05, AC-13.06; US-12, AC-12.04.
@@ -25,6 +26,9 @@ import LunletCore
     /// The conversation a recent cue named, published when the panel opens soon after so the panel shows it (AC-13.09).
     struct CueFocus: Equatable { let sessionID: UUID; let provider: SessionProvider; let sequence: Int }
     @Published private(set) var cueFocus: CueFocus?
+    /// The agent's page an activated allowance notification asked for (AC-41.05), shown like a cue's focus.
+    struct ProviderFocus: Equatable { let provider: SessionProvider; let sequence: Int }
+    @Published private(set) var providerFocus: ProviderFocus?
     /// A cue keeps its conversation for opening while visible and this long after it hides.
     nonisolated static let cueFocusGrace: TimeInterval = 15
     private var pendingFocus: (sessionID: UUID, provider: SessionProvider, until: TimeInterval)?
@@ -66,6 +70,8 @@ import LunletCore
         let token: String
     }
     private var cueActivity: [Binding: CueActivity] = [:]
+    /// Each binding's entries into a waiting state, so a record read again is the same entry and a later wait is a new one (AC-13.10).
+    private var waitingEntries: [Binding: (count: Int, waiting: Bool)] = [:]
     private var shown: [TaskCue] = []
     private var expiry: Task<Void, Never>?
     private var displayMonitor: DisplayStateMonitor?
@@ -216,6 +222,7 @@ import LunletCore
     private func cue(for snapshot: SessionSnapshot, binding: Binding) -> TaskCue? {
         guard snapshot.parentSessionID == nil, snapshot.hasConfirmedActivity else { return nil }
         let observation = snapshot.observation
+        if let waiting = waitingCue(for: snapshot, binding: binding) { return waiting }
         let phase: TaskCue.Phase
         let turn: String
         if snapshot.inputPending, let input = snapshot.inputActivityID {
@@ -247,6 +254,32 @@ import LunletCore
         let title = labelsAgents ? snapshot.provider.shortName + " · " + notice.project : notice.project
         return .init(sessionID: observation.sessionID.uuidString, connectionID: observation.connectionID.uuidString,
                      turnID: turn, title: title, phase: phase, inputActivityID: inputKey,
+                     context: snapshot.localPreview ?? "Task " + token)
+    }
+
+    /// A Needs you cue when the session enters a question or approval wait; nil otherwise. The entry number keeps
+    /// one cue per entry (AC-13.10), and the presentation drops baselines and replays (AC-13.04).
+    private func waitingCue(for snapshot: SessionSnapshot, binding: Binding) -> TaskCue? {
+        let observation = snapshot.observation
+        let attention: TaskCue.Attention?
+        switch observation.phase {
+        case .question: attention = .question
+        case .approval: attention = .approval
+        default: attention = nil
+        }
+        var entries = waitingEntries[binding] ?? (count: 0, waiting: false)
+        guard let attention else {
+            entries.waiting = false; waitingEntries[binding] = entries
+            return nil
+        }
+        if !entries.waiting { entries.count += 1; entries.waiting = true }
+        waitingEntries[binding] = entries
+        let turn = snapshot.turnID.flatMap { $0.isEmpty ? nil : $0 } ?? "waiting"
+        let notice = SessionNotice.prepare(snapshot)
+        let title = labelsAgents ? snapshot.provider.shortName + " · " + notice.project : notice.project
+        let token = Self.cueToken(session: observation.sessionID, turn: turn, input: nil)
+        return .init(sessionID: observation.sessionID.uuidString, connectionID: observation.connectionID.uuidString,
+                     turnID: turn, title: title, phase: .waiting(attention), inputActivityID: "wait-\(entries.count)",
                      context: snapshot.localPreview ?? "Task " + token)
     }
 
@@ -285,6 +318,11 @@ import LunletCore
         cueFocus = CueFocus(sessionID: pending.sessionID, provider: pending.provider, sequence: focusSequence)
     }
 
+    func focus(provider: SessionProvider) {
+        guard !closed else { return }
+        focusSequence += 1
+        providerFocus = .init(provider: provider, sequence: focusSequence)
+    }
     func select(_ id: UUID) {
         if !closed, (sessions + history).contains(where: { $0.observation.sessionID == id }) {
             selectedID = id; navigationUnavailableFor = nil

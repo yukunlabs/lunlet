@@ -85,9 +85,9 @@ struct PanelPlacementTests {
     // a tab row below the band; every display keeps the same page budget, so exactly three whole rows show.
     @Test func panelHeightKeepsThePageBudgetWithTheHeaderInTheNotchBand() {
         let layout = PanelStyle.Layout.self
-        #expect(layout.panelHeight(notchHeight: 32, tabRow: false) == 397)
-        #expect(layout.panelHeight(notchHeight: 32, tabRow: true) == 425)
-        #expect(layout.panelHeight(notchHeight: nil, tabRow: false) == 393 && layout.panelHeight(notchHeight: nil, tabRow: true) == 393)
+        #expect(layout.panelHeight(notchHeight: 32, tabRow: false) == 417)
+        #expect(layout.panelHeight(notchHeight: 32, tabRow: true) == 445)
+        #expect(layout.panelHeight(notchHeight: nil, tabRow: false) == 413 && layout.panelHeight(notchHeight: nil, tabRow: true) == 413)
         for notch in [CGFloat(26), 32, 40] {
             let height = layout.panelHeight(notchHeight: notch, tabRow: false)
             #expect(height - notch - layout.headerGap - layout.footerHeight == layout.pageHeight)
@@ -103,7 +103,7 @@ struct PanelPlacementTests {
                                      visibleFrame: .init(x: 0, y: 0, width: 1512, height: 950), safeTop: 32, notch: notch)
             let frame = PanelPlacement.panel(tabRow: true, screen: screen)
             #expect(frame.width == PanelPlacement.panelWidth + 2 * NotchSurfaceGeometry.shoulderRadius)
-            #expect(frame.midX == notch.midX && frame.maxY == screen.frame.maxY && frame.height == 425)
+            #expect(frame.midX == notch.midX && frame.maxY == screen.frame.maxY && frame.height == 445)
             let band = try #require(PanelPlacement.band(panel: frame, screen: screen))
             let body = frame.insetBy(dx: NotchSurfaceGeometry.shoulderRadius, dy: 0)
             #expect(band.height == 32 && band.leading == notch.minX - body.minX && band.trailing == body.maxX - notch.maxX)
@@ -115,7 +115,7 @@ struct PanelPlacementTests {
         let plain = PanelScreen(frame: .init(x: 0, y: 0, width: 1920, height: 1080),
                                 visibleFrame: .init(x: 0, y: 0, width: 1920, height: 1056), safeTop: 0)
         let simple = PanelPlacement.panel(tabRow: true, screen: plain)
-        #expect(simple.width == PanelPlacement.panelWidth && simple.maxY == 1056 && simple.height == 393)
+        #expect(simple.width == PanelPlacement.panelWidth && simple.maxY == 1056 && simple.height == 413)
         #expect(PanelPlacement.band(panel: simple, screen: plain) == nil)
     }
 }

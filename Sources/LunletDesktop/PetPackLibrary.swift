@@ -16,6 +16,10 @@ struct DecodedImage: @unchecked Sendable { let image: CGImage }
     @Published var chosenProblem: String?
     let lunletDirectory: URL
     let codexDirectory: URL
+    /// The Petdex gallery; `petdex install` writes every pet into Codex's folder as well, so it is listed from there (AC-40.01).
+    static let galleryURL = URL(string: "https://petdex.dev")!
+    static let pickerHelp = "Packs use Codex's pet format: a pet.json beside a sprite sheet. Packs in ~/.codex/pets are listed too "
+        + "and only read; a pet installed with petdex install appears there as well."
 
     init(lunletDirectory: URL? = nil, codexDirectory: URL? = nil) {
         self.lunletDirectory = lunletDirectory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -35,6 +39,8 @@ struct DecodedImage: @unchecked Sendable { let image: CGImage }
     func entry(for reference: PetPackReference) -> PetPackEntry? { entries.first { $0.reference == reference } }
     var validEntries: [PetPackEntry] { entries.filter { $0.pack != nil } }
     var invalidEntries: [PetPackEntry] { entries.filter { $0.failure != nil } }
+    /// Opens the Petdex gallery in the browser (AC-40.01).
+    func openGallery(with open: (URL) -> Void = { NSWorkspace.shared.open($0) }) { open(Self.galleryURL) }
     /// Creates Lunlet's pets folder when needed and shows it in the Finder, so a pack can be dropped in.
     func openLunletFolder() {
         try? FileManager.default.createDirectory(at: lunletDirectory, withIntermediateDirectories: true,

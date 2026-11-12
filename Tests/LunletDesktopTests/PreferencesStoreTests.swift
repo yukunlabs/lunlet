@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
 // Refs: US-16, AC-16.01; US-17, AC-17.08; US-18, AC-18.01; US-19, AC-19.01; US-20, AC-20.01;
-// Refs: US-21, AC-21.01; US-26, AC-26.01, AC-26.02; US-31, AC-31.01.
+// Refs: US-21, AC-21.01, AC-21.04, AC-21.05; US-26, AC-26.01, AC-26.02; US-31, AC-31.01.
+// Refs: US-13, AC-13.11; US-41, AC-41.01, AC-41.02.
 import Foundation
 import Testing
 @testable import LunletDesktop
@@ -15,6 +16,9 @@ import Testing
         var value = store.value
         value.historyDays = 7; value.presentation = .menuBar; value.skinID = "lantern"
         value.accentHex = "#A89BE8"; value.providers = [.codex, .claude]; value.channel = .telegram
+        // AC-21.04, AC-21.05, AC-13.11, AC-41.01, AC-41.02: the entry text, the sound and the notification choices survive too.
+        value.menuBarAllowance = .percentAndReset; value.menuBarAllowanceBelow = 30; value.needsYouSound = true
+        value.allowanceNotifications = true; value.allowanceWarnBelow = 10; value.allowanceResetNotices = true
         try store.apply(value)
         let reopened = PreferencesStore(defaults: defaults)
         #expect(reopened.value == value)
@@ -67,6 +71,9 @@ import Testing
                      // The catalog never accepts a dotted identifier, so a saved choice cannot name one.
                      Data(#"{"schemaVersion":1,"skinID":"custom.skin"}"#.utf8),
                      Data(#"{"schemaVersion":1,"providers":[]}"#.utf8),
+                     // AC-21.05 and AC-41.02 offer fixed levels; a saved level outside them is not a choice.
+                     Data(#"{"schemaVersion":1,"menuBarAllowanceBelow":25}"#.utf8),
+                     Data(#"{"schemaVersion":1,"allowanceWarnBelow":50}"#.utf8),
                      Data(#"{"schemaVersion":1,"id":"wrong-file","kind":"vine"}"#.utf8)] {
             defaults.set(data, forKey: "preferences.current")
             let recovered = PreferencesStore(defaults: defaults)

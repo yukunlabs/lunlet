@@ -7,9 +7,9 @@ import Testing
 
 struct PetPoseRuleTests {
     private func snapshot(_ phase: SessionPhase, id: UUID = UUID(), provider: SessionProvider = .codex, ended: Bool = false,
-                          parent: UUID? = nil, confirmed: Bool = true) -> SessionSnapshot {
+                          parent: UUID? = nil, confirmed: Bool = true, outcome: TaskCue.Outcome = .unknown) -> SessionSnapshot {
         SessionSnapshot(observation: .init(sessionID: id, connectionID: UUID(), liveness: ended ? .ended : confirmed ? .alive : .unverified, phase: phase),
-                        project: "lunlet", activityConfirmed: confirmed, parentSessionID: parent, provider: provider)
+                        project: "lunlet", outcome: outcome, activityConfirmed: confirmed, parentSessionID: parent, provider: provider)
     }
     private func cue(for snapshot: SessionSnapshot, outcome: TaskCue.Outcome = .succeeded) -> TaskCue {
         TaskCue(sessionID: snapshot.observation.sessionID.uuidString, connectionID: snapshot.observation.connectionID.uuidString,
@@ -33,16 +33,30 @@ struct PetPoseRuleTests {
         #expect(PetPose.waiting.bubble == "?")
     }
 
-    @Test func childTasksEndedSessionsAndFailedCuesDoNotDriveThePose() {
+    @Test func aFailedTurnShowsFailedBelowWaitingAndAboveDoneForTheCueDuration() {
+        // AC-39.03: Waiting over Failed over Done over Working; the Failed cue lasts as long as it is presented (AC-13.02).
+        let failed = snapshot(.idle(completedTurnID: "t"), outcome: .failed), running = snapshot(.running, provider: .claude), waiting = snapshot(.approval)
+        let state = PetPoseRule.state(sessions: [failed, running], cue: cue(for: failed, outcome: .failed), monitoringAvailable: true)
+        #expect(state.pose == .failed && state.sessionID == failed.observation.sessionID)
+        #expect(state.pose.bubble == "!" && state.pose.title == "Failed" && state.summary == "lunlet · Codex · Failed")
+        #expect(state.sessionCount == 2 && state.waitingCount == 0 && state.runningCount == 1)
+        #expect(PetPoseRule.state(sessions: [failed, running, waiting], cue: cue(for: failed, outcome: .failed), monitoringAvailable: true).pose == .waiting)
+        // Without the cue the failed session is idle again; a stopped turn is neither Done nor Failed.
+        #expect(PetPoseRule.state(sessions: [failed], cue: nil, monitoringAvailable: true).pose == .idle)
+        #expect(PetPoseRule.state(sessions: [failed], cue: cue(for: failed, outcome: .stopped), monitoringAvailable: true).pose == .idle)
+    }
+
+    @Test func childTasksEndedSessionsAndStoppedCuesDoNotDriveThePose() {
         let parent = snapshot(.idle(completedTurnID: "t"))
         let child = snapshot(.approval, parent: parent.observation.sessionID)
         let ended = snapshot(.ended, ended: true)
         let unconfirmed = snapshot(.running, confirmed: false)
         let state = PetPoseRule.state(sessions: [parent, child, ended, unconfirmed], cue: nil, monitoringAvailable: true)
         #expect(state.pose == .idle && state.sessionCount == 1 && state.waitingCount == 0)
-        // A failed or stopped turn is not a Done pose, and a cue for an unknown session is ignored.
-        #expect(PetPoseRule.state(sessions: [parent], cue: cue(for: parent, outcome: .failed), monitoringAvailable: true).pose == .idle)
+        // A stopped turn is not a Done pose, and a cue for an unknown or ended session is ignored, failed or not.
+        #expect(PetPoseRule.state(sessions: [parent], cue: cue(for: parent, outcome: .stopped), monitoringAvailable: true).pose == .idle)
         #expect(PetPoseRule.state(sessions: [parent], cue: cue(for: ended), monitoringAvailable: true).pose == .idle)
+        #expect(PetPoseRule.state(sessions: [parent], cue: cue(for: ended, outcome: .failed), monitoringAvailable: true).pose == .idle)
     }
 
     @Test func accessibilityLabelNamesCountsInWords() {
@@ -54,5 +68,8 @@ struct PetPoseRuleTests {
                 == "Lunlet: three sessions, one just finished")
         #expect(PetState(pose: .asleep, sessionID: nil, sessionCount: 0, waitingCount: 0, runningCount: 0, summary: nil).accessibilityLabel
                 == "Lunlet: no sessions")
+        // AC-39.07: a failed turn is named too.
+        #expect(PetState(pose: .failed, sessionID: nil, sessionCount: 2, waitingCount: 0, runningCount: 1, summary: nil).accessibilityLabel
+                == "Lunlet: two sessions, one turn failed")
     }
 }

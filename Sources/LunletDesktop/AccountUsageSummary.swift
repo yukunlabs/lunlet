@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
 // Refs: US-16, AC-16.02; US-18, AC-18.02.
-// Refs: US-04, AC-04.01, AC-04.02, AC-04.03, AC-04.06, AC-04.07, AC-04.08, AC-04.09, AC-04.10, AC-04.12.
+// Refs: US-04, AC-04.01, AC-04.02, AC-04.03, AC-04.06, AC-04.07, AC-04.08, AC-04.09, AC-04.10, AC-04.12, AC-04.15.
 // Refs: US-24, AC-24.01, AC-24.02; US-03, AC-03.09.
 import SwiftUI
 import LunletCore
@@ -72,6 +72,22 @@ struct AccountUsageSummary: View {
                 }
                 .font(PanelStyle.Text.secondary).foregroundStyle(.secondary)
                 .frame(height: PanelStyle.Layout.secondaryLine)
+                // The five-hour window below the weekly reset line, by its duration; never combined (AC-04.15). An account
+                // whose read reports no such window leaves the line blank; the group keeps its height.
+                if let fiveHour = AccountUsagePresentation.fiveHourLine(in: snapshot, now: now) {
+                    HStack {
+                        Text("5-hour window")
+                        Text(fiveHour.left).foregroundStyle(.primary)
+                        Spacer(minLength: PanelStyle.Space.tight)
+                        Text(fiveHour.reset)
+                    }
+                    .font(PanelStyle.Text.secondary).foregroundStyle(.secondary)
+                    .frame(height: PanelStyle.Layout.secondaryLine)
+                    .help("Codex's five-hour window, reported beside the weekly one. The meter, the vine and the forecast stay weekly.")
+                    .accessibilityElement(children: .combine)
+                } else {
+                    Color.clear.frame(height: PanelStyle.Layout.secondaryLine).accessibilityHidden(true)
+                }
             }
             .padding(.top, PanelStyle.Grid.group)
             .contentShape(Rectangle())
@@ -104,7 +120,7 @@ struct AccountUsageSummary: View {
     private var snapshot: AccountLimitsSnapshot? {
         model.displayedSnapshot
     }
-    private var weekly: WeeklyAllowance? { snapshot.flatMap(AccountUsagePresentation.weekly) }
+    private var weekly: AllowanceWindow? { snapshot.flatMap(AccountUsagePresentation.weekly) }
     private var credits: AccountCredits? {
         guard let buckets = snapshot?.buckets else { return nil }
         if let codex = buckets.first(where: { $0.id == "codex" }) { return codex.credits }
@@ -123,6 +139,7 @@ struct AccountUsageSummary: View {
             return source + (model.state == .unavailable ? " The last account read failed; Refresh can try again." : "")
         }
         return source + " Updated " + snapshot.observedAt.formatted(date: .abbreviated, time: .shortened)
+            + (AccountUsagePresentation.fiveHour(in: snapshot) == nil ? " Codex reports no five-hour window for this account." : "")
     }
     private var resetHelp: String {
         guard let resets = snapshot?.earnedResets else { return "Reset entitlements unavailable." }

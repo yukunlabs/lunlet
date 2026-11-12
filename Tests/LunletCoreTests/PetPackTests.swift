@@ -77,6 +77,8 @@ struct PetPackTests {
     @Test func posesMapToRowsAndLoopByTheirFrameDurations() {
         #expect(PetSpriteRule.row(for: .asleep) == .idle && PetSpriteRule.row(for: .idle) == .idle && PetSpriteRule.row(for: .working) == .running)
         #expect(PetSpriteRule.row(for: .waiting) == .waiting && PetSpriteRule.row(for: .done) == .review)
+        // AC-40.03: Failed loops the failed row.
+        #expect(PetSpriteRule.row(for: .failed) == .failed)
         var cue = PetSpriteCue(pose: .idle, poseChangedAt: 100)
         #expect(PetSpriteRule.frame(at: 100, cue: cue) == PetSpriteFrame(row: 0, column: 0))
         #expect(PetSpriteRule.frame(at: 100.3, cue: cue) == PetSpriteFrame(row: 0, column: 1))

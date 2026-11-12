@@ -207,13 +207,14 @@ public struct PetSpriteCue: Equatable, Sendable {
 
 /// Maps Lunlet's poses and moments onto a pack's rows (AC-40.03, AC-40.04).
 public enum PetSpriteRule {
-    /// The standard row behind a pose: Asleep and Idle use idle, Working running, Waiting waiting, Done review.
+    /// The standard row behind a pose: Asleep and Idle use idle, Working running, Waiting waiting, Done review, Failed failed.
     public static func row(for pose: PetPose) -> PetSpriteRow {
         switch pose {
         case .asleep, .idle: .idle
         case .working: .running
         case .waiting: .waiting
         case .done: .review
+        case .failed: .failed
         }
     }
     /// The look-direction index, 0 up and clockwise in 22.5° steps, or nil inside the deadzone.

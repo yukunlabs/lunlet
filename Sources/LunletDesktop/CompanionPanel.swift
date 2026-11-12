@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
 // Refs: US-17, AC-17.08; US-24, AC-24.01, AC-24.02, AC-24.03; US-13, AC-13.09.
+// Refs: US-41, AC-41.05.
 // Refs: US-02, AC-02.07; US-22, AC-22.01, AC-22.03.
 // Refs: US-16, AC-16.02; US-18, AC-18.01; US-20, AC-20.02; US-31, AC-31.01, AC-31.03.
 // Refs: US-01, AC-01.01, AC-01.02, AC-01.04, AC-01.06, AC-01.08; US-02, AC-02.05.
@@ -124,6 +125,12 @@ struct CompanionPanel: View {
             guard let focus, selected.contains(focus.provider) else { return }
             connectionExpanded = false
             historyShown[focus.provider] = sessions.history.contains { $0.observation.sessionID == focus.sessionID }
+            if hasTabs { select(tab: focus.provider) } else { page = .home }
+        }
+        // An activated allowance notification opens that agent's page (AC-41.05).
+        .onChange(of: sessions.providerFocus) { _, focus in
+            guard let focus, selected.contains(focus.provider) else { return }
+            connectionExpanded = false
             if hasTabs { select(tab: focus.provider) } else { page = .home }
         }
         .font(PanelStyle.Text.secondary).tint(accent)

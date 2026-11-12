@@ -64,6 +64,9 @@ struct PetMotionTests {
         #expect(!PetMotion.lively(at: calm, input: input))
         var done = PetMotionInput(); done.pose = .done; done.poseChangedAt = calm - 100
         #expect(PetMotion.lively(at: calm, input: done))
+        // A Failed dog has no hop and holds its tail still, so nothing quick happens between blinks (AC-39.06).
+        var failed = done; failed.pose = .failed
+        #expect(!PetMotion.lively(at: calm, input: failed))
         let blinks = PetMotion.blinkMoments(inSegmentOf: 800)
         #expect((1...2).contains(blinks.count) && blinks.allSatisfy { $0 >= 800 && $0 < 804 })
         #expect(PetMotion.blink(at: blinks[0] + PetMotion.blinkDuration / 2) > 0.99)

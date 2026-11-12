@@ -73,6 +73,44 @@ import LunletCore
         await limits.shutdown()
     }
 
+    // Refs: US-21, AC-21.04, AC-21.05.
+    @Test func menuEntryShowsTheAllowanceTextOnlyAsChosen() async throws {
+        _ = NSApplication.shared
+        let suite = "com.lunlet.test.menu.\(UUID())"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let preferences = PreferencesStore(defaults: defaults)
+        preferences.update { $0.providers = [.claude]; $0.presentation = .menuBar }
+        let fixture = try ClaudeLimitsFixture(); defer { fixture.remove() }
+        _ = try fixture.connection.connect()
+        let t = Int(Date().timeIntervalSince1970)
+        try fixture.write(state: "lunlet-claude-limits 1\nseven_day 30 \(t + 33 * 3_600 + 60) \(t - 5)\n")
+        let limits = ClaudePlanLimitsModel(service: fixture.connection)
+        let companion = CompanionPanelController(), sessions = SessionListModel()
+        let menu = MenuBarController(panel: companion, sessions: sessions, claudeLimits: limits, preferences: preferences)
+        defer { menu.shutdown(); sessions.shutdown(); companion.shutdown() }
+        func title() -> String { menu.item?.button?.title ?? "" }
+        limits.setActive(true)
+        try await ClaudeLimitsFixture.settle(limits) { limits.limits?.sevenDay != nil }
+        // Off by default: the entry is the lettering and the waiting count alone (AC-21.02).
+        #expect(title() == "")
+        preferences.update { $0.menuBarAllowance = .percent }
+        #expect(title() == " 70%")
+        preferences.update { $0.menuBarAllowance = .percentAndReset }
+        #expect(title() == " 70% · 1d 9h")
+        #expect(menu.item?.button?.toolTip?.contains("70%") == true)
+        // Only below hides the text above the level, and the waiting count keeps its place before the text.
+        preferences.update { $0.menuBarAllowanceBelow = 50 }
+        #expect(title() == "")
+        preferences.update { $0.menuBarAllowanceBelow = nil }
+        sessions.monitoringConnected(partial: false)
+        sessions.receive(.init(observation: .init(sessionID: UUID(), connectionID: UUID(),
+            liveness: .unverified, phase: .approval), project: "Synthetic", title: "Waiting",
+            activityConfirmed: true), origin: .snapshot)
+        #expect(title() == " 1  70% · 1d 9h")
+        await limits.shutdown()
+    }
+
     @Test func menuCountsConfirmedRuntimeWaitingAndKeepsUnknownCountsDistinct() throws {
         _ = NSApplication.shared
         let companion = CompanionPanelController(), sessions = SessionListModel()

@@ -5,14 +5,15 @@ import Foundation
 
 /// What the desktop pet shows, chosen by precedence over every current conversation (AC-39.03).
 public enum PetPose: String, Equatable, Sendable, CaseIterable {
-    case asleep, idle, working, done, waiting
-    /// The glyph in the bubble above the dog; only two poses carry one (AC-39.04).
+    case asleep, idle, working, done, waiting, failed
+    /// The glyph in the bubble above the dog; only three poses carry one (AC-39.04).
     public var bubble: String? {
-        switch self { case .waiting: "?"; case .done: "✓"; default: nil }
+        switch self { case .waiting: "?"; case .done: "✓"; case .failed: "!"; default: nil }
     }
     public var title: String {
         switch self {
         case .asleep: "Asleep"; case .idle: "Idle"; case .working: "Working"; case .done: "Done"; case .waiting: "Waiting for you"
+        case .failed: "Failed"
         }
     }
 }
@@ -47,6 +48,7 @@ public struct PetState: Equatable, Sendable {
         parts.append(sessionCount == 0 ? "no sessions" : "\(Self.spelled(sessionCount)) \(sessionCount == 1 ? "session" : "sessions")")
         if waitingCount > 0 { parts.append("\(Self.spelled(waitingCount)) waiting for you") }
         else if pose == .done { parts.append("one just finished") }
+        else if pose == .failed { parts.append("one turn failed") }
         else if runningCount > 0 { parts.append("\(Self.spelled(runningCount)) working") }
         return "Lunlet: " + parts.joined(separator: ", ")
     }
@@ -57,8 +59,8 @@ public struct PetState: Equatable, Sendable {
 }
 
 public enum PetPoseRule {
-    /// Waiting over Done over Working over Idle over Asleep; only current conversations count (no child tasks,
-    /// no ended sessions). `cue` is the finish cue the list model is presenting, which lasts the AC-13.02 duration.
+    /// Waiting over Failed over Done over Working over Idle over Asleep; only current conversations count (no child
+    /// tasks, no ended sessions). `cue` is the finish cue the list model is presenting, which lasts the AC-13.02 duration.
     public static func state(sessions: [SessionSnapshot], cue: TaskCue?, monitoringAvailable: Bool) -> PetState {
         let current = sessions.filter { $0.parentSessionID == nil && !$0.isEnded && $0.hasConfirmedActivity }
         let waiting = current.filter(\.awaitsUser)
@@ -68,9 +70,10 @@ public enum PetPoseRule {
             return .init(pose: .waiting, sessionID: first.observation.sessionID, sessionCount: counts.0,
                          waitingCount: counts.1, runningCount: counts.2, summary: summary(first))
         }
-        if let cue, case .finished(let outcome) = cue.phase, outcome == .succeeded || outcome == .unknown,
+        if let cue, case .finished(let outcome) = cue.phase, outcome != .stopped,
            let finished = current.first(where: { $0.observation.sessionID.uuidString == cue.sessionID }) {
-            return .init(pose: .done, sessionID: finished.observation.sessionID, sessionCount: counts.0,
+            // A failed turn reads Failed, a succeeded or unknown one Done; a stopped turn is neither.
+            return .init(pose: outcome == .failed ? .failed : .done, sessionID: finished.observation.sessionID, sessionCount: counts.0,
                          waitingCount: counts.1, runningCount: counts.2, summary: summary(finished))
         }
         if let first = running.first {

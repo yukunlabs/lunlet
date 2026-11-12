@@ -251,7 +251,9 @@ private struct FixedUsage: LocalUsageReading {
         let measured = claudePage(limits, history: history, sessions: sessions, hover: hover)
         // Both windows fit the Codex card's limits group, so switching tabs never changes the card's height.
         #expect(abs(measured.card - codex.fittingSize.height) <= 0.5, "\(name): card \(measured.card) of \(codex.fittingSize.height)")
-        #expect(2 * PanelStyle.Layout.compactWindow + PanelStyle.Space.tight == PanelStyle.Layout.limitsGroup)
+        // The group grew by the Codex card's five-hour line (AC-04.15); the Claude card keeps a blank line there.
+        #expect(2 * PanelStyle.Layout.compactWindow + PanelStyle.Space.tight + PanelStyle.Grid.row + PanelStyle.Layout.secondaryLine
+                == PanelStyle.Layout.limitsGroup)
         #expect(measured.page <= available, "\(name): content \(measured.page) of \(available)")
         // Exactly three whole rows: a fourth may reveal only its blank top inset, never a sliver of text.
         #expect(available - measured.page + PanelStyle.Layout.listVerticalInset <= PanelStyle.Layout.rowHighlightInset + 0.5)

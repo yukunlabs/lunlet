@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
-// Refs: US-04, AC-04.01, AC-04.03, AC-04.07, AC-04.08, AC-04.09.
+// Refs: US-04, AC-04.01, AC-04.03, AC-04.07, AC-04.08, AC-04.09, AC-04.15.
 import AppKit
 import SwiftUI
 import Foundation
@@ -26,6 +26,35 @@ import Testing
             #expect(weekly.remainingPercent == 77)
             #expect(weekly.resetsAt == Date(timeIntervalSince1970: 1_800_000_600))
         }
+    }
+
+    @Test func fiveHourWindowIsIdentifiedByDurationAndItsLineStaysUnknownWithoutIt() throws {
+        // AC-04.15: the five-hour window is found by its 300-minute duration in either position, never by position.
+        var window: AllowanceWindow?, last: AccountLimitsSnapshot?
+        for slot in ["primary", "secondary"] {
+            let other = slot == "primary" ? "secondary" : "primary"
+            let value = try snapshot("""
+            {"rateLimits":{"limitName":"Synthetic allowance","\(slot)":{"usedPercent":40,"windowDurationMins":300,"resetsAt":1800003600},"\(other)":{"usedPercent":23,"windowDurationMins":10080}}}
+            """)
+            window = try #require(AccountUsagePresentation.fiveHour(in: value)); last = value
+            #expect(window?.remainingPercent == 60)
+            #expect(window?.resetsAt == Date(timeIntervalSince1970: 1_800_003_600))
+            // The weekly window is untouched by the five-hour one (AC-04.07).
+            #expect(AccountUsagePresentation.weekly(in: value)?.remainingPercent == 77)
+        }
+        let weeklyOnly = try snapshot(#"{"rateLimits":{"primary":{"usedPercent":25,"windowDurationMins":10080}}}"#)
+        #expect(AccountUsagePresentation.fiveHour(in: weeklyOnly) == nil)
+        // The line reads percent left and the reset in the shared wording (AC-04.01).
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let line = try #require(AccountUsagePresentation.fiveHourLine(in: last, now: now))
+        #expect(line.left == "60% left" && line.reset == "Resets in 1h")
+        // A successful read that reports no five-hour window leaves the line out: the account has none.
+        #expect(AccountUsagePresentation.fiveHourLine(in: weeklyOnly, now: now) == nil)
+        // Without any successful read the line stays unknown, as the weekly line does (AC-04.03).
+        let unknown = try #require(AccountUsagePresentation.fiveHourLine(in: nil, now: now))
+        #expect(unknown.left == "—" && unknown.reset == "Reset —")
+        let due = try #require(AccountUsagePresentation.fiveHourLine(in: last, now: Date(timeIntervalSince1970: 1_800_003_601)))
+        #expect(due.reset == "Reset due")
     }
 
     @Test func absentOrAmbiguousWeeklyWindowsStayUnavailable() throws {
@@ -121,9 +150,10 @@ private actor SyntheticAccountCardReader: CodexAccountReading {
     let hover = UsageHoverPanelController()
     let hosting = NSHostingView(rootView: AccountUsageSummary(model: model, hoverPanel: hover)
         .frame(width: 446).background(Color(red: 0.13, green: 0.13, blue: 0.14)).environment(\.colorScheme, .dark))
-    hosting.frame = .init(x: 0, y: 0, width: 446, height: 160)
+    hosting.frame = .init(x: 0, y: 0, width: 446, height: PanelStyle.Layout.cardHeight)
     hosting.layoutSubtreeIfNeeded()
-    #expect(hosting.fittingSize.height <= 160)
+    // The card holds its budget with the five-hour line (AC-04.15).
+    #expect(hosting.fittingSize.height <= PanelStyle.Layout.cardHeight)
     let sessions = SessionListModel(displayAvailable: { false }, elapsed: { 0 }, presenter: LayoutCueSink())
     for index in 0..<3 {
         let session = SessionSnapshot(observation: .init(sessionID: UUID(), connectionID: UUID(), liveness: .alive, phase: .running),

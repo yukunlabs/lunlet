@@ -28,7 +28,7 @@ struct PetPalette: Equatable {
     }
 }
 
-/// The dog as flat vector shapes in a 220 × 190 design space, scaled to any size (AC-39.06). Poses are the five
+/// The dog as flat vector shapes in a 220 × 190 design space, scaled to any size (AC-39.06). Poses are the six
 /// states, interpolated when they change; blinks, gaze, ear flicks and the loops of each pose take their phase
 /// from the time the view passes, and everything stands still when it passes none.
 enum PetDrawing {
@@ -42,17 +42,19 @@ enum PetDrawing {
 
     /// The seated amount of a pose: 1 sitting, 0 lying.
     static func sitting(_ pose: PetPose) -> Double { pose == .asleep || pose == .idle ? 0 : 1 }
-    /// The head center in design space for a seated amount.
-    static func head(sit: Double) -> CGPoint { CGPoint(x: 104 + 6 * sit, y: 108 - 28 * sit) }
+    /// How far the head hangs below its seated place: the Failed dog lowers it (AC-39.06).
+    static func headDrop(_ pose: PetPose) -> Double { pose == .failed ? 10 : 0 }
+    /// The head center in design space for a seated amount and a drop.
+    static func head(sit: Double, drop: Double = 0) -> CGPoint { CGPoint(x: 104 + 6 * sit, y: 108 - 28 * sit + drop) }
     /// The head's position in a view of `size`, for the gaze toward a point outside the window.
     static func headCenter(pose: PetPose, in size: CGSize) -> CGPoint {
-        head(sit: sitting(pose)).applying(transform(for: size))
+        head(sit: sitting(pose), drop: headDrop(pose)).applying(transform(for: size))
     }
 
     /// Where a pointer counts as being on the dog: head, ears, body, paws and the bubble while it shows (AC-39.02).
     static func silhouette(pose: PetPose, bubbleShown: Bool = true) -> Path {
         var path = Path()
-        let h = head(sit: sitting(pose))
+        let h = head(sit: sitting(pose), drop: headDrop(pose))
         path.addEllipse(in: CGRect(x: h.x - 40, y: h.y - 40, width: 80, height: 80))
         path.addRect(CGRect(x: h.x - 52, y: h.y - 24, width: 104, height: 64))
         if sitting(pose) > 0.5 {
@@ -83,7 +85,8 @@ enum PetDrawing {
         // The posture blends from the previous pose over the transition (AC-39.03).
         let progress = PetMotion.transition(at: t, since: input.poseChangedAt)
         let sit = mix(CGFloat(sitting(input.previousPose ?? pose)), CGFloat(sitting(pose)), progress)
-        let h = head(sit: Double(sit))
+        let drop = mix(CGFloat(headDrop(input.previousPose ?? pose)), CGFloat(headDrop(pose)), progress)
+        let h = head(sit: Double(sit), drop: Double(drop))
         let settledPose: PetPose = progress < 0.5 ? (input.previousPose ?? pose) : pose
         // Loops: a hop while Done, a head bob while Working, breathing always, a bounce after a click.
         let hop: CGFloat = pose == .done && live ? CGFloat(-14 * max(0, sin(2 * .pi * t / 1.1))) : 0
@@ -105,6 +108,8 @@ enum PetDrawing {
         case .waiting: wag = (4, 2.5, 0)
         case .idle: wag = (6, 2.2, 0)
         case .asleep: wag = (0, 1, 0)
+        // The Failed dog holds its tail still and low (AC-39.06).
+        case .failed: wag = (0, 1, 12)
         }
         let eager = input.hovered || input.panelOpen
         let amplitude = eager ? max(wag.amplitude, 16) : wag.amplitude, period = eager ? min(wag.period, 0.5) : wag.period
@@ -132,14 +137,14 @@ enum PetDrawing {
         let neck = CGPoint(x: h.x, y: h.y + 34)
         c.translateBy(x: 0, y: bob)
         c.translateBy(x: neck.x, y: neck.y); c.rotate(by: Angle(radians: tilt)); c.translateBy(x: -neck.x, y: -neck.y)
-        let perked = pose == .waiting || pose == .done
+        let perked = pose == .waiting || pose == .done, flat = pose == .failed
         let twitch: (left: Double, right: Double) = live ? PetMotion.earTwitch(at: t) : (0, 0)
         for side in [-1.0, 1.0] {
             let ax = h.x + 36 * side, ay = h.y - 20
-            var degrees = perked ? 52.0 : (eager ? 30.0 : 14.0)
+            var degrees = perked ? 52.0 : flat ? 0.0 : (eager ? 30.0 : 14.0)
             degrees += (side < 0 ? twitch.left : twitch.right) * 14
             if let previous = input.previousPose, progress < 1 {
-                let before = (previous == .waiting || previous == .done) ? 52.0 : 14.0
+                let before = (previous == .waiting || previous == .done) ? 52.0 : previous == .failed ? 0.0 : 14.0
                 degrees = before + (degrees - before) * progress
             }
             let pivot = CGAffineTransform(translationX: ax, y: ay).rotated(by: CGFloat(degrees * side * .pi / 180)).translatedBy(x: -ax, y: -ay)
@@ -153,8 +158,13 @@ enum PetDrawing {
         c.fill(Path(ellipseIn: CGRect(x: h.x - 7.5 + gaze.x * 1.5, y: h.y + 0.5, width: 15, height: 11)), with: .color(palette.dark))
         var mouth = Path()
         mouth.move(to: .init(x: h.x - 12, y: h.y + 16))
-        mouth.addQuadCurve(to: .init(x: h.x, y: h.y + 16), control: .init(x: h.x - 6, y: h.y + 24))
-        mouth.addQuadCurve(to: .init(x: h.x + 12, y: h.y + 16), control: .init(x: h.x + 6, y: h.y + 24))
+        if settledPose == .failed {
+            // A flat, slightly turned-down mouth under the lowered head.
+            mouth.addQuadCurve(to: .init(x: h.x + 12, y: h.y + 16), control: .init(x: h.x, y: h.y + 11))
+        } else {
+            mouth.addQuadCurve(to: .init(x: h.x, y: h.y + 16), control: .init(x: h.x - 6, y: h.y + 24))
+            mouth.addQuadCurve(to: .init(x: h.x + 12, y: h.y + 16), control: .init(x: h.x + 6, y: h.y + 24))
+        }
         c.stroke(mouth, with: .color(palette.dark), style: .init(lineWidth: 2.4, lineCap: .round))
         // Eyes: closed while asleep, smiling while done, else open, blinking and looking around.
         let blink = settledPose == .asleep || settledPose == .done || !live ? 0 : PetMotion.blink(at: t)
@@ -176,14 +186,14 @@ enum PetDrawing {
                 }
             }
         }
-        // Collar and lantern tag: lit while working, pulsing while waiting, dim while idle, off while asleep.
+        // Collar and lantern tag: lit while working, pulsing while waiting, dim while idle and failed, off while asleep.
         let cy = h.y + 34
         c.fill(Path(roundedRect: CGRect(x: h.x - 30, y: cy, width: 60, height: 11), cornerRadius: 5.5), with: .color(palette.collar))
         let lit = pose != .asleep
         let glow: Double
         switch pose {
         case .asleep: glow = 0
-        case .idle: glow = 0.22
+        case .idle, .failed: glow = 0.22
         case .waiting: glow = live ? 0.35 + 0.5 * (0.5 + 0.5 * wave(1.4, 0)) : 0.6
         default: glow = 0.6
         }
@@ -242,6 +252,11 @@ extension PetDrawing {
             shape.move(to: .init(x: cx - 7 * s, y: cy + 0.5 * s)); shape.addLine(to: .init(x: cx - 2 * s, y: cy + 5.5 * s))
             shape.addLine(to: .init(x: cx + 8 * s, y: cy - 6 * s))
             c.stroke(shape, with: .color(PetPalette.check), style: .init(lineWidth: 3.4 * s, lineCap: .round, lineJoin: .round))
+        } else if glyph == "!" {
+            // An exclamation mark: a stem and the question mark's dot (AC-39.04).
+            shape.move(to: .init(x: cx, y: cy - 9 * s)); shape.addLine(to: .init(x: cx, y: cy + 4 * s))
+            c.stroke(shape, with: .color(ink), style: .init(lineWidth: 3.4 * s, lineCap: .round))
+            c.fill(Path(ellipseIn: CGRect(x: cx - 1.9 * s, y: cy + 7.6 * s, width: 3.8 * s, height: 3.8 * s)), with: .color(ink))
         } else {
             // A question mark: an arch, a short stem and a dot.
             shape.move(to: .init(x: cx - 5.5 * s, y: cy - 4 * s))

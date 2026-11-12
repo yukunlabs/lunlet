@@ -1,11 +1,15 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
-// Refs: US-13, AC-13.01, AC-13.02, AC-13.03, AC-13.04, AC-13.05, AC-13.08.
+// Refs: US-13, AC-13.01, AC-13.02, AC-13.03, AC-13.04, AC-13.05, AC-13.08, AC-13.10.
 import Foundation
 
 public struct TaskCue: Equatable, Sendable {
     public enum Outcome: Equatable, Sendable { case succeeded, failed, stopped, unknown }
-    public enum Phase: Equatable, Sendable { case started, finished(Outcome) }
+    /// What a waiting session needs from the developer: an answer, or an execution approval on the Mac (AC-13.10).
+    public enum Attention: Equatable, Sendable { case question, approval }
+    /// A waiting cue identifies its entry into the waiting state through `inputActivityID`, so a record read again
+    /// is the same entry and a later wait in the same turn is a new one.
+    public enum Phase: Equatable, Sendable { case started, finished(Outcome), waiting(Attention) }
     public let sessionID: String
     public let connectionID: String
     public let turnID: String
@@ -32,6 +36,7 @@ public final class CuePresentation {
         case turnStart(session: String, connection: String, turn: String)
         case inputStart(session: String, connection: String, input: String)
         case completion(session: String, connection: String, turn: String)
+        case waiting(session: String, connection: String, turn: String, entry: String)
 
         static func start(_ cue: TaskCue) -> Self {
             guard let input = cue.inputActivityID else {
@@ -65,7 +70,11 @@ public final class CuePresentation {
               !cue.connectionID.isEmpty, !cue.turnID.isEmpty else { return }
         expire(now: now)
         let completion = Transition.completion(session: cue.sessionID, connection: cue.connectionID, turn: cue.turnID)
-        if case .finished = cue.phase {
+        if case .waiting = cue.phase {
+            // One cue per entry into the waiting state; a baseline or a replay consumes it without showing (AC-13.10).
+            guard consume(.waiting(session: cue.sessionID, connection: cue.connectionID, turn: cue.turnID,
+                                   entry: cue.inputActivityID ?? "")) else { return }
+        } else if case .finished = cue.phase {
             guard consume(completion) else { return }
             // A delayed start for the input that already completed is not new work.
             consume(.start(cue))

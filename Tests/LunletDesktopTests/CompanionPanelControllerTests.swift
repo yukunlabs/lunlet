@@ -85,15 +85,15 @@ private struct TabRowContent: View {
         controller.show()
         let window = try #require(controller.window)
         #expect(window.frame.midX == Self.notch.midX && window.frame.maxY == 982)
-        #expect(window.frame.width == 490 && window.frame.height == 397)
+        #expect(window.frame.width == 490 && window.frame.height == 417)
         #expect(probe.band == NotchBand(height: 32, leading: 142.5, trailing: 142.5))
         probe.tabs = true
         let deadline = ContinuousClock.now + .seconds(10)
         while window.frame.height != 427, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
-        #expect(window.frame.height == 425 && window.frame.maxY == 982 && controller.isVisible)
+        #expect(window.frame.height == 445 && window.frame.maxY == 982 && controller.isVisible)
         controller.hide(animated: false)
         controller.show()
-        #expect(window.frame.height == 425 && window.frame.width == 490)
+        #expect(window.frame.height == 445 && window.frame.width == 490)
         // Outside clicks are measured against the body: the room beside it for the shoulders is outside.
         controller.outsideClick(at: .init(x: window.frame.minX + 12, y: window.frame.midY))
         #expect(controller.isVisible)
@@ -105,7 +105,7 @@ private struct TabRowContent: View {
         tabbed.setContent { AnyView(TabRowContent(probe: tabs)) }
         defer { tabbed.shutdown() }
         tabbed.show()
-        #expect(tabbed.window?.frame.height == 425)
+        #expect(tabbed.window?.frame.height == 445)
     }
     @Test func escapeAndCloseDismissWithoutDestroyingTheRuntimeWindow() throws {
         let controller = controller()

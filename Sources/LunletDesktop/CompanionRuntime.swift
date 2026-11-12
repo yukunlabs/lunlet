@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
 // Refs: US-32, AC-32.01, AC-32.04; US-19, AC-19.01, AC-19.02, AC-19.03; US-16, AC-16.02, AC-16.03; US-13, AC-13.09.
+// Refs: US-41, AC-41.01, AC-41.05.
 // Refs: US-33, AC-33.01, AC-33.04, AC-33.05, AC-33.06, AC-33.08, AC-33.09, AC-33.10.
-// Refs: US-02, AC-02.03, AC-02.05, AC-02.08; US-04, AC-04.11, AC-04.13.
+// Refs: US-02, AC-02.03, AC-02.05, AC-02.08; US-04, AC-04.11, AC-04.13; US-13, AC-13.10, AC-13.11; US-21, AC-21.04.
 // Refs: US-02, AC-02.07.
 // Refs: US-20, AC-20.03, AC-20.05, AC-20.06.
 // Refs: US-22, AC-22.01, AC-22.02; US-12, AC-12.04; US-14, AC-14.01.
@@ -42,6 +43,7 @@ import SwiftUI
     let claudeHistory: LocalUsageModel
     private let claudeUsageHover: UsageHoverPanelController
     let claudeLimits: ClaudePlanLimitsModel
+    let allowanceNotifier: AllowanceNotifier
     private let claudeHook: ClaudeHookModel
     private var availabilityRefresh: Task<Void, Never>?
     private let notifications: LockedCompletionNotifications
@@ -87,6 +89,13 @@ import SwiftUI
         // Plan limits connect on their own while Claude Code is selected, unless the owner disconnected them (AC-33.08).
         let claudeLimits = ClaudePlanLimitsModel(connectsAutomatically: true, choices: .standard)
         self.claudeLimits = claudeLimits
+        // Allowance notifications follow the readings the cards already take (AC-41.05); Notification Center is the
+        // deliverer only in the bundled app.
+        let allowanceNotifier = AllowanceNotifier(deliverer: AllowanceNotificationCenter.system())
+        self.allowanceNotifier = allowanceNotifier
+        allowanceNotifier.observe(preferences: preferences)
+        allowanceNotifier.observe(usage: usage)
+        allowanceNotifier.observe(claudeLimits: claudeLimits)
         let claudeHook = ClaudeHookModel(connectsAutomatically: true)
         self.claudeHook = claudeHook
         let entry = NotchEntryController(companion: panel, usage: usage, claudeLimits: claudeLimits, preferences: preferences,
@@ -96,6 +105,7 @@ import SwiftUI
         self.pet = pet
         cueRouter.pet = pet
         cueRouter.mode = preferences.value.presentation
+        cueRouter.soundEnabled = preferences.value.needsYouSound
         self.notifications = notifications
         // Sources start only for selected providers; deselecting one stops its source.
         let observation = SessionObservationModel(model: sessions, providers: Set(preferences.value.sessionProviders)) { provider in
@@ -135,6 +145,9 @@ import SwiftUI
         preferences.$value.map(\.presentation).removeDuplicates().sink { [weak self] presentation in
             self?.cueRouter.mode = presentation
             self?.updateMenuVisibility(presentation: presentation)
+        }.store(in: &preferenceObservations)
+        preferences.$value.map(\.needsYouSound).removeDuplicates().sink { [weak self] enabled in
+            self?.cueRouter.soundEnabled = enabled
         }.store(in: &preferenceObservations)
         preferences.$value.map(\.channel).removeDuplicates().sink { [weak self] channel in
             // Published emits before value changes; this owns routing during that transition.
@@ -180,6 +193,11 @@ import SwiftUI
             }
             usageHover?.prepareForParentPresentation(); claudeUsageHover?.prepareForParentPresentation()
         }
+        allowanceNotifier.openProvider = { [weak self, weak sessions, weak panel] provider in
+            guard self?.closing == nil else { return }
+            sessions?.focus(provider: provider)
+            panel?.show()
+        }
         panel.setContent { [weak self] in
             AnyView(CompanionPanel(preferences: preferences, skins: skins, setup: setup, botSetup: botSetup,
                                    notifications: notifications, usage: usage, sessions: sessions,
@@ -187,13 +205,14 @@ import SwiftUI
                                    claudeHistory: claudeHistory, claudeUsageHover: claudeUsageHover,
                                    refresh: { [weak self] in self?.refresh() })
                 .environment(\.claudePlanLimits, self?.claudeLimits).environment(\.claudeHook, self?.claudeHook)
+                .environment(\.allowanceNotifier, self?.allowanceNotifier)
                 .environment(\.appUpdater, self?.updater).environment(\.petPacks, self?.petPacks))
         }
     }
 
     public func start() {
         guard menu == nil, closing == nil else { return }
-        let menu = MenuBarController(panel: panel, sessions: sessions)
+        let menu = MenuBarController(panel: panel, sessions: sessions, usage: usage, claudeLimits: claudeLimits, preferences: preferences)
         self.menu = menu
         // Started before the panel can first open, so its content sees the updater; Sparkle's window opens with the
         // panel out of the way.
@@ -235,7 +254,7 @@ import SwiftUI
         usage.refresh(); history.refresh()
         if preferences.value.sessionProviders.contains(.claude) { claudeHistory.refresh() }
         claudeLimits.refresh()
-        observation.refresh(); entry.refresh(); notifications.checkAuthorization()
+        observation.refresh(); entry.refresh(); notifications.checkAuthorization(); allowanceNotifier.checkAuthorization()
         if availabilityRefresh == nil {
             availabilityRefresh = Task { defer { availabilityRefresh = nil }; await away.refreshAvailability() }
         }
@@ -283,7 +302,7 @@ import SwiftUI
             sessions.shutdown()
             cues.shutdown()
             await stage(5) { await self.away.shutdown() }
-            await stage(6) { await self.usage.shutdown() }
+            await stage(6) { await self.usage.shutdown(); await self.allowanceNotifier.shutdown() }
             await stage(7) { await self.history.shutdown(); await self.claudeHistory.shutdown() }
             await stage(8) { await self.claudeLimits.shutdown() }
             await stage(9) { await self.setup.shutdown() }

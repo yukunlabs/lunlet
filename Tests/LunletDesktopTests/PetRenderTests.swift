@@ -18,8 +18,9 @@ import LunletCore
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let size = PetEntryController.windowSize
         // Every pose in every coat, settled, on a neutral desktop tone.
-        let sheet = NSImage(size: CGSize(width: size.width * 5, height: size.height * 3), flipped: false) { _ in
-            NSColor(white: 0.82, alpha: 1).setFill(); CGRect(origin: .zero, size: CGSize(width: size.width * 5, height: size.height * 3)).fill()
+        let columns = CGFloat(PetPose.allCases.count)
+        let sheet = NSImage(size: CGSize(width: size.width * columns, height: size.height * 3), flipped: false) { _ in
+            NSColor(white: 0.82, alpha: 1).setFill(); CGRect(origin: .zero, size: CGSize(width: size.width * columns, height: size.height * 3)).fill()
             for (row, coat) in PetCoat.allCases.enumerated() {
                 for (column, pose) in PetPose.allCases.enumerated() {
                     let origin = CGPoint(x: CGFloat(column) * size.width, y: CGFloat(2 - row) * size.height)
@@ -71,8 +72,9 @@ import LunletCore
         let pack = try #require(entry.pack, "\(String(describing: entry.failure))")
         let sheet = try #require(await library.loadSheet(for: pack))
         let window = PetEntryController.windowSize
-        let image = NSImage(size: CGSize(width: window.width * 5, height: window.height * 2), flipped: false) { _ in
-            NSColor(white: 0.82, alpha: 1).setFill(); CGRect(origin: .zero, size: CGSize(width: window.width * 5, height: window.height * 2)).fill()
+        let columns = CGFloat(PetPose.allCases.count)
+        let image = NSImage(size: CGSize(width: window.width * columns, height: window.height * 2), flipped: false) { _ in
+            NSColor(white: 0.82, alpha: 1).setFill(); CGRect(origin: .zero, size: CGSize(width: window.width * columns, height: window.height * 2)).fill()
             for (column, pose) in PetPose.allCases.enumerated() {
                 Self.drawDog(pose: pose, coat: .golden, at: CGPoint(x: CGFloat(column) * window.width, y: window.height), size: window, panelOpen: false)
                 let state = PetState(pose: pose, sessionID: nil, sessionCount: 1, waitingCount: 0, runningCount: 0, summary: nil)

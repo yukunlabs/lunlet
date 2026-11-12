@@ -149,4 +149,16 @@ import LunletCore
         value.petPack = "codex/../x"
         #expect(throws: PreferenceFailure.invalidValue) { try value.validate() }
     }
+
+    @Test func theGalleryLinkOpensPetdexAndTheHelpNamesCodexsFolder() throws {
+        // AC-40.01: Find pets on Petdex opens the gallery; packs installed with petdex install arrive through Codex's folder.
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("lunlet-pets-\(UUID())", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let library = PetPackLibrary(lunletDirectory: root.appendingPathComponent("lunlet"), codexDirectory: root.appendingPathComponent("codex"))
+        #expect(PetPackLibrary.galleryURL.absoluteString == "https://petdex.dev")
+        var opened: URL?
+        library.openGallery { opened = $0 }
+        #expect(opened == PetPackLibrary.galleryURL)
+        #expect(PetPackLibrary.pickerHelp.contains("petdex install") && PetPackLibrary.pickerHelp.contains("Codex"))
+    }
 }

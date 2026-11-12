@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
 // Refs: US-32, AC-32.01, AC-32.03.
-// Refs: US-04, AC-04.01, AC-04.03, AC-04.07, AC-04.08, AC-04.09.
+// Refs: US-04, AC-04.01, AC-04.03, AC-04.07, AC-04.08, AC-04.09, AC-04.15.
 import Foundation
 import LunletCore
 
-struct WeeklyAllowance: Equatable {
+/// One reported Codex window, weekly or five-hour, identified by its duration (AC-04.07, AC-04.15).
+struct AllowanceWindow: Equatable {
     let bucketID: String?
     let bucketName: String
     let remainingPercent: Double?
@@ -13,11 +14,18 @@ struct WeeklyAllowance: Equatable {
 }
 
 enum AccountUsagePresentation {
-    static func weekly(in snapshot: AccountLimitsSnapshot) -> WeeklyAllowance? {
+    static let weeklyMinutes = 10_080
+    static let fiveHourMinutes = 300
+
+    static func weekly(in snapshot: AccountLimitsSnapshot) -> AllowanceWindow? { window(in: snapshot, minutes: weeklyMinutes) }
+    /// The five-hour window beside the weekly one, by its duration and never by its position (AC-04.15).
+    static func fiveHour(in snapshot: AccountLimitsSnapshot) -> AllowanceWindow? { window(in: snapshot, minutes: fiveHourMinutes) }
+
+    private static func window(in snapshot: AccountLimitsSnapshot, minutes: Int) -> AllowanceWindow? {
         let weekly = snapshot.buckets.flatMap { bucket in
-            [bucket.primary, bucket.secondary].compactMap { window -> WeeklyAllowance? in
-                guard let window, window.durationMinutes == 10_080 else { return nil }
-                return WeeklyAllowance(bucketID: bucket.id, bucketName: bucket.name ?? bucket.id ?? "Codex",
+            [bucket.primary, bucket.secondary].compactMap { window -> AllowanceWindow? in
+                guard let window, window.durationMinutes == minutes else { return nil }
+                return AllowanceWindow(bucketID: bucket.id, bucketName: bucket.name ?? bucket.id ?? "Codex",
                                        remainingPercent: window.estimatedRemainingPercent,
                                        resetsAt: window.resetsAt)
             }
@@ -27,6 +35,22 @@ enum AccountUsagePresentation {
         if weekly.count == 1 { return weekly.first }
         let codex = weekly.filter { $0.bucketID == "codex" }
         return codex.count == 1 ? codex.first : nil
+    }
+
+    /// The five-hour line (AC-04.15): nil when a successful read reports no such window, because the account has none;
+    /// unknown when there is no successful read at all (AC-04.03).
+    static func fiveHourLine(in snapshot: AccountLimitsSnapshot?, now: Date) -> (left: String, reset: String)? {
+        guard let snapshot else { return windowLine(nil, now: now) }
+        guard let window = fiveHour(in: snapshot) else { return nil }
+        return windowLine(window, now: now)
+    }
+
+    /// A window's compact line: percent left and the reset in the AC-04.01 wording; unknown stays unknown (AC-04.03).
+    static func windowLine(_ window: AllowanceWindow?, now: Date) -> (left: String, reset: String) {
+        let left = window?.remainingPercent.map { $0.formatted(.number.precision(.fractionLength(0...1))) + "% left" } ?? "—"
+        guard let reset = window?.resetsAt else { return (left, "Reset —") }
+        guard let remaining = countdown(until: reset, now: now) else { return (left, "Reset due") }
+        return (left, "Resets in " + remaining)
     }
 
     static func countdown(until date: Date, now: Date) -> String? {

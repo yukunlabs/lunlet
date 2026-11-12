@@ -346,7 +346,7 @@ private struct OverviewLimitsCard: View {
         .help("Each agent's own allowance as it reports it. Allowances are never combined.")
     }
 
-    private var weekly: WeeklyAllowance? { account.displayedSnapshot.flatMap(AccountUsagePresentation.weekly) }
+    private var weekly: AllowanceWindow? { account.displayedSnapshot.flatMap(AccountUsagePresentation.weekly) }
     private var readings: ClaudePlanLimits? { limits.connection == .connected ? limits.limits : nil }
 
     @ViewBuilder private func codex(now: Date) -> some View {
@@ -582,6 +582,8 @@ private struct ClaudeUsageCard: View {
             }
             .font(PanelStyle.Text.secondary).foregroundStyle(.secondary)
             .frame(height: PanelStyle.Layout.secondaryLine)
+            // Claude Code reports no five-hour window (AC-04.15); the Codex card's line keeps the shared height here.
+            Color.clear.frame(height: PanelStyle.Layout.secondaryLine).accessibilityHidden(true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .help(estimate.map { $0 + (estimateHelp.map { "\n" + $0 } ?? "") } ?? "")

@@ -92,7 +92,7 @@ final class RenderPower: IdleSleepControlling { func setEnabled(_ enabled: Bool)
 
         let now = Date(), epoch = Int(now.timeIntervalSince1970)
         let account = try AccountLimitsDecoder.decode(Data("""
-        {"rateLimits":{"secondary":{"usedPercent":38,"windowDurationMins":10080,"resetsAt":\(epoch + 4*86400 + 3*3600)},"credits":{"balance":"75000.000000000000","hasCredits":true,"unlimited":false}},"rateLimitResetCredits":{"availableCount":2,"credits":[{"id":"synthetic-a","status":"available","expiresAt":\(epoch + 3*86400 + 4*3600)},{"id":"synthetic-b","status":"available","expiresAt":\(epoch + 11*86400 + 8*3600)}]}}
+        {"rateLimits":{"primary":{"usedPercent":41,"windowDurationMins":300,"resetsAt":\(epoch + 2*3600 + 20*60)},"secondary":{"usedPercent":38,"windowDurationMins":10080,"resetsAt":\(epoch + 4*86400 + 3*3600)},"credits":{"balance":"75000.000000000000","hasCredits":true,"unlimited":false}},"rateLimitResetCredits":{"availableCount":2,"credits":[{"id":"synthetic-a","status":"available","expiresAt":\(epoch + 3*86400 + 4*3600)},{"id":"synthetic-b","status":"available","expiresAt":\(epoch + 11*86400 + 8*3600)}]}}
         """.utf8), observedAt: now.addingTimeInterval(-120),
             accountData: Data(#"{"account":{"type":"chatgpt","email":"synthetic@example.invalid","planType":"pro"}}"#.utf8))
         let usage = AccountUsageModel(client: RenderAccount(snapshot: account))

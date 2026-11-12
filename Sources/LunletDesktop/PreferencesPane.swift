@@ -1,12 +1,13 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
-// Refs: US-24, AC-24.01, AC-24.02; US-22, AC-22.03; US-20, AC-20.02; US-21, AC-21.02.
+// Refs: US-24, AC-24.01, AC-24.02; US-22, AC-22.03; US-20, AC-20.02; US-21, AC-21.02, AC-21.04, AC-21.05; US-13, AC-13.11.
 // Refs: US-40, AC-40.01, AC-40.02, AC-40.07.
 // Refs: US-02, AC-02.07; US-04, AC-04.04; US-29, AC-29.05; US-19, AC-19.01; US-33, AC-33.08; US-14, AC-14.07.
 // Refs: US-16, AC-16.01, AC-16.02; US-17, AC-17.01, AC-17.04, AC-17.08;
 // Refs: US-18, AC-18.01; US-19, AC-19.01, AC-19.02, AC-19.03; US-20, AC-20.01; US-33, AC-33.07, AC-33.08;
 // Refs: US-21, AC-21.01; US-22, AC-22.01, AC-22.02; US-26, AC-26.01, AC-26.02; US-31, AC-31.01, AC-31.02, AC-31.03, AC-31.04.
 // Refs: US-35, AC-35.03, AC-35.04.
+// Refs: US-41, AC-41.01, AC-41.02.
 import AppKit
 import LunletCore
 import SwiftUI
@@ -50,11 +51,13 @@ private struct PetPackChoice: View {
                 Text("Unavailable pack").tag(chosen)
             }
         }
-        .help("Packs use Codex's pet format: a pet.json beside a sprite sheet. Packs in ~/.codex/pets are listed too and only read.")
+        .help(PetPackLibrary.pickerHelp)
         LabeledContent("Packs") {
             HStack {
                 Button("Refresh") { packs.refresh() }
                 Button("Open pets folder") { packs.openLunletFolder() }
+                Button("Find pets on Petdex") { packs.openGallery() }
+                    .help("Opens the Petdex gallery in your browser; install a pet there with petdex install and it appears in this list.")
             }
         }
         if let problem = packs.chosenProblem {
@@ -80,6 +83,7 @@ struct PreferencesPane: View {
     @Environment(\.claudeHook) private var claudeHook
     @Environment(\.petPacks) private var petPacks
     @Environment(\.appUpdater) private var updater
+    @Environment(\.allowanceNotifier) private var allowanceNotifier
     @ViewState private var category = PreferenceCategory.appearance
     @ViewState private var fileIssue: String?
 
@@ -146,6 +150,26 @@ struct PreferencesPane: View {
                         }
                     }
                 }
+                if preferences.value.presentation == .menuBar {
+                    // AC-21.04, AC-21.05: allowance text after the lettering, and the level below which it shows.
+                    Picker("Show allowance", selection: binding(\.menuBarAllowance)) {
+                        ForEach(MenuBarAllowance.allCases, id: \.self) { Text($0.title).tag($0) }
+                    }
+                    .help("Plain text after the lettering: the window closest to running out among those Lunlet shows, as the "
+                        + "percent left, with its reset countdown if chosen. The agent's name is added with several agents and "
+                        + "5h marks Codex's five-hour window. An unknown window shows no text.")
+                    if preferences.value.menuBarAllowance != .off {
+                        Picker("Only below", selection: binding(\.menuBarAllowanceBelow)) {
+                            Text("Always").tag(Optional<Int>.none)
+                            ForEach(LunletPreferences.menuBarAllowanceLevels, id: \.self) { Text("\($0)% left").tag(Optional($0)) }
+                        }
+                        .help("Show the text only while that window is below this percent left.")
+                    }
+                }
+                // AC-13.11: one system sound with each Needs you cue, off by default.
+                Toggle("Sound for Needs you", isOn: binding(\.needsYouSound))
+                    .help("Plays the system alert sound once when a session starts waiting for your answer or approval, never "
+                        + "for a start or a finish, and never while the display is locked or asleep.")
                 Picker("Skin", selection: binding(\.skinID)) {
                     ForEach(skins.skins) { Text($0.title).tag($0.id) }
                     if !skins.skins.contains(where: { $0.id == preferences.value.skinID }) {
@@ -187,6 +211,22 @@ struct PreferencesPane: View {
                     .font(Font.caption).foregroundStyle(.secondary)
                     .help("Account identity and limits are read automatically through Codex. Sign-in credentials are never sent "
                         + "through messaging channels. Quitting cancels owned reads.")
+            }
+            // Allowance notifications: the switch, the level and the reset notice (AC-41.01, AC-41.02).
+            Section {
+                Toggle("Allowance notifications", isOn: binding(\.allowanceNotifications))
+                    .help("A macOS notification when a window Lunlet shows drops below the level, and when it resets. "
+                        + "Only official readings, never estimates, and never through the messaging channel.")
+                    .onAppear { allowanceNotifier?.checkAuthorization() }
+                if preferences.value.allowanceNotifications {
+                    Picker("Warn below", selection: binding(\.allowanceWarnBelow)) {
+                        ForEach(LunletPreferences.allowanceWarnLevels, id: \.self) { Text("\($0)% left").tag($0) }
+                    }
+                    Toggle("When a window resets", isOn: binding(\.allowanceResetNotices))
+                    if let allowanceNotifier { AllowancePermissionNote(notifier: allowanceNotifier) }
+                }
+            } header: {
+                Text("Notifications")
             }
         }
     }

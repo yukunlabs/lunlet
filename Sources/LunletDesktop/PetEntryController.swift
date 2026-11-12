@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
 // Refs: US-39, AC-39.01, AC-39.02, AC-39.03, AC-39.04, AC-39.05, AC-39.06, AC-39.07, AC-39.08.
-// Refs: US-03, AC-03.06, AC-03.10; US-13, AC-13.02, AC-13.04, AC-13.09; US-21, AC-21.03; US-12, AC-12.04.
+// Refs: US-03, AC-03.06, AC-03.10; US-13, AC-13.02, AC-13.04, AC-13.09, AC-13.11; US-21, AC-21.03; US-12, AC-12.04.
 // Refs: US-40, AC-40.01, AC-40.03, AC-40.05, AC-40.07.
 import AppKit
 import Combine
@@ -12,12 +12,21 @@ import LunletCore
 @MainActor final class CueRouter: TaskCuePresenting {
     private let island: TransientCuePanel
     weak var pet: PetEntryController?
+    /// One system alert sound with each Needs you cue when chosen, never for a start or finish (AC-13.11).
+    var soundEnabled = false
+    private let sound: @MainActor () -> Void
+    private var sounded: TaskCue?
     var mode: EntryPresentation = .notch {
         didSet { guard mode != oldValue else { return }; island.hideImmediately(); pet?.hide() }
     }
-    init(island: TransientCuePanel) { self.island = island }
+    init(island: TransientCuePanel, sound: @escaping @MainActor () -> Void = { NSSound.beep() }) {
+        self.island = island; self.sound = sound
+    }
     func show(_ cues: [TaskCue]) {
         if mode == .pet { pet?.show(cues) } else { island.show(cues) }
+        guard let cue = cues.last, case .waiting = cue.phase else { return }
+        guard soundEnabled, cue != sounded else { return }
+        sounded = cue; sound()
     }
     func hide() { island.hide(); pet?.hide() }
 }

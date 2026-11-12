@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
 // Refs: US-16, AC-16.01; US-17, AC-17.08; US-18, AC-18.01; US-19, AC-19.01; US-20, AC-20.01;
-// Refs: US-21, AC-21.01; US-26, AC-26.01, AC-26.02; US-31, AC-31.01; US-33, AC-33.01; US-40, AC-40.01.
+// Refs: US-21, AC-21.01, AC-21.04, AC-21.05; US-26, AC-26.01, AC-26.02; US-31, AC-31.01; US-33, AC-33.01; US-40, AC-40.01.
+// Refs: US-13, AC-13.11; US-41, AC-41.01, AC-41.02.
 import Combine
 import Foundation
 import LunletCore
@@ -12,6 +13,14 @@ enum EntryPresentation: String, Codable, CaseIterable {
         switch self { case .notch: "Notch widget"; case .menuBar: "Menu bar"; case .pet: "Desktop pet" }
     }
 }
+/// What the menu-bar entry shows beside the lettering (AC-21.04).
+enum MenuBarAllowance: String, Codable, CaseIterable {
+    case off, percent, percentAndReset
+    var title: String {
+        switch self { case .off: "Off"; case .percent: "Percent"; case .percentAndReset: "Percent and reset" }
+    }
+}
+
 enum AgentProvider: String, Codable, CaseIterable, Identifiable {
     case codex, claude
     var id: String { rawValue }
@@ -58,10 +67,21 @@ struct LunletPreferences: Codable, Equatable {
     var petDisplay: String?
     /// The chosen pet pack as `source/folder` (AC-40.01); nil is the built-in dog.
     var petPack: String?
+    /// The allowance text in the menu-bar entry (AC-21.04) and the percent left below which it shows; nil shows it always (AC-21.05).
+    var menuBarAllowance = MenuBarAllowance.off
+    var menuBarAllowanceBelow: Int?
+    static let menuBarAllowanceLevels = [50, 30, 20]
+    /// One system sound with each Needs you cue (AC-13.11).
+    var needsYouSound = false
+    /// Allowance notifications: the switch, the percent left that warns and the reset notice (AC-41.01, AC-41.02).
+    var allowanceNotifications = false
+    var allowanceWarnBelow = 20
+    var allowanceResetNotices = false
+    static let allowanceWarnLevels = [30, 20, 10, 5]
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, presentation, skinID, accentOverrides, accentHex, historyDays, providers, channel, petCoat, petPositions, petDisplay,
-             petPack
+             petPack, menuBarAllowance, menuBarAllowanceBelow, needsYouSound, allowanceNotifications, allowanceWarnBelow, allowanceResetNotices
     }
     init() {}
     init(from decoder: any Decoder) throws {
@@ -80,6 +100,12 @@ struct LunletPreferences: Codable, Equatable {
         petPositions = try data.decodeIfPresent([String: PetPosition].self, forKey: .petPositions) ?? [:]
         petDisplay = try data.decodeIfPresent(String.self, forKey: .petDisplay)
         petPack = try data.decodeIfPresent(String.self, forKey: .petPack)
+        menuBarAllowance = try data.decodeIfPresent(MenuBarAllowance.self, forKey: .menuBarAllowance) ?? .off
+        menuBarAllowanceBelow = try data.decodeIfPresent(Int.self, forKey: .menuBarAllowanceBelow)
+        needsYouSound = try data.decodeIfPresent(Bool.self, forKey: .needsYouSound) ?? false
+        allowanceNotifications = try data.decodeIfPresent(Bool.self, forKey: .allowanceNotifications) ?? false
+        allowanceWarnBelow = try data.decodeIfPresent(Int.self, forKey: .allowanceWarnBelow) ?? 20
+        allowanceResetNotices = try data.decodeIfPresent(Bool.self, forKey: .allowanceResetNotices) ?? false
         let savedChannel = try data.decodeIfPresent(String.self, forKey: .channel) ?? "feishu"
         if savedChannel == "whatsapp" { channel = .feishu }
         else if let supported = CommunicationChannel(rawValue: savedChannel) { channel = supported }
@@ -96,6 +122,12 @@ struct LunletPreferences: Codable, Equatable {
         if !petPositions.isEmpty { try data.encode(petPositions, forKey: .petPositions) }
         try data.encodeIfPresent(petDisplay, forKey: .petDisplay)
         try data.encodeIfPresent(petPack, forKey: .petPack)
+        try data.encode(menuBarAllowance, forKey: .menuBarAllowance)
+        try data.encodeIfPresent(menuBarAllowanceBelow, forKey: .menuBarAllowanceBelow)
+        try data.encode(needsYouSound, forKey: .needsYouSound)
+        try data.encode(allowanceNotifications, forKey: .allowanceNotifications)
+        try data.encode(allowanceWarnBelow, forKey: .allowanceWarnBelow)
+        try data.encode(allowanceResetNotices, forKey: .allowanceResetNotices)
     }
     func validate() throws {
         // Same identifier rule as SkinDefinition.validate, so a saved choice can name a real skin.
@@ -110,6 +142,8 @@ struct LunletPreferences: Codable, Equatable {
         }
         if let petDisplay { guard !petDisplay.isEmpty, petDisplay.count <= 32 else { throw PreferenceFailure.invalidValue } }
         if let petPack { guard PetPackReference(key: petPack) != nil else { throw PreferenceFailure.invalidValue } }
+        if let level = menuBarAllowanceBelow { guard Self.menuBarAllowanceLevels.contains(level) else { throw PreferenceFailure.invalidValue } }
+        guard Self.allowanceWarnLevels.contains(allowanceWarnBelow) else { throw PreferenceFailure.invalidValue }
         guard (1...7).contains(historyDays), !providers.isEmpty,
               Set(providers).count == providers.count,
               skinID.range(of: skinIDRule, options: .regularExpression) != nil else {
@@ -152,7 +186,9 @@ struct LunletPreferences: Codable, Equatable {
     private static func decode(_ data: Data) throws -> LunletPreferences {
         guard data.count <= 65_536 else { throw PreferenceFailure.oversized }
         let fields: Set<String> = ["schemaVersion", "presentation", "skinID", "accentOverrides", "accentHex", "historyDays",
-                                   "providers", "channel", "petCoat", "petPositions", "petDisplay", "petPack"]
+                                   "providers", "channel", "petCoat", "petPositions", "petDisplay", "petPack",
+                                   "menuBarAllowance", "menuBarAllowanceBelow", "needsYouSound", "allowanceNotifications",
+                                   "allowanceWarnBelow", "allowanceResetNotices"]
         guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               Set(object.keys).isSubset(of: fields) else { throw PreferenceFailure.invalidValue }
         return try JSONDecoder().decode(LunletPreferences.self, from: data)

@@ -1,10 +1,12 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
-// Refs: US-21, AC-21.02.
+// Refs: US-21, AC-21.02, AC-21.04, AC-21.05.
 // Refs: US-02, AC-02.03, AC-02.05; US-03, AC-03.04, AC-03.05, AC-03.06, AC-03.07, AC-03.10.
 // Refs: US-12, AC-12.04, AC-12.05.
 import AppKit
 import Combine
+import LunletClaude
+import LunletCore
 
 /// The context menu shared by the notch entry and the menu-bar fallback.
 @MainActor enum EntryMenu {
@@ -57,9 +59,19 @@ enum LunletWordmark {
     private(set) var item: NSStatusItem?
     private let panel: CompanionPanelController
     private var subscriptions: Set<AnyCancellable> = []
+    private var status: CompactSessionStatus
+    private var preferred: LunletPreferences
+    private var codex: AccountLimitsSnapshot?
+    private var claude: ClaudePlanLimits?
+    private var claudeConnected = false
+    /// Ticks once a minute only while a countdown is on the entry (AC-21.04), so the text keeps time without polling.
+    private var countdownTick: Timer?
 
-    init(panel: CompanionPanelController, sessions: SessionListModel) {
+    init(panel: CompanionPanelController, sessions: SessionListModel, usage: AccountUsageModel? = nil,
+         claudeLimits: ClaudePlanLimitsModel? = nil, preferences: PreferencesStore? = nil) {
         self.panel = panel
+        status = sessions.compactStatus
+        preferred = preferences?.value ?? .init()
         super.init()
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         self.item = item
@@ -71,10 +83,47 @@ enum LunletWordmark {
             button.setAccessibilityLabel("Lunlet")
         }
         sessions.$compactStatus.removeDuplicates().sink { [weak self] status in
-            self?.item?.button?.title = status.badge.isEmpty ? "" : " " + status.badge
-            self?.item?.button?.toolTip = "Lunlet · " + status.description
-            self?.item?.button?.setAccessibilityValue(status.description)
+            self?.status = status; self?.updateTitle()
         }.store(in: &subscriptions)
+        if let usage {
+            usage.$state.sink { [weak self, weak usage] state in
+                switch state {
+                case .available(let snapshot): self?.codex = snapshot
+                case .loading: self?.codex = usage?.displayedSnapshot
+                default: self?.codex = nil
+                }
+                self?.updateTitle()
+            }.store(in: &subscriptions)
+        }
+        if let claudeLimits {
+            claudeLimits.$limits.combineLatest(claudeLimits.$connection).sink { [weak self] limits, connection in
+                self?.claude = limits; self?.claudeConnected = connection == .connected; self?.updateTitle()
+            }.store(in: &subscriptions)
+        }
+        if let preferences {
+            preferences.$value.sink { [weak self] value in self?.preferred = value; self?.updateTitle() }.store(in: &subscriptions)
+        }
+    }
+
+    /// The waiting count, then the allowance text when chosen, as plain text after the lettering (AC-21.02, AC-21.04).
+    private func updateTitle() {
+        guard let button = item?.button else { return }
+        let now = Date(), agents = preferred.sessionProviders
+        let windows = MenuBarAllowanceText.windows(providers: agents, codex: codex, claude: claude,
+                                                   claudeConnected: claudeConnected, now: now)
+        let allowance = MenuBarAllowanceText.text(windows: windows, mode: preferred.menuBarAllowance,
+                                                  onlyBelow: preferred.menuBarAllowanceBelow, agents: agents.count, now: now)
+        let parts = [status.badge, allowance ?? ""].filter { !$0.isEmpty }
+        button.title = parts.isEmpty ? "" : " " + parts.joined(separator: "  ")
+        button.toolTip = "Lunlet · " + status.description + (allowance.map { " · Allowance " + $0 + " left" } ?? "")
+        button.setAccessibilityValue(status.description + (allowance.map { ", allowance " + $0 + " left" } ?? ""))
+        let needsTick = allowance != nil && preferred.menuBarAllowance == .percentAndReset
+        if needsTick, countdownTick == nil {
+            countdownTick = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.updateTitle() }
+            }
+            countdownTick?.tolerance = 10
+        } else if !needsTick { countdownTick?.invalidate(); countdownTick = nil }
     }
     @objc private func clicked(_ sender: NSStatusBarButton) {
         if let event = NSApp.currentEvent, event.type == .rightMouseUp {
@@ -90,6 +139,7 @@ enum LunletWordmark {
     }
     func shutdown() {
         subscriptions.removeAll()
+        countdownTick?.invalidate(); countdownTick = nil
         if let item { NSStatusBar.system.removeStatusItem(item); self.item = nil }
     }
 }
