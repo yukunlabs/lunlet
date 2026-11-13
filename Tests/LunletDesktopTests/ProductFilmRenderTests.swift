@@ -475,7 +475,7 @@ struct FilmStoryboard {
         .init(start: 18.6, end: 22.6, text: "Hover the limits for the weekly trend, an estimate range and daily usage."),
         .init(start: 23.6, end: 26.7, text: "The Overview keeps each agent's limits apart and adds up recorded usage."),
         .init(start: 26.8, end: 30.0, text: "Hover a day for each agent's tokens. Cost is an API-price estimate, never a bill."),
-        .init(start: 30.3, end: 34.4, text: "Claude Code shows its session and weekly limits, today's tokens and its sessions."),
+        .init(start: 30.3, end: 34.4, text: "Claude Code shows its weekly limit, today's tokens and its sessions."),
         .init(start: 34.8, end: 37.2, text: "Click anywhere else, and it folds back into the notch."),
         .init(start: 37.8, end: 40.4, text: "Send the next prompt, and the island shows the new turn has started."),
         .init(start: 40.9, end: 43.5, text: "Lock your Mac and step away while the turn keeps running."),
