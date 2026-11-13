@@ -17,7 +17,7 @@ The maintainer aims to acknowledge a report within seven days and to publish a f
 
 ## Supported versions
 
-The supported line is 0.1.x, published on GitHub Releases as unsigned previews (signed ad hoc, not notarized). Fixes land on the `main` branch and ship in the next release. A signed, notarized release line will be stated here once it exists.
+The supported line is 0.2.x, published on GitHub Releases as unsigned previews (signed ad hoc, not notarized). Fixes land on the `main` branch and ship in the next release. A signed, notarized release line will be stated here once it exists.
 
 ## Out of scope
 
