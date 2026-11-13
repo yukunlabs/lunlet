@@ -129,9 +129,10 @@ import LunletMessaging
     }
 }
 
-/// A stand-in for the panel's glass over a busy window: a dark terminal with bright rows, blurred, under the tint an
-/// on-device capture showed (about 55% white in the light appearance). An offscreen render cannot draw the real
-/// material, and a flat fill hides how much of the window behind reaches the page.
+/// A stand-in for the panel's glass over a busy window: a dark terminal with bright rows under what on-device
+/// captures showed of the system's dark glass (a fifth of the window behind over a mid gray, sRGB 80 over a dark
+/// window to 133 over a white one). An offscreen render cannot draw the real material, and a flat fill hides how
+/// much of the window behind reaches the page.
 private struct BusyGlass: View {
     let dark: Bool
     var body: some View {
@@ -142,12 +143,13 @@ private struct BusyGlass: View {
             Color(red: 0.62, green: 0.56, blue: 0.1).frame(height: 14)
             Color(white: 0.11)
         }
-        .overlay(Color.white.opacity(0.3))
+        .overlay(Color(white: 0.39).opacity(0.8))
         .overlay(PanelStyle.surface.opacity(PanelStyle.surfaceDepth))
     }
 }
 
-/// The panel's surface as an offscreen render can draw it: its own color over a mid-gray stand-in for the glass.
+/// The panel's surface as an offscreen render can draw it: its own color over a mid-gray stand-in for the glass, the
+/// middle of what on-device captures showed.
 struct RenderSurface: View {
-    var body: some View { Color(white: 0.35).overlay(PanelStyle.surface.opacity(PanelStyle.surfaceDepth)) }
+    var body: some View { Color(white: 0.42).overlay(PanelStyle.surface.opacity(PanelStyle.surfaceDepth)) }
 }

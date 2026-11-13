@@ -44,11 +44,12 @@ import LunletCore
         }
         return count > 0 ? sum / count : 0
     }
-    /// Whether two renders are the same drawing. The renderer may round a channel one level differently from one
-    /// render to the next, so a level's difference is not a different drawing.
+    /// Whether two renders are the same drawing. The renderer may round a channel differently from one render to the
+    /// next, by a level, or by two where layers of light add up (measured: two values of 65,536 in one render of
+    /// four), so two levels' difference is not a different drawing.
     func matches(_ other: HeaderArtBitmap) -> Bool {
         guard width == other.width, height == other.height else { return false }
-        return !zip(pixels, other.pixels).contains { abs(Int($0) - Int($1)) > 1 }
+        return !zip(pixels, other.pixels).contains { abs(Int($0) - Int($1)) > 2 }
     }
     func png() throws -> Data {
         let provider = try #require(CGDataProvider(data: Data(pixels) as CFData))
@@ -164,6 +165,56 @@ import LunletCore
                 }
             }
         }
+    }
+
+    // Design notes, Panel header and pages: the Sun is a light, not a lit ball. Its light is the same on every side,
+    // white at the core and deeper toward the limb, and a corona of uneven streamers stands out from it.
+    @Test func theSunIsALightSourceNotALitBall() throws {
+        let image = try render(.all, lit: nil)
+        let disc = side / 2 * HeaderBodyArt.sunRadius / (HeaderBodyArt.box / 2)
+        func pixel(_ distance: CGFloat, _ degrees: Double) -> HeaderArtBitmap.Pixel {
+            image.at(point: CGPoint(x: center.x + distance * cos(degrees * .pi / 180), y: center.y + distance * sin(degrees * .pi / 180)))
+        }
+        // No side is the lit one: a patch of the disc is as bright as the patch across from it.
+        func patch(_ degrees: Double) -> Double {
+            let at = CGPoint(x: center.x + disc * 0.6 * cos(degrees * .pi / 180), y: center.y + disc * 0.6 * sin(degrees * .pi / 180))
+            return image.luminance(in: CGRect(x: at.x - disc * 0.15, y: at.y - disc * 0.15, width: disc * 0.3, height: disc * 0.3))
+        }
+        let across = [45.0, 135, 0, 90].map { abs(patch($0) - patch($0 + 180)) }
+        #expect(across.max()! < 10, "the disc is shaded from one side: \(across)")
+        // White-hot at the core, golden toward the limb.
+        let core = pixel(0, 0), limb = pixel(disc * 0.93, 200)
+        #expect(core.r > 250 && core.g > 240 && core.b > 200, "core \(core)")
+        #expect(limb.b < core.b - 90, "limb \(limb) against core \(core)")
+        // Its light reaches well past the disc, and the corona is streamers rather than an even ring.
+        let near = stride(from: 0.0, to: 360, by: 5).map { pixel(disc * 1.34, $0).a }
+        #expect(near.min()! > 40, "the glow at the limb: \(near.min()!)")
+        #expect(near.max()! - near.min()! > 36, "the corona has no streamers: \(near.min()!) to \(near.max()!)")
+        #expect(pixel(disc * 1.7, 20).a > 14, "the glow ends at the limb")
+    }
+
+    /// How much fine structure a drawing has inside its disc: the mean difference between each pixel's luminance and
+    /// that of its neighborhood, three points across.
+    private func fineStructure(_ image: HeaderArtBitmap) -> Double {
+        let cx = Double(center.x * image.scale), cy = Double(center.y * image.scale), limit = Double(radius * image.scale) * 0.82
+        let reach = Int(1.5 * image.scale)
+        var sum = 0.0, count = 0.0
+        for y in 0..<image.height {
+            for x in 0..<image.width where hypot(Double(x) + 0.5 - cx, Double(y) + 0.5 - cy) < limit {
+                var around = 0.0, n = 0.0
+                for dy in -reach...reach { for dx in -reach...reach { around += HeaderArtBitmap.luminance(image.at(x + dx, y + dy)); n += 1 } }
+                sum += abs(HeaderArtBitmap.luminance(image.at(x, y)) - around / n); count += 1
+            }
+        }
+        return sum / count
+    }
+
+    // Design notes, Panel header and pages: a planet has weather one can look at: belts with uneven edges, streaks of
+    // cloud and storms, not a few ruled bands on a shaded ball.
+    @Test func eachPlanetShowsItsWeatherInDetail() throws {
+        let codex = fineStructure(try render(.agent(.codex), lit: 1)), claude = fineStructure(try render(.agent(.claude), lit: 1))
+        #expect(codex > 2.8, "Codex \(codex)")
+        #expect(claude > 5.5, "Claude Code \(claude)")
     }
 
     /// Opt-in: writes the bodies at the header's two sizes for every share, plain and mirrored, to the directory that

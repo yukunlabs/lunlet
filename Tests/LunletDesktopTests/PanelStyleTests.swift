@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
 // Refs: US-02, AC-02.05; US-24, AC-24.02; US-23, AC-23.03.
-// Refs: US-01, AC-01.08; US-20, AC-20.02; US-03, AC-03.09; US-04, AC-04.03; US-33, AC-33.09.
+// Refs: US-01, AC-01.08; US-20, AC-20.02; US-03, AC-03.05, AC-03.09; US-04, AC-04.03; US-33, AC-33.09.
 import AppKit
 import Foundation
 import SwiftUI
@@ -119,6 +119,24 @@ struct PanelStyleTests {
 
     // AC-03.09: the panel pages use exactly four text roles, none below 11 points, and the page budget holds a card
     // and three whole rows on the 4-point grid.
+    // Design notes, Surfaces: the panel is the system's glass under its own deep color, about half of each. With less
+    // glass the frosted surface turns into a slab; with less color a white window behind leaves the secondary text
+    // too little contrast (AC-03.05, AC-24.02).
+    @Test func theSurfaceLetsTheGlassThroughAndKeepsItsTextLegible() throws {
+        let depth = PanelStyle.surfaceDepth
+        #expect(depth <= 0.55, "the system's glass reads through the surface")
+        // The brightest the system's dark glass was measured on a device, over a white window: sRGB 133 of 255.
+        let glass = 133.0 / 255
+        let surface = try #require(NSColor(PanelStyle.surface).usingColorSpace(.sRGB))
+        func linear(_ value: Double) -> Double { value <= 0.04045 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4) }
+        func luminance(_ r: Double, _ g: Double, _ b: Double) -> Double { 0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b) }
+        let page = [surface.redComponent, surface.greenComponent, surface.blueComponent].map { Double($0) * depth + glass * (1 - depth) }
+        // Secondary text is white at 55% in the dark appearance.
+        let text = page.map { 0.55 + 0.45 * $0 }
+        let contrast = (luminance(text[0], text[1], text[2]) + 0.05) / (luminance(page[0], page[1], page[2]) + 0.05)
+        #expect(contrast >= 4, "secondary text over a white window: \(contrast)")
+    }
+
     @Test @MainActor func panelTextHasFourRolesAndThePageBudgetHoldsThreeRows() {
         typealias Role = PanelStyle.Text.Role
         #expect(Role.allCases == [.title, .primary, .secondary, .figure])

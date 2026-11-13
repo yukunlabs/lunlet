@@ -143,8 +143,10 @@ enum PanelStyle {
     }
     /// The panel's surface color: the deep blue-black the header's sky ends in, so the sky has nothing to end against.
     static let surface = Color(.sRGB, red: 11 / 255, green: 10 / 255, blue: 24 / 255, opacity: 1)
-    /// How much of the surface is its own color; the rest is the system's glass under it.
-    static let surfaceDepth = 0.82
+    /// How much of the surface is its own color; the rest is the system's glass under it. About half of each: the
+    /// window behind still colors the surface softly, as frosted glass does, and over a white window the secondary
+    /// text keeps a contrast of four to one. Much more of the color and the glass is gone.
+    static let surfaceDepth = 0.5
     /// The panel is dark in both appearances, as the notch it hangs from is.
     @MainActor static var appearance: NSAppearance? { NSAppearance(named: .darkAqua) }
     /// A hairline around a module, brighter along its top edge as if lit from above, which lifts it off the surface

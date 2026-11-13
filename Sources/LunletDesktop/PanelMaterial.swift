@@ -4,10 +4,12 @@
 import AppKit
 import SwiftUI
 
-/// The panel's surface: deep and almost black in both appearances, as the notch it hangs from is, so the header's sky
+/// The panel's surface: dark frosted glass in both appearances, as the notch it hangs from is dark, so the header's sky
 /// is the surface's own darkness with stars in it rather than a picture set on a lighter page. The system's glass
 /// (Liquid Glass on macOS 26 and later, otherwise a vibrant behind-window material that stays active while the panel
-/// is not key) lies under a deep fill and shows through it faintly, which keeps the surface dark over any window.
+/// is not key) lies under a fill of the surface's deep color, about half of each: the window behind colors the
+/// surface softly and the surface stays dark over any window. The fill is drawn over the glass rather than given to
+/// it as a tint, which the system's glass does not darken with.
 /// Reduce Transparency and Increase Contrast use the same color opaque, with a visible border.
 struct PanelMaterial: View {
     /// The surface outline; nil is a rounded panel with the surface radius.
