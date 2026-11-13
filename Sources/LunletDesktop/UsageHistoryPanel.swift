@@ -82,22 +82,28 @@ struct UsageHistoryPanel: View {
         }.joined(separator: "\n"))
     }
 
+    /// Where the numbers come from and, for records known to be incomplete, that the totals are at least this much;
+    /// one line when it fits, otherwise the source above its notes.
     private var sourceLine: some View {
         let claude = provider == .claude
-        // Claude history is always a lower bound, which its own label states.
         let unpriced = model.snapshot?.days.contains(where: { $0.amount.unpricedTokens > 0 }) == true
-        let incomplete = [model.snapshot?.partial == true && !claude ? "Partial history" : nil,
-                showCost && unpriced ? "Partial pricing" : nil]
-                .compactMap { $0 }.joined(separator: " · ")
-        let source = claude ? (showCost ? "This Mac · API list-price estimate · Lower bound"
-                                        : "This Mac · Recorded usage · Lower bound")
-            : showCost ? "This Mac · Estimated USD" : "This Mac · local Codex records"
+        let parts = TrendChartText.dailyFootnote(provider: provider, cost: showCost, partial: model.snapshot?.partial == true,
+                                                 partialPricing: unpriced)
+        let notes = parts.dropFirst().joined(separator: " · ")
         let estimate = claude ? "Claude API list prices, not a subscription bill. " : "Standard API estimate, not a subscription bill. "
-        return Label(([source, incomplete].filter { !$0.isEmpty }).joined(separator: " · "), systemImage: "laptopcomputer")
-            .font(Font.caption).foregroundStyle(.secondary)
-            .help(showCost ? estimate + LocalUsageText.coverage(model.snapshot?.days.map(\.amount) ?? [])
-                : claude ? "Recorded Claude Code transcripts on this Mac, each response counted once. Unrecorded usage is missing."
-                : "Local Codex usage records.")
+        return ViewThatFits(in: .horizontal) {
+            Label(parts.joined(separator: " · "), systemImage: "laptopcomputer").lineLimit(1).fixedSize()
+            Label {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(parts.first ?? "").lineLimit(1)
+                    Text(notes.prefix(1).uppercased() + notes.dropFirst()).lineLimit(1)
+                }
+            } icon: { Image(systemName: "laptopcomputer") }
+        }
+        .font(Font.caption).foregroundStyle(.secondary)
+        .help(showCost ? estimate + LocalUsageText.coverage(model.snapshot?.days.map(\.amount) ?? [])
+            : claude ? "Recorded Claude Code transcripts on this Mac, each response counted once. Unrecorded usage is missing."
+            : "Local Codex usage records.")
     }
 
     private func value(_ amount: LocalUsageAmount) -> Double? {

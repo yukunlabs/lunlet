@@ -6,7 +6,7 @@
 // Refs: US-16, AC-16.01, AC-16.02; US-17, AC-17.01, AC-17.04, AC-17.08;
 // Refs: US-18, AC-18.01; US-19, AC-19.01, AC-19.02, AC-19.03; US-20, AC-20.01; US-33, AC-33.07, AC-33.08;
 // Refs: US-21, AC-21.01; US-22, AC-22.01, AC-22.02; US-26, AC-26.01, AC-26.02; US-31, AC-31.01, AC-31.02, AC-31.03, AC-31.04.
-// Refs: US-35, AC-35.03, AC-35.04.
+// Refs: US-35, AC-35.03, AC-35.04; US-38, AC-38.06; US-39, AC-39.06.
 // Refs: US-41, AC-41.01, AC-41.02.
 import AppKit
 import LunletCore
@@ -32,9 +32,8 @@ extension EnvironmentValues {
     }
 }
 
-/// The pet choice: the built-in dog or a pack from Lunlet's or Codex's pets folder, with the reasons any pack
-/// cannot be used (AC-40.01, AC-40.02, AC-40.07).
-private struct PetPackChoice: View {
+/// The pet choice: the built-in dog or a pack from Lunlet's or Codex's pets folder (AC-40.01).
+private struct PetPackMenu: View {
     @ObservedObject var preferences: PreferencesStore
     @ObservedObject var packs: PetPackLibrary
     private var selection: Binding<String> {
@@ -42,33 +41,62 @@ private struct PetPackChoice: View {
                 set: { key in preferences.update { $0.petPack = key.isEmpty ? nil : key } })
     }
     var body: some View {
-        Picker("Pet", selection: selection) {
-            Text("Built-in dog").tag("")
-            ForEach(packs.validEntries, id: \.reference.key) { entry in
-                Text("\(entry.displayName) · \(entry.reference.source.title)").tag(entry.reference.key)
+        SettingsRow("Pet", controlNamed: true) {
+            Picker("Pet", selection: selection) {
+                Text("Built-in dog").tag("")
+                ForEach(packs.validEntries, id: \.reference.key) { entry in
+                    Text("\(entry.displayName) · \(entry.reference.source.title)").tag(entry.reference.key)
+                }
+                if let chosen = preferences.value.petPack, !packs.validEntries.contains(where: { $0.reference.key == chosen }) {
+                    Text("Unavailable pack").tag(chosen)
+                }
             }
-            if let chosen = preferences.value.petPack, !packs.validEntries.contains(where: { $0.reference.key == chosen }) {
-                Text("Unavailable pack").tag(chosen)
-            }
+            .labelsHidden().pickerStyle(.menu).fixedSize()
         }
         .help(PetPackLibrary.pickerHelp)
-        LabeledContent("Packs") {
-            HStack {
+    }
+}
+
+/// The pack folders' actions and the reasons any pack cannot be used (AC-40.02, AC-40.07).
+private struct PetPackActions: View {
+    @ObservedObject var packs: PetPackLibrary
+    var body: some View {
+        SettingsRow("Packs") {
+            HStack(spacing: PanelStyle.Space.margin) {
                 Button("Refresh") { packs.refresh() }
                 Button("Open pets folder") { packs.openLunletFolder() }
                 Button("Find pets on Petdex") { packs.openGallery() }
                     .help("Opens the Petdex gallery in your browser; install a pet there with petdex install and it appears in this list.")
             }
+            .buttonStyle(SettingsLinkButtonStyle())
         }
-        if let problem = packs.chosenProblem {
-            Text(problem).font(.caption).foregroundStyle(.secondary)
+        let notes = [packs.chosenProblem, packs.truncationNote].compactMap { $0 } + packs.invalidEntries.map {
+            "\($0.reference.folder) (\($0.reference.source.title)): \($0.failure?.description ?? "invalid")"
         }
-        if let note = packs.truncationNote {
-            Text(note).font(.caption).foregroundStyle(.secondary)
+        if !notes.isEmpty {
+            VStack(alignment: .leading, spacing: PanelStyle.Space.hairline) {
+                ForEach(Array(notes.enumerated()), id: \.offset) { Text($0.element).fixedSize(horizontal: false, vertical: true) }
+            }
+            .font(PanelStyle.Text.secondary).foregroundStyle(.secondary)
+            .settingsCell()
         }
-        ForEach(packs.invalidEntries, id: \.reference.key) { entry in
-            Text("\(entry.reference.folder) (\(entry.reference.source.title)): \(entry.failure?.description ?? "invalid")")
-                .font(.caption).foregroundStyle(.secondary)
+    }
+}
+
+/// Claude Code's two connections on the Agents page: shown while Claude Code is a selected agent, and whenever one
+/// of them needs the owner's attention (AC-33.08, AC-38.06).
+private struct ClaudeConnectionsGroup: View {
+    @ObservedObject var limits: ClaudePlanLimitsModel
+    @ObservedObject var hook: ClaudeHookModel
+    let selected: Bool
+    var body: some View {
+        let needed = ClaudePlanLimitsSettings.status(connection: limits.connection, issue: limits.actionIssue).needsAttention
+            || ClaudeHookSettings.status(connection: hook.connection, issue: hook.actionIssue).needsAttention
+        if selected || needed {
+            SettingsGroup(title: "Claude Code", note: "Lunlet keeps only percent used and reset times, and reads no credentials.") {
+                ClaudePlanLimitsSettings(model: limits)
+                ClaudeHookSettings(model: hook)
+            }
         }
     }
 }
@@ -87,212 +115,200 @@ struct PreferencesPane: View {
     @Environment(\.petPacks) private var petPacks
     @Environment(\.appUpdater) private var updater
     @Environment(\.allowanceNotifier) private var allowanceNotifier
-    @ViewState private var category = PreferenceCategory.appearance
+    @ViewState private var category: PreferenceCategory
     @ViewState private var fileIssue: String?
 
+    init(preferences: PreferencesStore, skins: SkinCatalog, setup: FeishuSetupModel, botSetup: BotChannelSetupModel,
+         notifications: LockedCompletionNotifications, openConnection: @escaping () -> Void,
+         initialCategory: PreferenceCategory? = nil) {
+        self.preferences = preferences; self.skins = skins; self.setup = setup; self.botSetup = botSetup
+        self.notifications = notifications; self.openConnection = openConnection; self.initialCategory = initialCategory
+        // The page opens on its category at once, so the tab selection never slides there from Appearance.
+        _category = ViewState(initialValue: SettingsModel.opening(initialCategory))
+    }
+
+    /// Five labeled icon tabs over the selected category's groups (AC-31.01, AC-31.04). A page made longer by an
+    /// entry's own options scrolls; About is laid out to fit.
     var body: some View {
-        HStack(alignment: .top, spacing: 0) {
-            VStack(alignment: .leading, spacing: PanelStyle.Space.hairline) {
-                ForEach(PreferenceCategory.allCases, id: \.self) { item in
-                    let selected = category == item
-                    Button { category = item; fileIssue = nil } label: {
-                        HStack(spacing: 7) {
-                            // A fixed symbol column keeps every label aligned.
-                            Image(systemName: item.symbol).frame(width: 18)
-                                .foregroundStyle(selected ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
-                                .accessibilityHidden(true)
-                            Text(item.rawValue).foregroundStyle(.primary).lineLimit(1)
-                        }
-                        .font(Font.body)
-                        .padding(.horizontal, PanelStyle.Space.medium)
-                        .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
-                        .background(selected ? AnyShapeStyle(.tint.opacity(0.16)) : AnyShapeStyle(Color.clear),
-                                    in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                        .contentShape(Rectangle())
-                    }.buttonStyle(.plain).accessibilityLabel(item.rawValue + " settings")
-                        .accessibilityAddTraits(selected ? .isSelected : [])
-                }
-                Spacer(minLength: 0)
-            }.padding(.horizontal, PanelStyle.Space.medium).padding(.top, PanelStyle.Space.tight).frame(width: 136)
-            Rectangle().fill(PanelStyle.separator).frame(width: 0.5)
+        VStack(spacing: 0) {
+            SettingsTabBar(selection: Binding(get: { category }, set: { category = $0; fileIssue = nil }))
             if category == .about {
                 // The page is laid out to fit the panel; only larger accessibility text makes it scroll.
+                let about = SettingsAbout(preferences: preferences, skins: skins, updater: updater)
                 ViewThatFits(in: .vertical) { about; ScrollView { about } }
             } else {
-                Form {
-                    switch category {
-                    case .appearance: appearance
-                    case .usage: usage
-                    case .agents: agents
-                    case .messaging: messaging
-                    case .about: EmptyView()
+                ScrollView {
+                    VStack(alignment: .leading, spacing: SettingsStyle.groupGap) {
+                        switch category {
+                        case .appearance: appearance
+                        case .usage: usage
+                        case .agents: agents
+                        case .messaging: messaging
+                        case .about: EmptyView()
+                        }
+                        if let issue = fileIssue ?? preferences.issue ?? skins.issue {
+                            Text(issue).font(PanelStyle.Text.secondary).foregroundStyle(.orange).textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true).padding(.horizontal, PanelStyle.Grid.textInset)
+                        }
                     }
-                    if let issue = fileIssue ?? preferences.issue ?? skins.issue {
-                        Text(issue).font(Font.caption).foregroundStyle(.orange).textSelection(.enabled)
-                    }
+                    .padding(.horizontal, PanelStyle.Grid.margin).padding(.bottom, PanelStyle.Space.medium)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
                 }
-                .formStyle(.grouped).scrollContentBackground(.hidden).controlSize(.small)
+                .scrollBounceBehavior(.basedOnSize)
             }
-        }.frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .controlSize(.small)
         .onAppear { if let initialCategory { category = initialCategory } }
     }
 
-    private var appearance: some View {
-        Group {
-            Section {
-                Picker("Presentation", selection: binding(\.presentation)) {
-                    ForEach(EntryPresentation.allCases, id: \.self) { Text($0.title).tag($0) }
+    @ViewBuilder private var appearance: some View {
+        let value = preferences.value
+        let options = SettingsModel.entryOptions(value, packsListed: petPacks != nil)
+        SettingsGroup(title: "Entry", note: SettingsModel.entryNote(value.presentation)) {
+            SettingsEntryPicker(selection: binding(\.presentation), coat: value.petCoat).help(SettingsModel.entryHelp)
+            if options.contains(.showAllowance) {
+                // AC-21.04, AC-21.05: allowance text after the lettering, and the level below which it shows.
+                SettingsRow("Show allowance", controlNamed: true) {
+                    PanelSegmentedControl(selection: binding(\.menuBarAllowance),
+                                          segments: MenuBarAllowance.allCases.map { .init(value: $0, title: $0.title) },
+                                          size: .small, label: "Show allowance")
                 }
-                .help("The notch widget flanks a hardware notch; the menu bar entry is a standard status item; the desktop "
-                    + "pet is a small dog on every Space that shows what your agents are doing and opens the panel beside it.")
-                if preferences.value.presentation == .pet {
-                    if let petPacks { PetPackChoice(preferences: preferences, packs: petPacks) }
-                    if preferences.value.petPack == nil || petPacks == nil {
-                        Picker("Coat", selection: binding(\.petCoat)) {
-                            ForEach(PetCoat.allCases, id: \.self) { Text($0.title).tag($0) }
-                        }
-                    }
+                .help("Plain text after the lettering: the window closest to running out among those Lunlet shows, as the "
+                    + "percent left, with its reset countdown if chosen. The agent's name is added with several agents and "
+                    + "5h marks Codex's five-hour window. An unknown window shows no text.")
+            }
+            if options.contains(.onlyBelow) {
+                SettingsRow("Only below", controlNamed: true) {
+                    PanelSegmentedControl(selection: binding(\.menuBarAllowanceBelow), segments: Self.belowLevels,
+                                          size: .small, label: "Only below")
                 }
-                if preferences.value.presentation == .menuBar {
-                    // AC-21.04, AC-21.05: allowance text after the lettering, and the level below which it shows.
-                    Picker("Show allowance", selection: binding(\.menuBarAllowance)) {
-                        ForEach(MenuBarAllowance.allCases, id: \.self) { Text($0.title).tag($0) }
-                    }
-                    .help("Plain text after the lettering: the window closest to running out among those Lunlet shows, as the "
-                        + "percent left, with its reset countdown if chosen. The agent's name is added with several agents and "
-                        + "5h marks Codex's five-hour window. An unknown window shows no text.")
-                    if preferences.value.menuBarAllowance != .off {
-                        Picker("Only below", selection: binding(\.menuBarAllowanceBelow)) {
-                            Text("Always").tag(Optional<Int>.none)
-                            ForEach(LunletPreferences.menuBarAllowanceLevels, id: \.self) { Text("\($0)% left").tag(Optional($0)) }
-                        }
-                        .help("Show the text only while that window is below this percent left.")
-                    }
-                }
-                // AC-13.11: one system sound with each Needs you cue, off by default.
-                Toggle("Sound for Needs you", isOn: binding(\.needsYouSound))
-                    .help("Plays the system alert sound once when a session starts waiting for your answer or approval, never "
-                        + "for a start or a finish, and never while the display is locked or asleep.")
+                .help("Show the text only while that window is below this percent left.")
+            }
+            if options.contains(.pet), let petPacks { PetPackMenu(preferences: preferences, packs: petPacks) }
+            if options.contains(.coat) {
+                SettingsRow("Coat", controlNamed: true) { SettingsCoatSwatches(selection: binding(\.petCoat)) }
+            }
+            if options.contains(.packs), let petPacks { PetPackActions(packs: petPacks) }
+        }
+        SettingsGroup(title: "Look", note: "The skin draws the strand beside the notch and sets the accent color.") {
+            SettingsRow("Skin", controlNamed: true) {
                 Picker("Skin", selection: binding(\.skinID)) {
                     ForEach(skins.skins) { Text($0.title).tag($0.id) }
                     if !skins.skins.contains(where: { $0.id == preferences.value.skinID }) {
                         Text("Unavailable skin").tag(preferences.value.skinID)
                     }
                 }
-                if skins.skin(id: preferences.value.skinID).allowsColorEditing {
-                    LabeledContent("Color") {
-                        SkinColorControls(selection: colorBinding,
-                                          isOverridden: preferences.value.accentHex != nil) {
-                            preferences.update { $0.accentHex = nil }
-                        }
+                .labelsHidden().pickerStyle(.menu).fixedSize()
+            }
+            if skins.skin(id: preferences.value.skinID).allowsColorEditing {
+                SettingsRow("Color") {
+                    SkinColorControls(selection: colorBinding, isOverridden: preferences.value.accentHex != nil) {
+                        preferences.update { $0.accentHex = nil }
                     }
                 }
             }
-            Section {
-                DisclosureGroup("Custom skins") {
-                    HStack {
-                        Button("Import…") { importSkin() }
-                        Button("Export template…") { exportSkin() }
-                    }
+            SettingsRow("Custom skins") {
+                HStack(spacing: PanelStyle.Space.margin) {
+                    Button("Import…") { importSkin() }
+                    Button("Export template…") { exportSkin() }
                 }
+                .buttonStyle(SettingsLinkButtonStyle())
+            }
+        }
+        // AC-13.11: one system sound with each Needs you cue, off by default.
+        SettingsGroup(title: "Sound", note: "One system sound when a session starts waiting for you.") {
+            SettingsRow("Sound for Needs you", controlNamed: true) { toggle("Sound for Needs you", \.needsYouSound) }
+                .help("Plays the system alert sound once when a session starts waiting for your answer or approval, never "
+                    + "for a start or a finish, and never while the display is locked or asleep.")
+        }
+    }
+    private static let belowLevels: [PanelSegmentedControl<Int?>.Segment] =
+        [.init(value: nil, title: "Always")] + LunletPreferences.menuBarAllowanceLevels.map { .init(value: $0, title: "\($0)% left") }
+
+    @ViewBuilder private var usage: some View {
+        SettingsGroup(title: "History", note: "How many days the charts and totals cover.") {
+            SettingsRow("Days", controlNamed: true) {
+                PanelSegmentedControl(selection: binding(\.historyDays), segments: (1...7).map {
+                    .init(value: $0, title: String($0), accessibilityLabel: $0 == 1 ? "1 day" : "\($0) days")
+                }, size: .small, label: "Usage history days")
+            }
+        }
+        // Allowance notifications: the switch, the level and the reset notice (AC-41.01, AC-41.02).
+        SettingsGroup(title: "Notifications",
+                      note: "Official readings only: never estimates, never through messaging.") {
+            SettingsRow("Allowance notifications", controlNamed: true) { toggle("Allowance notifications", \.allowanceNotifications) }
+                .help("A macOS notification when a window Lunlet shows drops below the level, and when it resets. "
+                    + "Only official readings, never estimates, and never through the messaging channel.")
+                .onAppear { allowanceNotifier?.checkAuthorization() }
+            if preferences.value.allowanceNotifications {
+                SettingsRow("Warn below", controlNamed: true) {
+                    PanelSegmentedControl(selection: binding(\.allowanceWarnBelow), segments: LunletPreferences.allowanceWarnLevels.map {
+                        .init(value: $0, title: "\($0)% left")
+                    }, size: .small, label: "Warn below")
+                }
+                SettingsRow("When a window resets", controlNamed: true) { toggle("When a window resets", \.allowanceResetNotices) }
+                if let allowanceNotifier { AllowancePermissionNote(notifier: allowanceNotifier) }
+            }
+        }
+        // AC-04.04: the source, purpose and destination of each figure, with credential handling in help.
+        SettingsGroup(title: "Where the numbers come from") {
+            ForEach(SettingsModel.sources(providers: preferences.value.providers), id: \.label) { source in
+                SettingsRow(source.label) { Text(source.value).foregroundStyle(.secondary).lineLimit(1) }
+                    .help(source.help ?? "")
+                    .accessibilityElement(children: .combine)
             }
         }
     }
-    private var usage: some View {
-        Group {
-            Section {
-                Picker("Days", selection: binding(\.historyDays)) {
-                    ForEach(1...7, id: \.self) { day in
-                        Text(String(day)).tag(day).accessibilityLabel(day == 1 ? "1 day" : "\(day) days")
-                    }
-                }.pickerStyle(.segmented)
-                    .accessibilityLabel("Usage history days")
-            } header: {
-                Text("History")
-            } footer: {
-                Text("Local Codex sign-in · OpenAI account limits")
-                    .font(Font.caption).foregroundStyle(.secondary)
-                    .help("Account identity and limits are read automatically through Codex. Sign-in credentials are never sent "
-                        + "through messaging channels. Quitting cancels owned reads.")
-            }
-            // Allowance notifications: the switch, the level and the reset notice (AC-41.01, AC-41.02).
-            Section {
-                Toggle("Allowance notifications", isOn: binding(\.allowanceNotifications))
-                    .help("A macOS notification when a window Lunlet shows drops below the level, and when it resets. "
-                        + "Only official readings, never estimates, and never through the messaging channel.")
-                    .onAppear { allowanceNotifier?.checkAuthorization() }
-                if preferences.value.allowanceNotifications {
-                    Picker("Warn below", selection: binding(\.allowanceWarnBelow)) {
-                        ForEach(LunletPreferences.allowanceWarnLevels, id: \.self) { Text("\($0)% left").tag($0) }
-                    }
-                    Toggle("When a window resets", isOn: binding(\.allowanceResetNotices))
-                    if let allowanceNotifier { AllowancePermissionNote(notifier: allowanceNotifier) }
-                }
-            } header: {
-                Text("Notifications")
-            }
-        }
-    }
-    private var agents: some View {
-        Group {
-            Section {
-                ForEach(AgentProvider.allCases) { agent in
+
+    @ViewBuilder private var agents: some View {
+        SettingsGroup(title: "Show agents", note: "Several agents open on the Overview. One agent always stays on.") {
+            ForEach(AgentProvider.allCases) { agent in
+                SettingsRow(agent.title, detail: SettingsModel.agentDetail(agent), controlNamed: true) {
                     Toggle(agent.title, isOn: Binding(get: { preferences.value.providers.contains(agent) }, set: { selected in
-                        preferences.update { value in
-                            if selected { if !value.providers.contains(agent) { value.providers.append(agent) } }
-                            else { value.providers.removeAll { $0 == agent } }
-                        }
+                        preferences.update { $0.providers = SettingsModel.toggled(agent, on: selected, in: $0.providers) }
                     }))
-                    .disabled(preferences.value.providers == [agent])
-                    // The switch itself says what selecting the agent changes outside Lunlet (AC-33.08, AC-38.06).
-                    .help(agent.switchHelp ?? "")
+                    .labelsHidden().toggleStyle(.switch)
+                    .disabled(!SettingsModel.canTurnOff(agent, selected: preferences.value.providers))
                 }
-            } header: {
-                Text("Show agents")
-            } footer: {
-                Text("Several agents share an Overview tab · Claude Code: local sessions and usage")
-                    .font(Font.caption).foregroundStyle(.secondary)
-                    .help(AgentProvider.claude.switchHelp ?? "")
+                // The switch itself says what selecting the agent changes outside Lunlet (AC-33.08, AC-38.06).
+                .help(agent.switchHelp ?? "")
             }
-            ClaudePlanLimitsSettings(model: claudeLimits ?? .placeholder)
-            ClaudeHookSettings(model: claudeHook ?? .placeholder)
         }
+        ClaudeConnectionsGroup(limits: claudeLimits ?? .placeholder, hook: claudeHook ?? .placeholder,
+                               selected: preferences.value.providers.contains(.claude))
     }
-    private var messaging: some View {
+
+    @ViewBuilder private var messaging: some View {
         let feishu = preferences.value.channel == .feishu
         let name = feishu ? setup.platformName : preferences.value.channel.title
         let stages = feishu
             ? setup.readinessStages(delivery: notifications.status, authorization: notifications.authorizationCheck)
             : botSetup.readinessStages(delivery: notifications.status, authorization: notifications.authorizationCheck)
-        return Section {
-            Picker("Channel", selection: binding(\.channel)) {
-                ForEach(CommunicationChannel.allCases) { channel in
-                    Text(channel.title).tag(channel)
-                }
+        SettingsGroup(title: "Communication", note: "One private channel for notices and replies while you are away from the Mac. "
+                        + "Execution approvals stay on the Mac.") {
+            SettingsRow("Channel", controlNamed: true) {
+                PanelSegmentedControl(selection: binding(\.channel),
+                                      segments: CommunicationChannel.allCases.map { .init(value: $0, title: $0.title) },
+                                      size: .small, label: "Channel")
             }
-            LabeledContent("Status") {
+            SettingsRow("Status") {
                 let health = ChannelHealth(stages: stages)
                 Label(health.word, systemImage: health.symbol)
                     .labelStyle(.titleAndIcon)
                     .foregroundStyle(health.tone == .neutral ? Color.secondary : health.tone.color)
             }
             .help(notifications.status.explanation)
+            .accessibilityElement(children: .combine)
             // The attached connection card shows these same stages (AC-22.03).
             DisclosureGroup("Connection details") {
-                ForEach(stages) { stage in
-                    LabeledContent {
-                        Text(stage.value).foregroundStyle(ReadinessStage.valueStyle(stage.tone))
-                            .multilineTextAlignment(.trailing)
-                    } label: {
-                        Label(stage.id, systemImage: stage.symbol)
-                            .foregroundStyle(stage.tone == .neutral ? Color.primary : stage.tone.color)
-                    }
-                    .font(Font.caption)
-                    .accessibilityElement(children: .combine)
-                }
+                ReadinessStageList(stages: stages).padding(.top, PanelStyle.Space.tight)
             }
+            .font(PanelStyle.Text.primary)
+            .settingsCell()
             if feishu, case .enrolled = setup.state, ![.notChecked, .unavailable].contains(notifications.authorizationCheck) {
-                Text(notifications.authorizationCheck.explanation).font(Font.caption).foregroundStyle(.secondary)
+                Text(notifications.authorizationCheck.explanation).font(PanelStyle.Text.secondary).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true).settingsCell()
             }
             HStack {
                 Button("Manage " + name + "…", action: openConnection)
@@ -302,78 +318,14 @@ struct PreferencesPane: View {
                         .disabled(notifications.authorizationCheck == .checking)
                 }
             }
-        } header: {
-            Text("Communication")
+            .buttonStyle(SettingsLinkButtonStyle())
+            .settingsCell()
         }
     }
-    /// One page with no scrolling: the lettering and version, what Lunlet is, the facts of AC-29.05 in a compact
-    /// grid, a release build's update controls and, along the bottom edge, the error log and the copyright line.
-    private var about: some View {
-        VStack(alignment: .leading, spacing: PanelStyle.Space.medium) {
-            HStack(spacing: PanelStyle.Space.module) {
-                Image(nsImage: NSApplication.shared.applicationIconImage).resizable().frame(width: 40, height: 40)
-                VStack(alignment: .leading, spacing: PanelStyle.Space.tight) {
-                    // The app names itself with the same lun·let lettering as the notch and menu-bar entries.
-                    Image(nsImage: LunletWordmark.image(height: LunletWordmark.aboutHeight)).renderingMode(.template)
-                        .foregroundStyle(skins.controlTint(for: preferences.value).color)
-                        .accessibilityLabel("Lunlet")
-                    Text(Self.version).font(Font.subheadline).foregroundStyle(.secondary).textSelection(.enabled)
-                }
-            }
-            Text("A notch companion for your Codex and Claude Code sessions.")
-                .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            // The facts read at the panel's secondary size, so they stay on one page beside the update controls.
-            Grid(alignment: .topLeading, horizontalSpacing: PanelStyle.Space.margin, verticalSpacing: PanelStyle.Space.tight) {
-                fact("Developer", "yukunlabs")
-                fact("License", "Open source · 0BSD · free for everyone",
-                     help: "Anyone may use, copy, modify and distribute Lunlet for any purpose, with or without fee.")
-                fact("Includes", "SwiftProtobuf · Apache-2.0\nSparkle · MIT",
-                     help: "Their licenses, including those of the code Sparkle bundles, and Lunlet's notices ship inside "
-                        + "the application bundle.")
-                fact("Privacy", "Runs on this Mac with no analytics. Credentials stay on this Mac in a file only your user "
-                     + "can read, sealed for this Mac; notices go only to the channel you set up.")
-            }
-            .font(Font.subheadline)
-            // Present only in a configured release build (AC-35.03, AC-35.04).
-            UpdateSettingsSection(updater: updater)
-            Spacer(minLength: 0)
-            HStack(alignment: .firstTextBaseline) {
-                errorLog
-                Spacer()
-                Text("© 2026 yukunlabs").foregroundStyle(.secondary)
-            }
-            .font(Font.caption)
-        }
-        .font(Font.body)
-        .padding(.horizontal, PanelStyle.Space.large).padding(.vertical, PanelStyle.Space.module)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-    }
-    private func fact(_ label: String, _ value: String, help: String? = nil) -> some View {
-        GridRow {
-            Text(label).gridColumnAlignment(.leading)
-            let text = Text(value).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            if let help { text.help(help) } else { text }
-        }
-        .accessibilityElement(children: .combine)
-    }
-    /// The local error log for troubleshooting: errors only, no content, never uploaded (AC-14.07).
-    private var errorLog: some View {
-        let log = DiagnosticLog.file?.url ?? DiagnosticFile.standard, folder = log.deletingLastPathComponent()
-        return Button("Show error log in Finder") {
-            let target = FileManager.default.fileExists(atPath: log.path) ? log : folder
-            if FileManager.default.fileExists(atPath: target.path) { NSWorkspace.shared.activateFileViewerSelecting([target]) }
-        }
-        .buttonStyle(.link)
-        .disabled(!FileManager.default.fileExists(atPath: folder.path))
-        .help("Errors only, with no conversation content, account or session identifiers, rotated at 256 KB and "
-            + "never uploaded: ~/Library/Logs/Lunlet/lunlet.log")
-    }
-    /// "0.1.0 (1)" from the bundle; an unbundled development run says so.
-    private static var version: String {
-        let info = Bundle.main.infoDictionary
-        guard let short = info?["CFBundleShortVersionString"] as? String else { return "Development build" }
-        return (info?["CFBundleVersion"] as? String).map { "Version \(short) (\($0))" } ?? "Version " + short
+
+    /// A small system switch whose label stays for assistive tools; the row shows the name.
+    private func toggle(_ title: String, _ key: WritableKeyPath<LunletPreferences, Bool>) -> some View {
+        Toggle(title, isOn: binding(key)).labelsHidden().toggleStyle(.switch)
     }
 
     private func binding<Value>(_ key: WritableKeyPath<LunletPreferences, Value>) -> Binding<Value> {
@@ -411,5 +363,86 @@ struct PreferencesPane: View {
             let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             try encoder.encode(skin).write(to: url, options: .atomic); fileIssue = nil
         } catch { fileIssue = "The skin template could not be exported to that location." }
+    }
+}
+
+/// One page with no scrolling: the lettering and version, what Lunlet is, the facts of AC-29.05 in a compact grid,
+/// a release build's update controls and, along the bottom edge, the error log and the copyright line.
+struct SettingsAbout: View {
+    @ObservedObject var preferences: PreferencesStore
+    @ObservedObject var skins: SkinCatalog
+    let updater: AppUpdater?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: PanelStyle.Space.small) {
+            Group {
+                HStack(spacing: PanelStyle.Space.module) {
+                    Image(nsImage: NSApplication.shared.applicationIconImage).resizable().frame(width: 36, height: 36)
+                    VStack(alignment: .leading, spacing: PanelStyle.Space.hairline) {
+                        // The app names itself with the same lun·let lettering as the notch and menu-bar entries.
+                        Image(nsImage: LunletWordmark.image(height: LunletWordmark.aboutHeight)).renderingMode(.template)
+                            .foregroundStyle(skins.controlTint(for: preferences.value).color)
+                            .accessibilityLabel("Lunlet")
+                        Text(Self.version).font(Font.subheadline).foregroundStyle(.secondary).textSelection(.enabled)
+                    }
+                }
+                Text("A notch companion for your Codex and Claude Code sessions.")
+                    .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                // The facts read at the panel's secondary size, so they stay on one page beside the update controls.
+                Grid(alignment: .topLeading, horizontalSpacing: PanelStyle.Space.margin, verticalSpacing: PanelStyle.Space.tight) {
+                    fact("Developer", "yukunlabs")
+                    fact("License", "Open source · 0BSD · free for everyone",
+                         help: "Anyone may use, copy, modify and distribute Lunlet for any purpose, with or without fee.")
+                    fact("Includes", "SwiftProtobuf · Apache-2.0\nSparkle · MIT",
+                         help: "Their licenses, including those of the code Sparkle bundles, and Lunlet's notices ship inside "
+                            + "the application bundle.")
+                    fact("Privacy", "Runs on this Mac with no analytics. Credentials stay on this Mac in a file only your user "
+                         + "can read, sealed for this Mac; notices go only to the channel you set up.")
+                }
+                .font(Font.subheadline)
+            }
+            .padding(.horizontal, PanelStyle.Grid.textInset)
+            // Present only in a configured release build (AC-35.03, AC-35.04).
+            UpdateSettingsSection(updater: updater)
+            Spacer(minLength: 0)
+            HStack(alignment: .firstTextBaseline) {
+                errorLog
+                Spacer()
+                Text("© 2026 yukunlabs").foregroundStyle(.secondary)
+            }
+            .font(Font.caption)
+            .padding(.horizontal, PanelStyle.Grid.textInset)
+        }
+        .font(Font.body)
+        .padding(.horizontal, PanelStyle.Grid.margin).padding(.top, PanelStyle.Space.hairline).padding(.bottom, PanelStyle.Space.small)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private func fact(_ label: String, _ value: String, help: String? = nil) -> some View {
+        GridRow {
+            Text(label).gridColumnAlignment(.leading)
+            let text = Text(value).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if let help { text.help(help) } else { text }
+        }
+        .accessibilityElement(children: .combine)
+    }
+    /// The local error log for troubleshooting: errors only, no content, never uploaded (AC-14.07).
+    private var errorLog: some View {
+        let log = DiagnosticLog.file?.url ?? DiagnosticFile.standard, folder = log.deletingLastPathComponent()
+        return Button("Show error log in Finder") {
+            let target = FileManager.default.fileExists(atPath: log.path) ? log : folder
+            if FileManager.default.fileExists(atPath: target.path) { NSWorkspace.shared.activateFileViewerSelecting([target]) }
+        }
+        .buttonStyle(SettingsLinkButtonStyle())
+        .disabled(!FileManager.default.fileExists(atPath: folder.path))
+        .help("Errors only, with no conversation content, account or session identifiers, rotated at 256 KB and "
+            + "never uploaded: ~/Library/Logs/Lunlet/lunlet.log")
+    }
+    /// "0.1.0 (1)" from the bundle; an unbundled development run says so.
+    private static var version: String {
+        let info = Bundle.main.infoDictionary
+        guard let short = info?["CFBundleShortVersionString"] as? String else { return "Development build" }
+        return (info?["CFBundleVersion"] as? String).map { "Version \(short) (\($0))" } ?? "Version " + short
     }
 }

@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
-// Refs: US-19, AC-19.01, AC-19.02, AC-19.03, AC-19.04, AC-19.05.
+// Refs: US-19, AC-19.01, AC-19.02, AC-19.03, AC-19.04, AC-19.08, AC-19.09, AC-19.11; US-04, AC-04.17.
 // Refs: US-33, AC-33.01, AC-33.02, AC-33.04, AC-33.06, AC-33.09, AC-33.10; US-13, AC-13.01; US-15, AC-15.01; US-02, AC-02.03.
 import AppKit
 import Foundation
@@ -36,12 +36,12 @@ private struct FixedUsage: LocalUsageReading {
         #expect(preferences.sessionProviders == [.claude, .codex])
     }
 
-    // Refs: US-19, AC-19.02, AC-19.03, AC-19.05.
+    // Refs: US-19, AC-19.02, AC-19.03, AC-19.09.
     @Test func oneProviderOpensDirectlyAndSeveralShareAnOverview() {
-        // Tabs: Overview first, then each selected provider in selection order; one provider has no tab bar.
-        #expect(ProviderPages.tabs(selected: [.codex]).isEmpty && ProviderPages.tabs(selected: []).isEmpty)
-        #expect(ProviderPages.tabs(selected: [.codex, .claude]) == [nil, .codex, .claude])
-        #expect(ProviderPages.tabs(selected: [.claude, .codex]) == [nil, .claude, .codex])
+        // The header: each selected agent in selection order around the Sun, which is the Overview; one agent has no Sun.
+        #expect(HeaderLayout.order([.codex]) == [.agent(.codex)] && HeaderLayout.order([]).isEmpty)
+        #expect(HeaderLayout.order([.codex, .claude]) == [.agent(.codex), .all, .agent(.claude)])
+        #expect(HeaderLayout.order([.claude, .codex]) == [.agent(.claude), .all, .agent(.codex)])
         #expect(ProviderPages.shown(selected: [.claude], requested: nil) == .claude)
         #expect(ProviderPages.shown(selected: [.codex], requested: .claude) == .codex)
         #expect(ProviderPages.shown(selected: [.codex, .claude], requested: nil) == nil)
@@ -146,17 +146,15 @@ private struct FixedUsage: LocalUsageReading {
         #expect(OverviewChart.average(OverviewChart.values([(.codex, nil)], days: days, cost: true)) == nil)
     }
 
-    // Refs: US-19, AC-19.05.
-    // Refs: US-19, AC-19.06. The Overview's Limits card has the provider cards' height, and its agent blocks fill it:
-    // the last block ends at the card's padding, with no blank band beneath it.
-    @Test func overviewLimitsBlocksFillTheCardAtTheProviderCardsHeight() {
-        let layout = PanelStyle.Layout.self
-        let gap = layout.overviewBlockGap(blocks: 2)
-        #expect(layout.line + 2 * (gap + layout.overviewBlock) == layout.cardHeight - 2 * PanelStyle.Grid.margin)
-        // More agents than fit keep the grid's group gap instead of closing up.
-        #expect(layout.overviewBlockGap(blocks: 8) == PanelStyle.Grid.group)
+    // Refs: US-19, AC-19.11.
+    @Test func theOverviewNamesEachAgentWithSessionsWaitingAndSaysWhenNothingWaits() {
+        let lines = OverviewWaiting.lines([.codex: 1, .claude: 3], order: [.claude, .codex])
+        #expect(lines.map(\.provider) == [.claude, .codex])
+        #expect(lines.map(\.text) == ["Claude Code · 3 sessions need you", "Codex · 1 session needs you"])
+        #expect(OverviewWaiting.lines([.codex: 0], order: [.codex, .claude]).isEmpty && OverviewWaiting.none == "Nothing needs you")
     }
 
+    // Refs: US-19, AC-19.08, AC-19.09.
     @Test func overviewSharesTheProviderPagesFrameWithoutSessions() async throws {
         _ = NSApplication.shared
         let today = Calendar.current.startOfDay(for: Date())
@@ -167,19 +165,18 @@ private struct FixedUsage: LocalUsageReading {
         let deadline = ContinuousClock.now + .seconds(10)
         while claudeHistory.snapshot == nil, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
         let codexHistory = LocalUsageModel(reader: FixedUsage(history: .init(days: [], sessions: [:], partial: false)))
-        let account = AccountUsageModel(client: NoAccount())
-        let view = ProviderOverview(codexHistory: codexHistory, claudeHistory: claudeHistory, account: account,
-                                    providers: [.codex, .claude])
-        let hosting = NSHostingView(rootView: view.frame(width: 446))
-        hosting.frame = .init(x: 0, y: 0, width: 446, height: 400)
+        let view = ProviderOverview(codexHistory: codexHistory, claudeHistory: claudeHistory, providers: [.codex, .claude],
+                                    waiting: [.codex: 1])
+        let hosting = NSHostingView(rootView: view.frame(width: 446, height: PanelStyle.Layout.pageHeight))
+        hosting.frame = .init(x: 0, y: 0, width: 446, height: PanelStyle.Layout.pageHeight)
         hosting.layoutSubtreeIfNeeded()
-        // The Overview fills exactly the provider pages' frame — a card of their height, the header row and the
-        // three-row module — so switching tabs never moves a section; session activity never grows it.
-        #expect(abs(hosting.fittingSize.height - PanelStyle.Layout.pageHeight) <= 0.5, "overview \(hosting.fittingSize.height)")
+        // The Overview shares the agent pages' frame: its chart takes whatever the waiting line and the totals leave,
+        // so choosing a body never resizes the panel; session activity never grows it.
+        #expect(hosting.fittingSize.height <= PanelStyle.Layout.pageHeight + 0.5, "overview \(hosting.fittingSize.height)")
         if ProcessInfo.processInfo.environment["LUNLET_TEST_RENDER_SUMMARY"] == "1" {
             try OverviewRender.write(view, name: "overview-preview")
         }
-        await claudeHistory.shutdown(); await codexHistory.shutdown(); await account.shutdown()
+        await claudeHistory.shutdown(); await codexHistory.shutdown()
     }
 }
 
@@ -199,7 +196,7 @@ private struct FixedUsage: LocalUsageReading {
     }
 }
 
-/// The Claude card in a state, measured alone and above three session rows.
+/// The Claude Code page in a state: its top measured alone, and the whole page above three session cards.
 @MainActor private func claudePage(_ limits: ClaudePlanLimitsModel?, history: LocalUsageModel, sessions: SessionListModel,
                                    hover: UsageHoverPanelController) -> (card: CGFloat, page: CGFloat, view: AnyView) {
     func host(_ view: some View) -> NSHostingView<AnyView> {
@@ -218,9 +215,9 @@ private struct FixedUsage: LocalUsageReading {
             AnyView(page))
 }
 
-// Refs: US-33, AC-33.01, AC-33.04, AC-33.09, AC-33.10; US-19, AC-19.02; US-03, AC-03.09.
+// Refs: US-33, AC-33.01, AC-33.04, AC-33.09, AC-33.10, AC-33.11; US-19, AC-19.02; US-03, AC-03.09, AC-03.10; US-04, AC-04.17.
 @Test(.enabled(if: ProcessInfo.processInfo.environment["LUNLET_TEST_PANEL"] == "1"))
-@MainActor func claudePageKeepsTheCodexCardHeightAndThreeCompleteRowsInEveryLimitState() async throws {
+@MainActor func everyAgentPageKeepsThreeCompleteSessionCardsInEveryLimitState() async throws {
     _ = NSApplication.shared
     let today = Calendar.current.startOfDay(for: Date())
     let categories = LocalTokenBreakdown(input: 1_200, output: 45_000, cacheWrite: 120_000, cacheRead: 3_400_000)
@@ -240,9 +237,9 @@ private struct FixedUsage: LocalUsageReading {
                                project: "Synthetic project", turnID: "turn-\(index)", activityConfirmed: true,
                                localPreview: "Synthetic preview \(index)", provider: .claude), origin: .snapshot)
     }
-    // The Codex card's height is the budget that leaves exactly three whole rows on the fixed page.
+    // The Codex page's top, with its two lines of figures, is the budget that leaves exactly three whole cards.
     let account = AccountUsageModel()
-    let codex = NSHostingView(rootView: AccountUsageSummary(model: account, hoverPanel: hover).frame(width: 446)
+    let codex = NSHostingView(rootView: AccountUsageSummary(model: account, history: history, hoverPanel: hover).frame(width: 446)
         .fixedSize(horizontal: false, vertical: true))
     codex.frame = .init(x: 0, y: 0, width: 446, height: 300)
     codex.layoutSubtreeIfNeeded()
@@ -257,16 +254,17 @@ private struct FixedUsage: LocalUsageReading {
     try await ClaudeLimitsFixture.settle(connected) { connected.limits?.sevenDay != nil }
     #expect(connected.connection == .connected)
     let available = PanelStyle.Layout.pageHeight
+    let layout = PanelStyle.Layout.self
+    // The tallest top, the list header and three cards are the page exactly: no sliver of a fourth card.
+    #expect(abs(codex.fittingSize.height - (layout.summaryCard(lines: 2))) <= 0.5,
+            "codex top \(codex.fittingSize.height)")
+    #expect(layout.summaryCard(lines: 2) + PanelStyle.Grid.margin + layout.listHeaderHeight
+            + PanelStyle.Grid.group + layout.threeRows == layout.pageHeight)
     for (name, limits) in [("claude-unknown-preview", nil), ("claude-connected-preview", connected)] as [(String, ClaudePlanLimitsModel?)] {
         let measured = claudePage(limits, history: history, sessions: sessions, hover: hover)
-        // Both windows fit the Codex card's limits group, so switching tabs never changes the card's height.
-        #expect(abs(measured.card - codex.fittingSize.height) <= 0.5, "\(name): card \(measured.card) of \(codex.fittingSize.height)")
-        // The group grew by the Codex card's five-hour line (AC-04.15); the Claude card keeps a blank line there.
-        #expect(2 * PanelStyle.Layout.compactWindow + PanelStyle.Space.tight + PanelStyle.Grid.row + PanelStyle.Layout.secondaryLine
-                == PanelStyle.Layout.limitsGroup)
-        #expect(measured.page <= available, "\(name): content \(measured.page) of \(available)")
-        // Exactly three whole rows: a fourth may reveal only its blank top inset, never a sliver of text.
-        #expect(available - measured.page + PanelStyle.Layout.listVerticalInset <= PanelStyle.Layout.rowHighlightInset + 0.5)
+        // Claude Code reports one figure, so its top is never taller than Codex's and its list takes the rest.
+        #expect(measured.card <= codex.fittingSize.height + 0.5, "\(name): top \(measured.card) of \(codex.fittingSize.height)")
+        #expect(measured.page <= available + 0.5, "\(name): content \(measured.page) of \(available)")
         if ProcessInfo.processInfo.environment["LUNLET_TEST_RENDER_SUMMARY"] == "1" { try OverviewRender.write(measured.view, name: name) }
     }
     if ProcessInfo.processInfo.environment["LUNLET_TEST_RENDER_SUMMARY"] == "1" {

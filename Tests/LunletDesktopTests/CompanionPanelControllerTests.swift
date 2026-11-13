@@ -35,17 +35,15 @@ private struct KeyboardUsage: LocalUsageReading {
 private final class KeyboardPower: IdleSleepControlling { func setEnabled(_ enabled: Bool) {} }
 @MainActor private final class KeyboardCues: TaskCuePresenting { func show(_ cues: [TaskCue]) {}; func hide() {} }
 
-/// Synthetic content that reports a tab row on demand and records the notch band it receives.
-@MainActor private final class TabRowProbe: ObservableObject {
-    @Published var tabs = false
+/// Synthetic content that records the notch band it receives.
+@MainActor private final class BandProbe: ObservableObject {
     var band: NotchBand?
 }
-private struct TabRowContent: View {
-    @ObservedObject var probe: TabRowProbe
+private struct BandContent: View {
+    let probe: BandProbe
     @Environment(\.notchBand) private var band
     var body: some View {
-        Text("Synthetic panel").preference(key: CompanionPanelTabRow.self, value: probe.tabs)
-            .onChange(of: band, initial: true) { probe.band = band }
+        Text("Synthetic panel").onChange(of: band, initial: true) { probe.band = band }
     }
 }
 
@@ -76,36 +74,26 @@ private struct TabRowContent: View {
         #expect(controller.window === window && window.contentView === content)
         #expect(window.isVisible)
     }
-    // Design direction: below a notch the panel hangs from the top edge with its shoulders, gives its
-    // content the notch band for the header and resizes for a tab row, keeping the page budget.
-    @Test func aNotchedPanelHangsFromTheTopEdgeAndFitsItsTabRow() async throws {
-        let controller = controller(notch: Self.notch), probe = TabRowProbe()
-        controller.setContent { AnyView(TabRowContent(probe: probe)) }
+    // Below a notch the panel hangs from the top edge with its shoulders and gives its content the notch band; its
+    // height is the same for one agent or several, so nothing resizes it while it is open (AC-19.09).
+    @Test func aNotchedPanelHangsFromTheTopEdgeAtOneHeight() async throws {
+        let controller = controller(notch: Self.notch), probe = BandProbe()
+        controller.setContent { AnyView(BandContent(probe: probe)) }
         defer { controller.shutdown() }
         controller.show()
         let window = try #require(controller.window)
+        let height = PanelStyle.Layout.panelHeight(notchHeight: 32)
         #expect(window.frame.midX == Self.notch.midX && window.frame.maxY == 982)
-        #expect(window.frame.width == 490 && window.frame.height == 417)
+        #expect(window.frame.width == 490 && window.frame.height == height && height == 489)
         #expect(probe.band == NotchBand(height: 32, leading: 142.5, trailing: 142.5))
-        probe.tabs = true
-        let deadline = ContinuousClock.now + .seconds(10)
-        while window.frame.height != 427, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
-        #expect(window.frame.height == 445 && window.frame.maxY == 982 && controller.isVisible)
         controller.hide(animated: false)
         controller.show()
-        #expect(window.frame.height == 445 && window.frame.width == 490)
+        #expect(window.frame.height == height && window.frame.width == 490 && window.frame.maxY == 982)
         // Outside clicks are measured against the body: the room beside it for the shoulders is outside.
         controller.outsideClick(at: .init(x: window.frame.minX + 12, y: window.frame.midY))
         #expect(controller.isVisible)
         controller.outsideClick(at: .init(x: window.frame.minX + 4, y: window.frame.midY))
         #expect(!controller.isVisible)
-        // Content that already shows tabs opens at its full height, with no resize after the expansion starts.
-        let tabbed = self.controller(notch: Self.notch), tabs = TabRowProbe()
-        tabs.tabs = true
-        tabbed.setContent { AnyView(TabRowContent(probe: tabs)) }
-        defer { tabbed.shutdown() }
-        tabbed.show()
-        #expect(tabbed.window?.frame.height == 445)
     }
     @Test func escapeAndCloseDismissWithoutDestroyingTheRuntimeWindow() throws {
         let controller = controller()
@@ -268,7 +256,9 @@ private struct TabRowContent: View {
         defer { controller.shutdown() }
         controller.entryHoverChanged(true, on: nil)
         #expect(!controller.isVisible)
-        try await Task.sleep(for: .milliseconds(300))
+        // The preview opens after the hover delay; how long that takes depends on what else holds the main actor.
+        let opening = ContinuousClock.now + .seconds(3)
+        while !controller.isVisible, ContinuousClock.now < opening { try await Task.sleep(for: .milliseconds(20)) }
         #expect(controller.isVisible && !controller.isPinned)
         #expect(controller.window?.isKeyWindow == false)
         controller.entryHoverChanged(false, on: nil)

@@ -26,17 +26,9 @@ extension EnvironmentValues {
     }
 }
 
-/// Content reports whether it shows a tab row below the notch band, so the panel keeps its page budget.
-struct CompanionPanelTabRow: PreferenceKey {
-    static let defaultValue = false
-    static func reduce(value: inout Bool, nextValue: () -> Bool) { value = value || nextValue() }
-}
-
 /// Header geometry the controller shares with its hosted content.
 @MainActor private final class CompanionPanelLayout: ObservableObject {
     @Published var band: NotchBand?
-    var tabRow = false
-    var tabRowChanged: (() -> Void)?
 }
 
 private struct CompanionPanelRoot: View {
@@ -45,12 +37,6 @@ private struct CompanionPanelRoot: View {
     let content: AnyView
     var body: some View {
         content.environment(\.companionPanelHost, host).environment(\.notchBand, layout.band)
-            .onPreferenceChange(CompanionPanelTabRow.self) { [layout] tabRow in
-                MainActor.assumeIsolated {
-                    guard layout.tabRow != tabRow else { return }
-                    layout.tabRow = tabRow; layout.tabRowChanged?()
-                }
-            }
     }
 }
 
@@ -127,10 +113,6 @@ extension NSScreen {
             if observesSystemEvents { surface.hover = { [weak self] inside in self?.pointerChanged(inside) } }
             panel.contentView = surface; self.surface = surface
             window = panel
-            // A tab row appearing or disappearing while visible resizes the panel after SwiftUI's update.
-            layout.tabRowChanged = { [weak self] in
-                Task { @MainActor [weak self] in self?.fitTabRow() }
-            }
             if observesSystemEvents {
                 observations = [NotificationObservation(center: .default,
                                                         name: NSApplication.didChangeScreenParametersNotification) { [weak self] in
@@ -148,9 +130,7 @@ extension NSScreen {
             }
         }
         applyGeometry(geometry)
-        // Laying out reports the content's tab row; size the window for it before the expansion starts.
         surface?.layoutSubtreeIfNeeded()
-        if needsTabRowFit(geometry) { applyGeometry(geometry) }
         surface?.setExpanded(true, animated: motionAllowed())
         // This is a user-initiated open; task cues never use this key-window path.
         if pinned { window?.makeKeyAndOrderFront(nil) } else { window?.orderFrontRegardless() }
@@ -269,7 +249,7 @@ extension NSScreen {
         guard !closed else { return }
         closed = true; hide(animated: false); observations.removeAll()
         window?.close(); window?.contentView = nil; window = nil
-        surface?.hover = nil; surface = nil; layout.tabRowChanged = nil
+        surface?.hover = nil; surface = nil
         content = nil; beforeShow = nil; beforeHide = nil; visibilityChanged = nil
     }
     private var currentScreen: PanelScreen? {
@@ -279,8 +259,7 @@ extension NSScreen {
         return screen()
     }
     private func targetFrame(_ geometry: PanelScreen) -> CGRect {
-        anchor.map { PanelPlacement.panel(near: $0, tabRow: layout.tabRow, screen: geometry) }
-            ?? PanelPlacement.panel(tabRow: layout.tabRow, screen: geometry)
+        anchor.map { PanelPlacement.panel(near: $0, screen: geometry) } ?? PanelPlacement.panel(screen: geometry)
     }
     private func applyGeometry(_ geometry: PanelScreen) {
         let frame = targetFrame(geometry)
@@ -292,16 +271,6 @@ extension NSScreen {
         surface?.tail = anchor.map { PanelPlacement.tail(panel: frame, anchor: $0) }
         let band = anchor == nil ? PanelPlacement.band(panel: frame, screen: geometry) : nil
         if layout.band != band { layout.band = band }
-    }
-    /// Resizes a visible panel only when the tab row changed its height, leaving a running expansion alone.
-    private func fitTabRow() {
-        guard !closed, isVisible, let geometry = currentScreen, needsTabRowFit(geometry) else { return }
-        applyGeometry(geometry)
-        surface?.setExpanded(presentationRequested, animated: false)
-    }
-    private func needsTabRowFit(_ geometry: PanelScreen) -> Bool {
-        guard let window else { return false }
-        return abs(window.frame.height - targetFrame(geometry).height) >= 1
     }
     private func reposition() {
         guard !closed, isVisible, let geometry = currentScreen else { return }

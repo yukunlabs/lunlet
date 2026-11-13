@@ -239,15 +239,6 @@ enum QuotaForecastText {
         }
     }
 
-    /// Even budget versus remaining at the latest reading; never labeled a forecast.
-    static func evenPace(_ pace: QuotaPace?, now: Date, calendar: Calendar = .current) -> String? {
-        guard let even = pace?.evenPace, let latest = pace?.latest else { return nil }
-        let remaining = Int(latest.remaining.rounded())
-        let reading = now.timeIntervalSince(latest.at) > 3600 ? "\(remaining)% at " + time(latest.at, now: now, calendar: calendar)
-            : "now \(remaining)%"
-        return "Even pace \(Int(even.rounded()))% · " + reading
-    }
-
     static func help(_ pace: QuotaPace?, stale: Bool, resetAt: Date?) -> String {
         let reset = resetAt.map { " Reset: " + $0.formatted(date: .abbreviated, time: .shortened) + "." } ?? ""
         guard let pace else { return "No successful account read identifies the weekly window yet." }
@@ -277,6 +268,7 @@ enum QuotaForecastText {
         calendar.isDate(date, inSameDayAs: now) ? date.formatted(date: .omitted, time: .shortened) : day(date)
     }
 
-    private static func day(_ date: Date) -> String { date.formatted(.dateTime.weekday(.abbreviated).hour().minute()) }
+    /// A weekday and time, as the run-out times read on the chart's line too (AC-32.09).
+    static func day(_ date: Date) -> String { date.formatted(.dateTime.weekday(.abbreviated).hour().minute()) }
     private static func percent(_ value: Double) -> String { value.formatted(.number.precision(.fractionLength(0))) + "%" }
 }

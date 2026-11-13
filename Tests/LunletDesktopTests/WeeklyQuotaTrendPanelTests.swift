@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
-// Refs: US-32, AC-32.01, AC-32.02, AC-32.03, AC-32.04, AC-32.05, AC-32.06, AC-32.07; US-04, AC-04.08.
+// Refs: US-32, AC-32.01, AC-32.02, AC-32.03, AC-32.04, AC-32.05, AC-32.06, AC-32.07, AC-32.09; US-04, AC-04.08.
 import AppKit
 import SwiftUI
 import Foundation
@@ -47,7 +47,8 @@ private struct TrendPanelHistory: LocalUsageReading {
     #expect(account.weeklyTrend.readings.count == 3)
     let days = (0..<5).map { index in
         LocalUsageDay(date: Calendar.current.date(byAdding: .day, value: index - 4, to: now)!,
-            amount: LocalUsageAmount(tokens: Int64((index + 1) * 1_000_000), estimatedUSD: Double(index + 1), partial: false))
+            amount: LocalUsageAmount(tokens: Int64((index + 1) * 1_000_000), estimatedUSD: Double(index + 1), partial: false,
+                                     pricedTokens: Int64((index + 1) * 900_000), unpricedTokens: Int64((index + 1) * 100_000)))
     }
     let localQuota = [LocalQuotaObservation(at: now.addingTimeInterval(-23 * 3600), resetAt: Date(timeIntervalSince1970: Double(reset)),
                                             remaining: 98, bucketID: "codex", plan: "pro")]
@@ -55,7 +56,10 @@ private struct TrendPanelHistory: LocalUsageReading {
     let display = account.weeklyTrend.display(local: localQuota, now: now)
     let header = QuotaForecastText.header(display.pace, stale: true, now: now)
     #expect(header.hasPrefix("Rough · May run out ~") && header.contains("(earliest ") && header.contains(" · stale, as of "))
-    #expect(QuotaForecastText.evenPace(display.pace, now: now)?.hasPrefix("Even pace ") == true)
+    // The chart states the same forecast once in words (AC-32.09); its longest form wraps to a second line.
+    let line = TrendChartText.estimate(display.pace, stale: true, now: now)
+    #expect(line.hasPrefix("Rough estimate: may run out about ") && line.contains("(earliest ") && line.contains(" · stale, as of "))
+    #expect(TrendChartText.now(display.pace, now: now)?.contains(" · even pace ") == true)
     let history = LocalUsageModel(reader: TrendPanelHistory(value: .init(days: days, sessions: [:], partial: true, quotaHistory: localQuota)))
     history.refresh()
     let deadline = ContinuousClock.now + .seconds(10)
@@ -64,11 +68,32 @@ private struct TrendPanelHistory: LocalUsageReading {
         .frame(width: 320, height: 357).background(Color(white: 0.14)).environment(\.colorScheme, .dark))
     view.frame = CGRect(x: 0, y: 0, width: 320, height: 357); view.layoutSubtreeIfNeeded()
     #expect(view.fittingSize.height <= 357)
+    // A fixed frame cannot show an overflow, so the content is also measured at its natural height. With the two-line
+    // estimate above, the charts keep their full height on tokens; on cost, where the footnote for partial records and
+    // partial pricing takes a second line too, one of the panel's tightening steps makes room.
+    func height(cost: Bool, tightened step: CGFloat) -> CGFloat {
+        let content = NSHostingView(rootView: UsageOverviewPanel(account: account, history: history, showCost: cost)
+            .content(reduction: step).frame(width: 320).environment(\.colorScheme, .dark))
+        content.frame = CGRect(x: 0, y: 0, width: 320, height: 600); content.layoutSubtreeIfNeeded()
+        return content.fittingSize.height
+    }
+    let limit = UsageHoverPanelController.overviewSize.height
+    #expect(height(cost: false, tightened: 0) <= limit)
+    #expect(height(cost: true, tightened: 0) > height(cost: false, tightened: 0))
+    #expect(UsageOverviewPanel.tightening.contains { height(cost: true, tightened: $0) <= limit })
     if ProcessInfo.processInfo.environment["LUNLET_TEST_RENDER_SUMMARY"] == "1" {
         let bitmap = try #require(view.bitmapImageRepForCachingDisplay(in: view.bounds))
         view.cacheDisplay(in: view.bounds, to: bitmap)
         let data = try #require(bitmap.representation(using: .png, properties: [:]))
         try data.write(to: URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent(".tmp/quota-trend-panel.png"))
+        // The tallest wording: the cost metric under the two-line estimate.
+        let cost = NSHostingView(rootView: UsageOverviewPanel(account: account, history: history, showCost: true)
+            .frame(width: 320, height: 357).background(Color(white: 0.14)).environment(\.colorScheme, .dark))
+        cost.frame = CGRect(x: 0, y: 0, width: 320, height: 357); cost.layoutSubtreeIfNeeded()
+        let costBitmap = try #require(cost.bitmapImageRepForCachingDisplay(in: cost.bounds))
+        cost.cacheDisplay(in: cost.bounds, to: costBitmap)
+        try #require(costBitmap.representation(using: .png, properties: [:]))
+            .write(to: URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent(".tmp/quota-trend-panel-cost.png"))
     }
     await history.shutdown(); await account.shutdown()
 }

@@ -142,7 +142,7 @@ private actor SyntheticAccountCardReader: CodexAccountReading {
 }
 
 @Test(.enabled(if: ProcessInfo.processInfo.environment["LUNLET_TEST_PANEL"] == "1"))
-@MainActor func compactAccountCardFitsFreshnessBalanceAndTwoExpiryCountdowns() async throws {
+@MainActor func theCodexPageTopFitsItsBudgetAboveThreeCompleteSessionCards() async throws {
     _ = NSApplication.shared
     let now = Date(), epoch = Int(now.timeIntervalSince1970)
     let snapshot = try AccountLimitsDecoder.decode(Data("""
@@ -154,21 +154,22 @@ private actor SyntheticAccountCardReader: CodexAccountReading {
     while model.state == .loading, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
     #expect(model.displayedSnapshot == snapshot)
     let hover = UsageHoverPanelController()
-    let hosting = NSHostingView(rootView: AccountUsageSummary(model: model, hoverPanel: hover)
+    let history = LocalUsageModel()
+    let top = PanelStyle.Layout.summaryCard(lines: 2)
+    let hosting = NSHostingView(rootView: AccountUsageSummary(model: model, history: history, hoverPanel: hover)
         .frame(width: 446).background(Color(red: 0.13, green: 0.13, blue: 0.14)).environment(\.colorScheme, .dark))
-    hosting.frame = .init(x: 0, y: 0, width: 446, height: PanelStyle.Layout.cardHeight)
+    hosting.frame = .init(x: 0, y: 0, width: 446, height: top)
     hosting.layoutSubtreeIfNeeded()
-    // The card holds its budget with the five-hour line (AC-04.15).
-    #expect(hosting.fittingSize.height <= PanelStyle.Layout.cardHeight)
+    // The account line and the figures row hold their budget (AC-04.17).
+    #expect(hosting.fittingSize.height <= top + 0.5, "top \(hosting.fittingSize.height) of \(top)")
     let sessions = SessionListModel(displayAvailable: { false }, elapsed: { 0 }, presenter: LayoutCueSink())
     for index in 0..<3 {
         let session = SessionSnapshot(observation: .init(sessionID: UUID(), connectionID: UUID(), liveness: .alive, phase: .running),
                                       project: "Synthetic project", title: "Session \(index)", turnID: "turn-\(index)")
         sessions.receive(session, origin: .snapshot)
     }
-    let history = LocalUsageModel()
     let content = NSHostingView(rootView: VStack(alignment: .leading, spacing: PanelStyle.Grid.margin) {
-        AccountUsageSummary(model: model, hoverPanel: hover)
+        AccountUsageSummary(model: model, history: history, hoverPanel: hover)
         SessionPanel(model: sessions, usage: history)
     }.frame(width: 446).fixedSize(horizontal: false, vertical: true)
         .background(Color(red: 0.13, green: 0.13, blue: 0.14)).environment(\.colorScheme, .dark))
@@ -176,9 +177,8 @@ private actor SyntheticAccountCardReader: CodexAccountReading {
     content.layoutSubtreeIfNeeded()
     // The page between the header and footer below a 32-point notch.
     let available = PanelStyle.Layout.pageHeight
-    #expect(content.fittingSize.height <= available, "content \(content.fittingSize.height) of \(available)")
-    // Exactly three whole rows: a fourth may reveal only its blank top inset, never a sliver of text.
-    #expect(available - content.fittingSize.height + PanelStyle.Layout.listVerticalInset <= PanelStyle.Layout.rowHighlightInset + 0.5)
+    // Exactly three whole cards: the page ends with the third, with no sliver of a fourth.
+    #expect(content.fittingSize.height <= available + 0.5, "content \(content.fittingSize.height) of \(available)")
     if ProcessInfo.processInfo.environment["LUNLET_TEST_RENDER_SUMMARY"] == "1",
        let bitmap = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) {
         hosting.cacheDisplay(in: hosting.bounds, to: bitmap)

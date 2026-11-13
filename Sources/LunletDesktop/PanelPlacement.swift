@@ -52,17 +52,17 @@ enum PanelPlacement {
     }
     /// The companion window: the body flush with the top edge below a notch, widened by the shoulders that meet
     /// the menu bar on each side; elsewhere the body alone below the menu bar.
-    static func panel(tabRow: Bool, screen: PanelScreen) -> CGRect {
-        let height = PanelStyle.Layout.panelHeight(notchHeight: screen.notch?.height, tabRow: tabRow)
+    static func panel(screen: PanelScreen) -> CGRect {
+        let height = PanelStyle.Layout.panelHeight(notchHeight: screen.notch?.height)
         let body = frame(size: .init(width: panelWidth, height: height), screen: screen)
         return body.insetBy(dx: -NotchSurfaceGeometry.bodyInset(notchWidth: screen.notch?.width), dy: 0)
     }
     /// The companion window as the dog's bubble: the body plus its tail above the anchor (the dog's head) when it
     /// fits, else below it, centered on the anchor and kept inside the visible area, without notch shoulders
     /// (AC-39.05). `tail(panel:anchor:)` says which edge the tail is on and where its tip points.
-    static func panel(near anchor: CGRect, tabRow: Bool, screen: PanelScreen) -> CGRect {
+    static func panel(near anchor: CGRect, screen: PanelScreen) -> CGRect {
         let visible = screen.visibleFrame
-        let height = min(PanelStyle.Layout.panelHeight(notchHeight: nil, tabRow: tabRow) + BubbleTail.height, visible.height)
+        let height = min(PanelStyle.Layout.panelHeight(notchHeight: nil) + BubbleTail.height, visible.height)
         let width = min(panelWidth, visible.width)
         var y = anchor.maxY + bubbleGap
         if y + height > visible.maxY { y = anchor.minY - bubbleGap - height }

@@ -1,14 +1,14 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
-// Refs: US-17, AC-17.08; US-24, AC-24.01, AC-24.02, AC-24.03; US-13, AC-13.09.
+// Refs: US-17, AC-17.08; US-24, AC-24.01, AC-24.02, AC-24.03, AC-24.04; US-13, AC-13.09.
 // Refs: US-41, AC-41.05; US-39, AC-39.05.
 // Refs: US-02, AC-02.07; US-22, AC-22.01, AC-22.03.
 // Refs: US-16, AC-16.02; US-18, AC-18.01; US-20, AC-20.02; US-31, AC-31.01, AC-31.03.
 // Refs: US-01, AC-01.01, AC-01.02, AC-01.04, AC-01.06, AC-01.08; US-02, AC-02.05.
 // Refs: US-03, AC-03.01, AC-03.05, AC-03.06, AC-03.08, AC-03.09, AC-03.10.
-// Refs: US-04, AC-04.01, AC-04.03, AC-04.04, AC-04.05, AC-04.07, AC-04.08, AC-04.09, AC-04.10; US-05, AC-05.03, AC-05.07.
+// Refs: US-04, AC-04.01, AC-04.03, AC-04.04, AC-04.05, AC-04.08, AC-04.09, AC-04.16, AC-04.17; US-05, AC-05.03, AC-05.07.
 // Refs: US-12, AC-12.02, AC-12.04, AC-12.05; US-15, AC-15.03.
-// Refs: US-19, AC-19.01, AC-19.02, AC-19.03, AC-19.04, AC-19.05; US-33, AC-33.01, AC-33.04, AC-33.09.
+// Refs: US-19, AC-19.01, AC-19.02, AC-19.03, AC-19.04, AC-19.09, AC-19.10, AC-19.11; US-33, AC-33.01, AC-33.04, AC-33.09.
 // Refs: US-35, AC-35.01, AC-35.04.
 import AppKit
 import LunletCore
@@ -42,10 +42,13 @@ struct CompanionPanel: View {
     private let refresh: () -> Void
     @ObservedObject private var sessions: SessionListModel
     @ObservedObject private var notifications: LockedCompletionNotifications
-    /// Each provider tab keeps its own Active/History choice.
+    /// Each agent's page keeps its own Active/History choice.
     @ViewState private var historyShown: [SessionProvider: Bool] = [:]
     @ViewState private var connectionExpanded = false
     @ViewState private var connectionHovered = false
+    /// Left or Right moved the choice last, so the chosen body shows a focus ring (AC-24.04).
+    @ViewState private var keyboardChoice = false
+    @Environment(\.claudePlanLimits) private var claudeLimits
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.companionPanelHost) private var host
     @Environment(\.notchBand) private var band
@@ -121,7 +124,7 @@ struct CompanionPanel: View {
                 }
             }
         }
-        .preference(key: CompanionPanelTabRow.self, value: hasTabs)
+        .background { arrowKeys }
         .onReceive(NotificationCenter.default.publisher(for: .companionPanelDidHide)) { notification in
             guard host == nil || (notification.object as AnyObject?).map(ObjectIdentifier.init) == host else { return }
             connectionExpanded = false
@@ -134,18 +137,20 @@ struct CompanionPanel: View {
             guard let focus, selected.contains(focus.provider) else { return }
             connectionExpanded = false
             historyShown[focus.provider] = sessions.history.contains { $0.observation.sessionID == focus.sessionID }
-            if hasTabs { select(tab: focus.provider) } else { page = .home }
+            if several { select(tab: focus.provider) } else { page = .home }
         }
         // An activated allowance notification opens that agent's page (AC-41.05).
         .onChange(of: sessions.providerFocus, initial: true) { _, focus in
             guard let focus, selected.contains(focus.provider) else { return }
             connectionExpanded = false
-            if hasTabs { select(tab: focus.provider) } else { page = .home }
+            if several { select(tab: focus.provider) } else { page = .home }
         }
         .font(PanelStyle.Text.secondary).tint(accent)
         .labelStyle(CompactLabelStyle())
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .animation(PanelStyle.motion(reduce: reduceMotion), value: connectionExpanded)
+        // Dark in both appearances, with the surface it lies on.
+        .environment(\.colorScheme, .dark)
     }
 
     private var isRefreshing: Bool {
@@ -170,19 +175,19 @@ struct CompanionPanel: View {
             } else if let provider = shownProvider {
                 providerPage(provider)
             } else {
-                ProviderOverview(codexHistory: history, claudeHistory: claudeHistory, account: usage, providers: selected,
-                                 accentHex: allowanceAccent)
+                ProviderOverview(codexHistory: history, claudeHistory: claudeHistory, providers: selected,
+                                 waiting: waiting, open: { choose(.agent($0)) }, accentHex: allowanceAccent)
             }
         }
     }
 
+    /// An agent's page under the header: its account line and figures row, then its sessions (AC-04.17).
     @ViewBuilder private func providerPage(_ provider: SessionProvider) -> some View {
         switch provider {
         case .codex:
-            AccountUsageSummary(model: usage, hoverPanel: usageHover,
-                historyDays: history.historyDays, accentHex: allowanceAccent)
+            AccountUsageSummary(model: usage, history: history, hoverPanel: usageHover, refresh: refresh)
         case .claude:
-            ClaudeUsageSummary(history: claudeHistory, hoverPanel: claudeUsageHover, accentHex: allowanceAccent)
+            ClaudeUsageSummary(history: claudeHistory, hoverPanel: claudeUsageHover, refresh: refresh)
         }
         SessionPanel(model: sessions, usage: usageModels, provider: provider,
                      showingHistory: Binding(get: { historyShown[provider] ?? false },
@@ -194,42 +199,98 @@ struct CompanionPanel: View {
         page = provider.map(Page.provider) ?? .home
     }
 
-    private var hasTabs: Bool { !ProviderPages.tabs(selected: selected).isEmpty }
+    /// Several agents share the Overview; one agent's page is the whole panel (AC-19.02).
+    private var several: Bool { selected.count > 1 }
+    /// Sessions waiting for the developer, by agent, for the header's badges and the Overview's line (AC-19.11).
+    private var waiting: [SessionProvider: Int] {
+        Dictionary(uniqueKeysWithValues: selected.map { provider in
+            (provider, sessions.displayedSessions(for: provider).filter { SessionStatusStyle($0).awaitsDeveloper }.count)
+        })
+    }
 
-    /// Beside a notch the header shares the menu-bar band: the page title at the leading edge and Refresh and
-    /// Settings at the trailing edge, both clear of the lettering. Several agents need a tab bar wider than the
-    /// band, so it takes a row below the band and names the page itself. Without a notch one normal header row
-    /// holds the title or tabs and the actions. VoiceOver reads the title or tabs first, then the actions.
-    @ViewBuilder private var header: some View {
-        if let band {
-            VStack(spacing: 0) {
-                HStack(spacing: 0) {
-                    Group { if !hasTabs || page == .settings { pageTitle } }
-                        .frame(width: band.leadingWidth, alignment: .leading).accessibilitySortPriority(3)
-                    Spacer(minLength: 0)
-                    // Two 28 pt buttons keep their targets beside a wide notch by closing their gap first.
-                    actions(spacing: min(PanelStyle.Space.tight, max(0, band.trailingWidth - 2 * PanelStyle.Layout.iconButton)))
-                        .frame(width: band.trailingWidth, alignment: .trailing).accessibilitySortPriority(1)
-                }
-                .padding(.horizontal, PanelStyle.Space.margin)
-                .frame(height: band.height)
-                if hasTabs && page != .settings {
-                    tabStrip.padding(.horizontal, PanelStyle.Grid.margin)
-                        .frame(maxWidth: .infinity, alignment: .leading).frame(height: PanelStyle.Layout.headerHeight)
-                        .accessibilitySortPriority(2)
-                }
+    /// A body chosen with the pointer: an agent's body opens its page; the Sun, or the open agent's body again,
+    /// returns to the Overview (AC-19.09).
+    private func choose(_ body: HeaderBody) {
+        keyboardChoice = false
+        guard several else { return }
+        select(tab: HeaderLayout.page(choosing: body, open: shownProvider, agents: selected))
+    }
+    /// Left and Right move the choice to the neighboring body (AC-24.04).
+    private func move(_ step: Int) {
+        guard let next = HeaderLayout.neighbor(of: shownProvider, agents: selected, step: step) else { return }
+        keyboardChoice = true
+        if case .agent(let provider) = next { select(tab: provider) } else { select(tab: nil) }
+    }
+    /// The arrow keys reach these only when nothing in the panel uses them itself, such as a text field.
+    @ViewBuilder private var arrowKeys: some View {
+        if several && page != .settings && !connectionExpanded {
+            Group {
+                Button("Previous agent") { move(-1) }.keyboardShortcut(.leftArrow, modifiers: [])
+                Button("Next agent") { move(1) }.keyboardShortcut(.rightArrow, modifiers: [])
             }
-            .padding(.bottom, PanelStyle.Layout.headerGap)
-            .accessibilityElement(children: .contain)
-        } else {
-            HStack(spacing: PanelStyle.Space.tight) {
-                if hasTabs && page != .settings { tabStrip } else { pageTitle }
-                Spacer(minLength: PanelStyle.Space.medium)
-                actions(spacing: PanelStyle.Space.tight)
-            }
-            .frame(height: PanelStyle.Layout.headerHeight)
-            .padding(.horizontal, PanelStyle.Space.margin).padding(.bottom, PanelStyle.Layout.headerGap)
+            .buttonStyle(.plain).opacity(0).frame(width: 0, height: 0).accessibilityHidden(true)
         }
+    }
+
+    /// The header's top inset: the notch band, which the actions share, or a margin on a display without a notch.
+    private var headerTop: CGFloat { band?.height ?? PanelStyle.Layout.skyTop }
+
+    /// Under the notch band a night sky carries one body per agent (AC-19.09), from one side of the panel to the other;
+    /// Settings keeps a short strip of it with Back. The sky has no edge: it dissolves into the page below it. Refresh and Settings stay at the trailing edge of the band, clear of the lettering. VoiceOver reads
+    /// the bodies or the title first, then the actions.
+    @ViewBuilder private var header: some View {
+        if selected.isEmpty && page != .settings {
+            plainHeader
+        } else {
+            ZStack(alignment: .top) {
+                Group {
+                    if page == .settings {
+                        // The strip dissolves under the title's line and on behind the top of the page, as the
+                        // header's sky does under its words.
+                        let height = headerTop + PanelStyle.Layout.settingsStrip + PanelStyle.Layout.skyTail
+                        let bleed: CGFloat = 56, fade: CGFloat = 86
+                        Color.clear.frame(height: height)
+                            .background(alignment: .top) {
+                                SkyBackdrop(warp: nil, reduceMotion: true, fade: fade, dusk: 100)
+                                    .frame(height: height + bleed)
+                            }
+                    } else {
+                        PanelHeaderHost(agents: selected, chosen: shownProvider, top: headerTop, keyboard: keyboardChoice,
+                                        account: usage, limits: claudeLimits ?? .placeholder, codexHistory: history,
+                                        claudeHistory: claudeHistory, waiting: waiting, choose: choose)
+                            .accessibilitySortPriority(3)
+                    }
+                }
+                bandRow.environment(\.colorScheme, .dark)
+            }
+            .accessibilityElement(children: .contain)
+        }
+    }
+
+    /// The row in the notch band, over the sky: Back and the title in Settings, and the actions.
+    private var bandRow: some View {
+        HStack(spacing: 0) {
+            Group { if page == .settings { pageTitle } }
+                .frame(width: band?.leadingWidth, alignment: .leading).accessibilitySortPriority(2)
+            Spacer(minLength: 0)
+            // Two 28 pt buttons keep their targets beside a wide notch by closing their gap first.
+            actions(spacing: band.map { min(PanelStyle.Space.tight, max(0, $0.trailingWidth - 2 * PanelStyle.Layout.iconButton)) }
+                        ?? PanelStyle.Space.tight)
+                .frame(width: band?.trailingWidth, alignment: .trailing).accessibilitySortPriority(1)
+        }
+        .padding(.horizontal, PanelStyle.Space.margin + PanelStyle.Space.tight)
+        .frame(height: band?.height ?? PanelStyle.Layout.headerHeight + PanelStyle.Space.tight)
+    }
+
+    /// Without any available agent there is nothing to draw in a sky: one plain row with the title and the actions.
+    private var plainHeader: some View {
+        HStack(spacing: PanelStyle.Space.tight) {
+            pageTitle
+            Spacer(minLength: PanelStyle.Space.medium)
+            actions(spacing: PanelStyle.Space.tight)
+        }
+        .frame(height: max(band?.height ?? 0, PanelStyle.Layout.headerHeight))
+        .padding(.horizontal, PanelStyle.Space.margin).padding(.bottom, PanelStyle.Layout.headerGap)
     }
 
     /// The page title; in Settings, a Back button before it.
@@ -273,24 +334,6 @@ struct CompanionPanel: View {
                 .help("Settings (⌘,)").accessibilityLabel("Settings")
             }
         }
-    }
-
-    /// The tab bar starts on the cards' edge, so its first label shares their text edge and later agents append to
-    /// the right; tabs wider than the room scroll horizontally rather than shrinking their text.
-    private var tabStrip: some View {
-        ViewThatFits(in: .horizontal) {
-            tabBar
-            ScrollView(.horizontal, showsIndicators: false) { tabBar }
-        }
-    }
-
-    /// The tab bar: Overview, then each selected provider in selection order, in the panel's segmented style.
-    private var tabBar: some View {
-        let tabs = ProviderPages.tabs(selected: selected).map { PanelSegmentedControl<SessionProvider?>.Segment(
-            value: $0, title: $0?.displayName ?? "Overview") }
-        return PanelSegmentedControl(selection: Binding(get: { shownProvider }, set: { select(tab: $0) }), segments: tabs,
-                                     label: "Agent pages")
-            .help("Overview summarizes every selected agent; each agent tab keeps its own page.")
     }
 
     private var footer: some View {

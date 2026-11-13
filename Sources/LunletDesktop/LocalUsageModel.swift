@@ -86,8 +86,9 @@ enum LocalUsageText {
         if value > 0 && value < 0.0001 {
             return prefix + String(format: "%.0e", locale: locale, value).lowercased()
         }
+        // One money rule everywhere: whole dollars from $10, cents below.
         return prefix + value.formatted(.number.locale(locale)
-            .precision(.fractionLength(value > 0 && value < 0.01 ? 4 : 2)))
+            .precision(.fractionLength(value >= 10 ? 0 : value > 0 && value < 0.01 ? 4 : 2)))
     }
     /// A bar label without the lower-bound sign, which the chart's footnote states once.
     static func tokenBar(_ amount: LocalUsageAmount) -> String {

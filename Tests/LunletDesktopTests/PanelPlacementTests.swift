@@ -65,7 +65,7 @@ struct PanelPlacementTests {
         let screen = PanelScreen(frame: .init(x: 0, y: 0, width: 1512, height: 982),
                                  visibleFrame: .init(x: 0, y: 0, width: 1512, height: 950), safeTop: 32,
                                  notch: .init(x: 663.5, y: 950, width: 185, height: 32))
-        let overview = PanelPlacement.panel(tabRow: false, screen: screen)
+        let overview = PanelPlacement.panel(screen: screen)
         #expect(overview.maxY == 982 && overview.midX == screen.notch!.midX)
         #expect(overview.contains(screen.notch!))
         let cue = PanelPlacement.cue(size: .init(width: 565, height: 40), screen: screen)
@@ -81,18 +81,16 @@ struct PanelPlacementTests {
         #expect(PanelPlacement.cue(size: .init(width: 250, height: 40), screen: screen).maxY == 1056)
     }
 
-    // Design direction: the header moves into the notch band, reclaiming the header row; several agents add
-    // a tab row below the band; every display keeps the same page budget, so exactly three whole rows show.
-    @Test func panelHeightKeepsThePageBudgetWithTheHeaderInTheNotchBand() {
+    // The header's sky hangs from the notch band, the same for one agent or several (AC-19.09); every display keeps
+    // the same page budget, so exactly three whole session cards show.
+    @Test func panelHeightKeepsThePageBudgetUnderTheHeadersSky() {
         let layout = PanelStyle.Layout.self
-        #expect(layout.panelHeight(notchHeight: 32, tabRow: false) == 417)
-        #expect(layout.panelHeight(notchHeight: 32, tabRow: true) == 445)
-        #expect(layout.panelHeight(notchHeight: nil, tabRow: false) == 413 && layout.panelHeight(notchHeight: nil, tabRow: true) == 413)
+        #expect(layout.panelHeight(notchHeight: 32) == 489 && layout.panelHeight(notchHeight: nil) == 471)
         for notch in [CGFloat(26), 32, 40] {
-            let height = layout.panelHeight(notchHeight: notch, tabRow: false)
-            #expect(height - notch - layout.headerGap - layout.footerHeight == layout.pageHeight)
+            let height = layout.panelHeight(notchHeight: notch)
+            #expect(height - notch - layout.skyHeight - layout.skyTail - layout.footerHeight == layout.pageHeight)
         }
-        #expect(layout.pageHeight >= 3 * layout.rowHeight + 2 * layout.listVerticalInset)
+        #expect(layout.pageHeight >= 3 * layout.rowHeight + 2 * layout.rowGap)
     }
     // The window adds the shoulders on both sides of a 470 pt body hanging from the top edge; the band beside the
     // notch keeps the lettering's clearance on each side and fits Refresh and Settings at full size.
@@ -101,9 +99,9 @@ struct PanelPlacementTests {
             let notch = CGRect(x: 756 - width / 2, y: 950, width: width, height: 32)
             let screen = PanelScreen(frame: .init(x: 0, y: 0, width: 1512, height: 982),
                                      visibleFrame: .init(x: 0, y: 0, width: 1512, height: 950), safeTop: 32, notch: notch)
-            let frame = PanelPlacement.panel(tabRow: true, screen: screen)
+            let frame = PanelPlacement.panel(screen: screen)
             #expect(frame.width == PanelPlacement.panelWidth + 2 * NotchSurfaceGeometry.shoulderRadius)
-            #expect(frame.midX == notch.midX && frame.maxY == screen.frame.maxY && frame.height == 445)
+            #expect(frame.midX == notch.midX && frame.maxY == screen.frame.maxY && frame.height == 489)
             let band = try #require(PanelPlacement.band(panel: frame, screen: screen))
             let body = frame.insetBy(dx: NotchSurfaceGeometry.shoulderRadius, dy: 0)
             #expect(band.height == 32 && band.leading == notch.minX - body.minX && band.trailing == body.maxX - notch.maxX)
@@ -114,8 +112,8 @@ struct PanelPlacementTests {
         }
         let plain = PanelScreen(frame: .init(x: 0, y: 0, width: 1920, height: 1080),
                                 visibleFrame: .init(x: 0, y: 0, width: 1920, height: 1056), safeTop: 0)
-        let simple = PanelPlacement.panel(tabRow: true, screen: plain)
-        #expect(simple.width == PanelPlacement.panelWidth && simple.maxY == 1056 && simple.height == 413)
+        let simple = PanelPlacement.panel(screen: plain)
+        #expect(simple.width == PanelPlacement.panelWidth && simple.maxY == 1056 && simple.height == 471)
         #expect(PanelPlacement.band(panel: simple, screen: plain) == nil)
     }
 }

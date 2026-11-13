@@ -279,7 +279,7 @@ final class FilmWindow: NSWindow {
         }
 
         // Every surface placed by Lunlet's own placement functions.
-        let panelScreen = PanelPlacement.panel(tabRow: true, screen: geometry)
+        let panelScreen = PanelPlacement.panel(screen: geometry)
         let bodyScreen = panelScreen.insetBy(dx: NotchSurfaceGeometry.bodyInset(notchWidth: FilmScreen.notch.width), dy: 0)
         let body = FilmScreen.film(bodyScreen), overviewPlacement = FilmScreen.film(UsageHoverPlacement.frame(
             size: UsageHoverPanelController.overviewSize, parent: bodyScreen, visible: geometry.visibleFrame))

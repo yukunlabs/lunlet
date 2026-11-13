@@ -437,8 +437,8 @@ struct WeeklyQuotaTrendTests {
         #expect(text(pace(.unavailable(.resetPassed), latest: nil, even: nil)) == "Reset due")
         #expect(text(nil) == "Awaiting account reading")
         #expect(text(pace(.unavailable(.unidentifiedWindow), latest: nil, even: nil)) == "Awaiting account reading")
-        #expect(QuotaForecastText.evenPace(pace(.tooEarly), now: now) == "Even pace 64% · now 58%")
-        #expect(QuotaForecastText.evenPace(pace(.tooEarly, even: nil), now: now) == nil)
+        #expect(TrendChartText.now(pace(.tooEarly), now: now) == "Now 58% left · even pace 64%")
+        #expect(TrendChartText.now(pace(.tooEarly, even: nil), now: now) == nil)
         #expect(QuotaForecastText.help(pace(.estimate(running)), stale: true, resetAt: latest.resetAt).contains("Rough"))
         #expect(QuotaForecastText.help(pace(.estimate(range)), stale: true, resetAt: latest.resetAt).contains("account read failed"))
     }

@@ -168,14 +168,15 @@ private actor RangeHistoryReader: LocalUsageReading {
 
     // AC-04.02, AC-23.01: compact session amounts leave space for identity without hiding tiny usage.
     @Test func sessionCostTextRoundsTypicalAmountsWithoutRoundingTinyUsageToZero() {
-        for (value, expected) in [(146.884524, "≈$146.88"), (12.345678, "≈$12.35"),
-                                  (1234.5678, "≈$1,234.57"), (0.01, "≈$0.01"), (0, "≈$0.00"),
+        // One money rule everywhere: whole dollars from $10, cents below.
+        for (value, expected) in [(146.884524, "≈$147"), (12.345678, "≈$12"), (9.994, "≈$9.99"), (10, "≈$10"),
+                                  (1234.5678, "≈$1,235"), (0.01, "≈$0.01"), (0, "≈$0.00"),
                                   (0.0003, "≈$0.0003"), (0.000000000001, "≈$1e-12")] {
             #expect(LocalUsageText.cost(.init(tokens: 110, estimatedUSD: value, partial: false)) == expected)
         }
         let partial = LocalUsageAmount(tokens: 220, estimatedUSD: 146.884524, partial: false,
                                        pricedTokens: 110, unpricedTokens: 110)
-        #expect(LocalUsageText.cost(partial) == "≥$146.88")
+        #expect(LocalUsageText.cost(partial) == "≥$147")
         #expect(LocalUsageText.costHelp(partial).contains("≥$146.884524 USD"))
         #expect(LocalUsageText.costHelp(partial).contains("Known subtotal"))
         #expect(LocalUsageText.costHelp(partial).contains("Prices cover 50%"))

@@ -185,6 +185,9 @@ struct NotchSilhouette: Shape, Equatable {
         switch style {
         case .panel:
             backdrop = NSHostingView(rootView: PanelMaterial())
+            // The panel is dark in both appearances; controls drawn by AppKit follow the views' own appearance.
+            backdrop.appearance = PanelStyle.appearance
+            host.appearance = PanelStyle.appearance
         case .island:
             // Opaque in every appearance and under Reduce Transparency: no material or gradient.
             let fill = NSView(); fill.wantsLayer = true; fill.layer?.backgroundColor = NSColor.black.cgColor

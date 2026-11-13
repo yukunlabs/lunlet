@@ -4,9 +4,11 @@
 import AppKit
 import SwiftUI
 
-/// Translucent frosted glass behind the panel: Liquid Glass on macOS 26 and later, otherwise a vibrant
-/// behind-window material that stays active while the panel is not key. No gradient or haze is added.
-/// Reduce Transparency and Increase Contrast use an opaque surface with a visible border.
+/// The panel's surface: deep and almost black in both appearances, as the notch it hangs from is, so the header's sky
+/// is the surface's own darkness with stars in it rather than a picture set on a lighter page. The system's glass
+/// (Liquid Glass on macOS 26 and later, otherwise a vibrant behind-window material that stays active while the panel
+/// is not key) lies under a deep fill and shows through it faintly, which keeps the surface dark over any window.
+/// Reduce Transparency and Increase Contrast use the same color opaque, with a visible border.
 struct PanelMaterial: View {
     /// The surface outline; nil is a rounded panel with the surface radius.
     var outline: NotchSilhouette?
@@ -20,15 +22,23 @@ struct PanelMaterial: View {
         outline.map(AnyShape.init) ?? AnyShape(RoundedRectangle(cornerRadius: PanelStyle.Radius.surface, style: .continuous))
     }
     var body: some View {
-        if Self.opaque(reduceTransparency: reduceTransparency, contrast: contrast) {
-            // A 2 pt stroke clipped to the outline leaves a 1 pt border inside it.
-            shape.fill(Color(nsColor: .windowBackgroundColor))
-                .overlay { shape.stroke(Color(nsColor: .separatorColor), lineWidth: 2).clipShape(shape) }
-        } else if #available(macOS 26, *) {
-            Color.clear.glassEffect(.regular, in: shape)
-        } else {
-            BehindWindowMaterial(shape: shape)
+        Group {
+            if Self.opaque(reduceTransparency: reduceTransparency, contrast: contrast) {
+                // A 2 pt stroke clipped to the outline leaves a 1 pt border inside it.
+                shape.fill(PanelStyle.surface)
+                    .overlay { shape.stroke(Color.white.opacity(0.28), lineWidth: 2).clipShape(shape) }
+            } else {
+                ZStack {
+                    if #available(macOS 26, *) {
+                        Color.clear.glassEffect(.regular, in: shape)
+                    } else {
+                        BehindWindowMaterial(shape: shape)
+                    }
+                    shape.fill(PanelStyle.surface.opacity(PanelStyle.surfaceDepth))
+                }
+            }
         }
+        .environment(\.colorScheme, .dark)
     }
 }
 

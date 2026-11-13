@@ -30,13 +30,14 @@ enum PanelStyle {
     }
     /// Vertical budget shared by the panel and its fit checks.
     enum Layout {
-        static let rowHeight: CGFloat = 44
+        /// One session card: a title line and a metadata line inside the card's padding.
+        static let rowHeight: CGFloat = 48
+        /// The gap between session cards.
+        static let rowGap: CGFloat = 6
         /// A title, primary or figure line in a card; it also holds the 20-point inline chart button.
         static let line: CGFloat = 20
         /// A secondary line: subtitles, reset times and footnotes.
         static let secondaryLine: CGFloat = 14
-        /// Every allowance and plan-limit meter, Codex and Claude alike.
-        static let meterHeight: CGFloat = 6
         /// The list's side inset; row highlights sit inside it with the row radius. With the row's own 8-point
         /// padding it equals the card padding, so a row's symbol starts on the cards' text edge.
         static let listInset: CGFloat = 4
@@ -55,37 +56,51 @@ enum PanelStyle {
         static let iconButton: CGFloat = 28
         /// Inline chart and copy buttons keep the 20 x 20 minimum within dense rows.
         static let inlineButton: CGFloat = 20
-        /// Both provider cards: a title line, a secondary line, the limits group and a footnote, inside the card
-        /// padding. Codex fills the group with a figure line, the meter, a reset line and the five-hour line
-        /// (AC-04.15); Claude with the same figure, meter and reset line over a blank line, so the cards match
-        /// and switching tabs never shifts.
-        static let limitsGroup: CGFloat = line + Grid.row + meterHeight + Grid.row + secondaryLine + Grid.row + secondaryLine
-        static let cardHeight: CGFloat = 2 * Grid.margin + line + Grid.row + secondaryLine + Grid.group + limitsGroup
-            + Grid.group + secondaryLine
-        /// One agent block of the Overview's Limits card: its name line, its meter and its countdown line.
-        static let overviewBlock: CGFloat = secondaryLine + Space.tight + meterHeight + Space.tight + secondaryLine
-        /// The gap above each agent block of the Overview's Limits card: the card's free height shared equally, so
-        /// the last block ends at the card's padding whatever the provider cards' height is (AC-19.06).
-        static func overviewBlockGap(blocks: Int) -> CGFloat {
-            let free = cardHeight - 2 * Grid.margin - line - CGFloat(blocks) * overviewBlock
-            return max(Grid.group, free / CGFloat(max(1, blocks)))
+        /// Three whole session cards with the gaps between them.
+        static let threeRows: CGFloat = 3 * rowHeight + 2 * rowGap
+        /// A session card grows no taller than this when its page has room to spare.
+        static let tallestSessionCard: CGFloat = 60
+        /// One session card's height in a list `available` points tall: three whole cards fill the list, sharing what
+        /// a shorter card at the top of the page leaves spare, in whole points and no taller than the limit.
+        static func sessionCard(available: CGFloat) -> CGFloat {
+            min(tallestSessionCard, max(rowHeight, ((available - 2 * rowGap) / 3).rounded(.down)))
         }
-        /// One compact Claude window: its line, a tight gap and the meter; two with a tight gap fill a limits group.
-        static let compactWindow: CGFloat = secondaryLine + Space.tight + meterHeight
-        /// Three whole rows in their list module, with hairlines between them.
-        static let threeRows: CGFloat = 3 * rowHeight + 2 * listVerticalInset + 2 * 0.5
-        /// The page between the header and the footer: a provider card and exactly three whole rows (AC-03.10).
-        static let pageHeight: CGFloat = cardHeight + Grid.margin + listHeaderHeight + Grid.group + threeRows
-        /// Everything above the page. Below a notch the header shares the menu-bar band, with a tab row under it
-        /// when several agents are selected; without a notch one header row holds the title or tabs and actions.
-        static func headerBlock(notchHeight: CGFloat?, tabRow: Bool) -> CGFloat {
-            guard let notchHeight else { return headerHeight + headerGap }
-            return notchHeight + (tabRow ? headerHeight : 0) + headerGap
+        /// The list's viewport: exactly three whole cards, so no part of a fourth ever shows and further cards scroll;
+        /// on a display too short for three standard cards, what there is.
+        static func sessionViewport(available: CGFloat) -> CGFloat {
+            available < threeRows ? max(0, available) : 3 * sessionCard(available: available) + 2 * rowGap
         }
+        /// The card at the top of an agent's page: the padding above its account line and below its figures, and the
+        /// gap on each side of its hairline and between two lines of figures (AC-04.17).
+        static let summaryEdge: CGFloat = 7
+        static let summaryGap: CGFloat = 5
+        static func summaryCard(lines: Int) -> CGFloat {
+            summaryEdge + secondaryLine + 2 * summaryGap + CGFloat(lines) * secondaryLine + CGFloat(lines - 1) * summaryGap + summaryEdge
+        }
+        /// The page between the header and the footer: the summary card at its tallest, with two lines of figures, the
+        /// list header and exactly three whole session cards (AC-03.10). The Overview fills the same height with its chart.
+        static let pageHeight: CGFloat = summaryCard(lines: 2) + Grid.margin + listHeaderHeight + Grid.group + threeRows
+        /// The header's sky below its top inset: a body, its label of up to four lines and a margin.
+        static let skyHeight: CGFloat = 140
+        /// The gap between the header and the page; the sky is still there, on its way out.
+        static let skyTail: CGFloat = Grid.margin
+        /// The sky runs on this far behind the page, fainter and fainter, so that no line marks where it ends.
+        static let skyBleed: CGFloat = 118
+        /// The stretch over which the sky dissolves, ending where its bleed ends. It begins among the labels, slowly
+        /// enough that their last line stays on a sky dark enough to read it; it is about half gone where the page
+        /// begins and goes on, in a long tail, behind the page's first card.
+        static let skyFade: CGFloat = 162
+        /// The header's top inset on a display without a notch.
+        static let skyTop: CGFloat = 14
+        /// The strip of sky Settings keeps under the band, with Back.
+        static let settingsStrip: CGFloat = 10
+        /// Settings keeps only a strip of the sky, so its page is taller than an agent's by the rest of it.
+        static let settingsPageHeight: CGFloat = pageHeight + skyHeight - settingsStrip
+        /// Everything above the page: the header's sky under the notch band, or under a small top margin on a display
+        /// without a notch, and its dissolving tail. The header is the same for one agent or several (AC-19.09).
+        static func headerBlock(notchHeight: CGFloat?) -> CGFloat { (notchHeight ?? skyTop) + skyHeight + skyTail }
         /// The panel height that keeps the page budget on every display.
-        static func panelHeight(notchHeight: CGFloat?, tabRow: Bool) -> CGFloat {
-            headerBlock(notchHeight: notchHeight, tabRow: tabRow) + pageHeight + footerHeight
-        }
+        static func panelHeight(notchHeight: CGFloat?) -> CGFloat { headerBlock(notchHeight: notchHeight) + pageHeight + footerHeight }
     }
     /// The four text roles of the panel pages. One line uses one size; weight and color, never size, set items
     /// apart. Every role uses monospaced digits so figures do not shift as they change.
@@ -121,13 +136,27 @@ enum PanelStyle {
         static let primary = Role.primary.font
         static let secondary = Role.secondary.font
         static let figure = Role.figure.font
+        /// The header's own roles on its sky: a body's figure, 20 points semibold (22 once it is chosen and its label
+        /// grows), and its name, 12 points semibold.
+        static let headerFigure = Font.system(size: 20, weight: .semibold).monospacedDigit()
+        static let headerName = Font.system(size: 12, weight: .semibold).monospacedDigit()
     }
-    /// Modules are lighter translucent layers on the glass rather than gray fills; over the opaque surface of
+    /// The panel's surface color: the deep blue-black the header's sky ends in, so the sky has nothing to end against.
+    static let surface = Color(.sRGB, red: 11 / 255, green: 10 / 255, blue: 24 / 255, opacity: 1)
+    /// How much of the surface is its own color; the rest is the system's glass under it.
+    static let surfaceDepth = 0.82
+    /// The panel is dark in both appearances, as the notch it hangs from is.
+    @MainActor static var appearance: NSAppearance? { NSAppearance(named: .darkAqua) }
+    /// A hairline around a module, brighter along its top edge as if lit from above, which lifts it off the surface
+    /// without a lighter fill.
+    static let moduleStroke = LinearGradient(colors: [Color.white.opacity(0.17), Color.white.opacity(0.045)],
+                                             startPoint: .top, endPoint: .bottom)
+    /// Modules are lighter translucent layers on the surface rather than gray fills; over the opaque surface of
     /// Reduce Transparency the same fill composites to an opaque tone.
     static var moduleFill: Color { Color(nsColor: moduleFillColor) }
     static let moduleFillColor = NSColor(name: "LunletModuleFill") { appearance in
         appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-            ? NSColor.white.withAlphaComponent(0.08) : NSColor.white.withAlphaComponent(0.5)
+            ? NSColor.white.withAlphaComponent(0.065) : NSColor.white.withAlphaComponent(0.5)
     }
     static var separator: Color { Color(nsColor: .separatorColor) }
 
@@ -178,6 +207,7 @@ struct SessionStatusStyle: Equatable {
     enum Kind: Equatable { case waiting, approval, input, running, completed, failed, stopped, finished, unknown, ended }
     let kind: Kind
 
+    init(kind: Kind) { self.kind = kind }
     init(_ snapshot: SessionSnapshot) {
         if snapshot.inputPending && snapshot.hasConfirmedActivity { kind = .input; return }
         if snapshot.isEnded { kind = .ended; return }
@@ -224,6 +254,22 @@ struct SessionStatusStyle: Equatable {
         case .finished: "flag.circle"
         case .unknown: "circle.dashed"
         case .ended: "xmark.circle"
+        }
+    }
+    /// The glyph inside a session card's round badge: one size and one shape of badge for every state, told apart by
+    /// the glyph, so none brings a circle of its own.
+    var glyph: String {
+        switch kind {
+        case .waiting: "questionmark"
+        case .approval: "hand.raised.fill"
+        case .input: "arrow.up"
+        case .running: "play.fill"
+        case .completed: "checkmark"
+        case .failed: "exclamationmark"
+        case .stopped: "stop.fill"
+        case .finished: "flag.fill"
+        case .unknown: "ellipsis"
+        case .ended: "xmark"
         }
     }
     var tone: PanelTone {
@@ -273,7 +319,8 @@ struct PanelModule: ViewModifier {
         let shape = RoundedRectangle(cornerRadius: PanelStyle.Radius.module, style: .continuous)
         content.padding(padding)
             .background(PanelStyle.moduleFill, in: shape)
-            .overlay { if contrast == .increased { shape.strokeBorder(PanelStyle.separator, lineWidth: 1) } }
+            .overlay { shape.strokeBorder(contrast == .increased ? AnyShapeStyle(PanelStyle.separator) : AnyShapeStyle(PanelStyle.moduleStroke),
+                                          lineWidth: contrast == .increased ? 1 : 0.5) }
     }
 }
 

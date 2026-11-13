@@ -252,18 +252,17 @@ struct AllowancePermissionNote: View {
     var body: some View {
         switch notifier.authorization {
         case .denied:
-            LabeledContent("Permission") {
-                HStack {
-                    Text("Off for Lunlet in System Settings").foregroundStyle(.secondary)
-                    Button("Open System Settings") {
-                        if let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=com.lunlet") {
-                            NSWorkspace.shared.open(url)
-                        }
+            SettingsRow("Permission", detail: "Off for Lunlet in System Settings") {
+                Button("Open System Settings") {
+                    if let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=com.lunlet") {
+                        NSWorkspace.shared.open(url)
                     }
                 }
+                .buttonStyle(SettingsLinkButtonStyle())
             }
         case .unavailable:
-            Text("Notifications are unavailable in this build.").font(Font.caption).foregroundStyle(.secondary)
+            Text("Notifications are unavailable in this build.").font(PanelStyle.Text.secondary).foregroundStyle(.secondary)
+                .settingsCell()
         default: EmptyView()
         }
     }

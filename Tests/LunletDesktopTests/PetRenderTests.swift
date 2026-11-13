@@ -41,7 +41,7 @@ import LunletCore
                 let headFrame = CGRect(x: dogOrigin.x + head.x - 32, y: dogOrigin.y + size.height - head.y - 32, width: 64, height: 64)
                 let anchor = CGRect(x: headFrame.minX, y: dogOrigin.y, width: headFrame.width, height: headFrame.maxY - dogOrigin.y)
                 let screen = PanelScreen(frame: CGRect(origin: .zero, size: canvas), visibleFrame: CGRect(origin: .zero, size: canvas), safeTop: 0)
-                var panel = PanelPlacement.panel(near: anchor, tabRow: false, screen: screen)
+                var panel = PanelPlacement.panel(near: anchor, screen: screen)
                 panel.size.height = min(panel.height, 380)
                 if edge == .top { panel.origin.y = anchor.minY - PanelPlacement.bubbleGap - panel.height }
                 let tail = PanelPlacement.tail(panel: panel, anchor: anchor)

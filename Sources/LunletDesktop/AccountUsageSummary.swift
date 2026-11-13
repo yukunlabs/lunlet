@@ -1,142 +1,61 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
 // Refs: US-16, AC-16.02; US-18, AC-18.02.
-// Refs: US-04, AC-04.01, AC-04.02, AC-04.03, AC-04.06, AC-04.07, AC-04.08, AC-04.09, AC-04.10, AC-04.12, AC-04.15.
+// Refs: US-04, AC-04.01, AC-04.02, AC-04.03, AC-04.06, AC-04.08, AC-04.09, AC-04.12, AC-04.14, AC-04.15, AC-04.17, AC-04.18.
 // Refs: US-24, AC-24.01, AC-24.02; US-03, AC-03.09.
 import SwiftUI
 import LunletCore
 
+/// The top of the Codex page under the header, one card: the account line, then the figures with the five-hour
+/// window, Credits, reset entitlements and today's recorded usage (AC-04.17). The weekly allowance itself is in the header.
 struct AccountUsageSummary: View {
     @ObservedObject var model: AccountUsageModel
+    @ObservedObject var history: LocalUsageModel
     let hoverPanel: UsageHoverPanelController
+    /// The panel's global Refresh, offered on the account line after a failed read (AC-04.12).
+    var refresh: () -> Void = {}
 
-    var historyDays: Int = 5
-    var accentHex: String? = nil
     var body: some View {
         TimelineView(.periodic(from: .now, by: 60)) { context in
             content(now: context.date)
         }
     }
 
-    /// The same rhythm as the Claude card: a title line, an account line, the limits group (the remaining figure,
-    /// the meter and the reset line) and a footnote. One size per line; color and weight set items apart.
     private func content(now: Date) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: PanelStyle.Space.small) {
-                Text("Limits").font(PanelStyle.Text.title).accessibilityAddTraits(.isHeader)
-                UsageChartButton(label: "Show usage history", action: hoverPanel.showForKeyboard)
-                Spacer(minLength: PanelStyle.Grid.row)
-            }
-            .frame(height: PanelStyle.Layout.line)
-            HStack(spacing: PanelStyle.Space.tight) {
-                Image(systemName: "person.crop.circle").accessibilityHidden(true)
-                Text(snapshot?.identity?.email ?? "Codex account").lineLimit(1).truncationMode(.middle)
-                    .help(snapshot?.identity?.email ?? "Account identity unavailable")
-                Text(verbatim: "·").foregroundStyle(.tertiary).accessibilityHidden(true)
-                Text(snapshot?.identity?.plan?.replacingOccurrences(of: "_", with: " ").capitalized ?? "Plan —").lineLimit(1)
-                    .layoutPriority(1)
-                Spacer(minLength: PanelStyle.Grid.group)
-                if let snapshot, let updated = AccountUsagePresentation.updatedLabel(at: snapshot.observedAt, now: now) {
-                    Text(updated).lineLimit(1).layoutPriority(1).help("Last successful account update")
-                }
-            }
-            .font(PanelStyle.Text.secondary).foregroundStyle(.secondary)
-            .frame(height: PanelStyle.Layout.secondaryLine)
-            .padding(.top, PanelStyle.Grid.row)
-            VStack(alignment: .leading, spacing: PanelStyle.Grid.row) {
-                HStack(alignment: .firstTextBaseline, spacing: PanelStyle.Space.tight) {
-                    if let remaining = weekly?.remainingPercent {
-                        Text(remaining.formatted(.number.precision(.fractionLength(0...1))) + "%")
-                        Text("left").fontWeight(.regular).foregroundStyle(.secondary)
-                    } else {
-                        Text(model.state == .loading ? "Refreshing…" : "Unavailable").fontWeight(.regular).foregroundStyle(.secondary)
-                    }
-                    Spacer(minLength: 0)
-                }
-                .font(PanelStyle.Text.figure)
-                .frame(height: PanelStyle.Layout.line)
-                AllowanceBar(remaining: weekly?.remainingPercent, accentHex: accentHex)
-                HStack {
-                    if let reset = weekly?.resetsAt {
-                        if let remaining = AccountUsagePresentation.countdown(until: reset, now: now) {
-                            Text("Resets in " + remaining)
-                        } else { Text("Reset due") }
-                        Spacer(minLength: PanelStyle.Space.tight)
-                        // One reset wording everywhere: a time today, otherwise the weekday and time.
-                        Text(ClaudeLimitsText.moment(reset, now: now))
-                    } else {
-                        Text("Reset —")
-                        Spacer(minLength: PanelStyle.Space.tight)
-                        if model.state == .unavailable { Text("Refresh to try again").foregroundStyle(.tertiary) }
-                    }
-                }
-                .font(PanelStyle.Text.secondary).foregroundStyle(.secondary)
-                .frame(height: PanelStyle.Layout.secondaryLine)
-                // The five-hour window below the weekly reset line, by its duration; never combined (AC-04.15). An account
-                // whose read reports no such window leaves the line blank; the group keeps its height.
-                if let fiveHour = AccountUsagePresentation.fiveHourLine(in: snapshot, now: now) {
-                    HStack {
-                        Text("5-hour window")
-                        Text(fiveHour.left).foregroundStyle(.primary)
-                        Spacer(minLength: PanelStyle.Space.tight)
-                        Text(fiveHour.reset)
-                    }
-                    .font(PanelStyle.Text.secondary).foregroundStyle(.secondary)
-                    .frame(height: PanelStyle.Layout.secondaryLine)
-                    .help("Codex's five-hour window, reported beside the weekly one. The meter, the vine and the forecast stay weekly.")
-                    .accessibilityElement(children: .combine)
-                } else {
-                    Color.clear.frame(height: PanelStyle.Layout.secondaryLine).accessibilityHidden(true)
-                }
-            }
-            .padding(.top, PanelStyle.Grid.group)
-            .contentShape(Rectangle())
-            .background(UsageHoverAnchor(controller: hoverPanel))
-            .help(freshnessHelp)
-            HStack(spacing: PanelStyle.Space.tight) {
-                Text("Credits").foregroundStyle(.secondary)
-                Text(creditsLabel)
-                    .help("Reported credit balance; no currency is inferred.")
-                Spacer(minLength: PanelStyle.Space.medium)
-                let expiry = AccountUsagePresentation.resetExpiryLabels(snapshot?.earnedResets, now: now)
-                HStack(spacing: PanelStyle.Space.tight) {
-                    Text("Reset credits").foregroundStyle(.secondary)
-                    Text(snapshot?.earnedResets?.availableCount.map(String.init) ?? "—")
-                    if !expiry.isEmpty {
-                        Image(systemName: "clock").imageScale(.small).foregroundStyle(.secondary).padding(.leading, 2)
-                        Text(expiry.joined(separator: " · ")).foregroundStyle(.secondary)
-                    }
-                }.help(resetHelp)
-                    // The label replaces the children's text, so the count and expiry are the element's value.
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("Limit reset credits")
-                    .accessibilityValue(AccountUsagePresentation.resetCreditsSpoken(snapshot?.earnedResets, now: now))
-            }
-            .font(PanelStyle.Text.secondary).lineLimit(1)
-            .frame(height: PanelStyle.Layout.secondaryLine)
-            .padding(.top, PanelStyle.Grid.group)
-        }
-        .modifier(PanelModule())
+        AgentSummaryCard(account: account, plan: plan, accountHelp: freshnessHelp,
+                         figures: AgentFigures.codex(snapshot: snapshot, today: today, now: now), help: help,
+                         hoverPanel: hoverPanel, label: "Codex usage") { freshness(now: now) }
     }
 
-    private var snapshot: AccountLimitsSnapshot? {
-        model.displayedSnapshot
+    private var snapshot: AccountLimitsSnapshot? { model.displayedSnapshot }
+    private var account: String {
+        snapshot?.identity?.email ?? (model.state == .loading ? "Reading account…" : "Codex account")
     }
-    private var weekly: AllowanceWindow? { snapshot.flatMap(AccountUsagePresentation.weekly) }
-    private var credits: AccountCredits? {
-        guard let buckets = snapshot?.buckets else { return nil }
-        if let codex = buckets.first(where: { $0.id == "codex" }) { return codex.credits }
-        return buckets.count == 1 ? buckets.first?.credits : nil
+    private var plan: String? { snapshot?.identity?.plan?.replacingOccurrences(of: "_", with: " ").capitalized }
+    private var today: AgentFigure {
+        AgentFigures.today(OverviewUsage.today(history.snapshot), reading: history.isLoading)
     }
-    private var creditsLabel: String {
-        guard let credits else { return "—" }
-        if credits.unlimited == true { return "Unlimited" }
-        if let balance = credits.balance { return AccountUsagePresentation.creditBalance(balance) }
-        if credits.hasCredits == false { return "None" }
-        return credits.hasCredits == true ? "Available" : "—"
+
+    /// The age of the last successful read, or Refresh once a read has failed and nothing can be shown.
+    @ViewBuilder private func freshness(now: Date) -> some View {
+        if let snapshot {
+            if let updated = AccountUsagePresentation.updatedLabel(at: snapshot.observedAt, now: now) {
+                Text(updated).monospacedDigit().help("Last successful account update")
+            }
+        } else if model.state == .unavailable {
+            Button("Refresh", action: refresh).buttonStyle(.plain).foregroundStyle(.tint)
+                .help("The last account read failed; Refresh tries again.")
+        }
+    }
+
+    private var help: [String: String] {
+        ["5-hour window": "Codex's five-hour window, reported beside the weekly one. The header, the vine and the forecast stay weekly.",
+         "Credits": "Reported credit balance; no currency is inferred.",
+         "Reset credits": resetHelp,
+         "Today": "Recorded on this Mac from local Codex records. Cost is an estimate at published API list prices, not a bill."]
     }
     private var freshnessHelp: String {
-        let source = "Codex account limits. Hover for \(historyDays)-day usage."
+        let source = "Codex account limits. Rest the pointer on the figures for \(history.historyDays)-day usage."
         guard let snapshot else {
             return source + (model.state == .unavailable ? " The last account read failed; Refresh can try again." : "")
         }
@@ -150,19 +69,5 @@ struct AccountUsageSummary: View {
         } ?? []
         return (["Available quota reset entitlements, separate from Credits."] + dates +
             (resets.detailCoverage == .complete ? [] : ["Some expiration details are unavailable."])).joined(separator: "\n")
-    }
-}
-
-/// Opens the usage chart from the keyboard (Command-U) as well as by hovering its anchor.
-struct UsageChartButton: View {
-    let label: String
-    let action: () -> Void
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: "chart.xyaxis.line").font(.system(size: 11, weight: .medium))
-        }
-        .buttonStyle(PanelIconButtonStyle(size: PanelStyle.Layout.inlineButton))
-        .accessibilityLabel(label)
-        .help("Show usage history (⌘U)").keyboardShortcut("u", modifiers: .command)
     }
 }

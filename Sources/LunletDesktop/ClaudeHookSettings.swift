@@ -1,37 +1,32 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
-// Refs: US-38, AC-38.06; US-31, AC-31.02; US-33, AC-33.08.
+// Refs: US-38, AC-38.06; US-31, AC-31.02; US-33, AC-33.08; US-24, AC-24.02.
 import LunletClaude
 import SwiftUI
 
 /// No switch of its own: the Claude Code agent switch decides, adding Lunlet's Stop hook while Claude Code is selected
-/// and removing it when it is not. Settings › Agents shows a note here only when Claude Code's settings could not be
-/// changed, with a way to try again (AC-38.06).
+/// and removing it when it is not. Settings › Agents shows the hook as one status word, and as a note with a way to
+/// try again when Claude Code's settings could not be changed (AC-38.06).
 struct ClaudeHookSettings: View {
     @ObservedObject var model: ClaudeHookModel
 
     var body: some View {
-        if let note {
-            Section {
-                HStack(alignment: .firstTextBaseline, spacing: PanelStyle.Space.small) {
-                    Text(note).font(Font.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                    Spacer(minLength: 0)
-                    if model.actionIssue != nil {
-                        Button("Try again", action: model.retry).controlSize(.small)
-                    }
-                }
-            } header: {
-                Text("Claude Code phone replies")
-            }
-            .onAppear(perform: model.refresh)
-        }
+        let status = Self.status(connection: model.connection, issue: model.actionIssue)
+        SettingsStatusRow(title: "Phone replies", status: status) { _ in model.retry() }
+            // A note is rechecked when it is shown; a healthy state is the runtime's own.
+            .onAppear { if status.needsAttention { model.refresh() } }
     }
 
-    /// Text appears only when something needs the owner's attention.
-    private var note: String? {
-        if let issue = model.actionIssue { return Self.message(issue) }
-        if case .unavailable(let failure) = model.connection { return Self.message(failure) }
-        return nil
+    /// The hook in words. A change that failed keeps its note and Try again whatever the connection reads; a missing
+    /// Claude Code folder says why and offers nothing.
+    static func status(connection: ClaudeHookModel.Connection, issue: ClaudeHookFailure?) -> SettingsStatus {
+        if let issue { return .init(text: message(issue), tone: .attention, action: .retry) }
+        switch connection {
+        case .checking: return .init(text: "Checking…", tone: .neutral, action: nil)
+        case .notConnected: return .init(text: "Not added", tone: .neutral, action: nil)
+        case .connected: return .init(text: "Stop hook added", tone: .success, action: nil)
+        case .unavailable(let failure): return .init(text: message(failure), tone: .attention, action: nil)
+        }
     }
 
     static func message(_ failure: ClaudeHookFailure) -> String {

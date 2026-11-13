@@ -17,20 +17,6 @@ import LunletCore
 }
 
 struct VineEntryTests {
-    @Test(.enabled(if: ProcessInfo.processInfo.environment["LUNLET_TEST_RENDER_SUMMARY"] == "1"))
-    @MainActor func renderAllowanceRulerForBothAppearances() throws {
-        _ = NSApplication.shared
-        for (name, scheme, background) in [("light", ColorScheme.light, Color.white), ("dark", .dark, Color(white: 0.13))] {
-            let hosting = NSHostingView(rootView: AllowanceBar(remaining: 82)
-                .padding(12).frame(width: 438).background(background).environment(\.colorScheme, scheme))
-            hosting.frame = CGRect(x: 0, y: 0, width: 438, height: 32)
-            hosting.layoutSubtreeIfNeeded()
-            let bitmap = try #require(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
-            hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
-            let data = try #require(bitmap.representation(using: .png, properties: [:]))
-            try data.write(to: URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent(".tmp/ruler-\(name).png"))
-        }
-    }
     @Test func entryWrapsEachPhysicalNotchWithSymmetricTargetsAndFiniteWave() throws {
         for notch in [CGSize(width: 160, height: 26), CGSize(width: 185, height: 32), CGSize(width: 230, height: 40)] {
             let geometry = VineGeometry(notch: notch)
