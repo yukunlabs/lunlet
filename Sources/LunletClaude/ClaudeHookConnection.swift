@@ -31,15 +31,30 @@ public struct ClaudeHookConnection: Sendable {
     /// Longer than the reply window, so the hold never ends by Claude Code's timeout first.
     static let timeoutSeconds = 900
     private static let maximumSettingsBytes = 4 * 1_048_576
+    /// Test seams standing in for another writer: run once the settings were read, and once they were replaced.
+    var afterRead: (@Sendable () -> Void)?
+    var afterWrite: (@Sendable () -> Void)?
 
     public init(home: ClaudeHome = .current(), spool: HookSpool = .standard()) { self.home = home; self.spool = spool }
 
     /// The launcher's path as Claude Code's settings name it: under `$HOME` when it lives there, so a synced
     /// settings file still points at this user's folder on another machine.
-    public var command: String {
+    private var launcherReference: String {
         let path = spool.launcherURL.path, home = FileManager.default.homeDirectoryForCurrentUser.path
-        let shown = path.hasPrefix(home + "/") ? "$HOME" + path.dropFirst(home.count) : path
-        return "\"" + shown + "\""
+        return path.hasPrefix(home + "/") ? "$HOME" + path.dropFirst(home.count) : path
+    }
+    /// The command builds up to 2026-11-12 wrote: the launcher alone. Still recognized as Lunlet's entry, so it is
+    /// removed exactly and brought to the current command on the next connect.
+    var legacyCommand: String { "\"" + launcherReference + "\"" }
+    /// The entry's command: the launcher when it is there, and nothing, successfully, when it is not, so the entry
+    /// never fails a turn end after Lunlet's folder was removed or the settings reached a Mac without Lunlet
+    /// (AC-38.01). The test runs inside an explicit `/bin/sh`, in single quotes, so whichever shell runs the settings
+    /// command only has to pass one quoted word along. A path that those quotes cannot hold keeps the plain form.
+    public var command: String {
+        let reference = launcherReference
+        let plain = reference.hasPrefix("$HOME") ? String(reference.dropFirst(5)) : reference
+        guard !plain.contains(where: { "'\"\\$`".contains($0) }) else { return legacyCommand }
+        return "/bin/sh -c 'if [ -x \"" + reference + "\" ]; then exec \"" + reference + "\"; fi'"
     }
     var entry: [String: Any] {
         ["type": "command", "command": command, "timeout": Self.timeoutSeconds, "statusMessage": Self.statusMessage]
@@ -47,7 +62,27 @@ public struct ClaudeHookConnection: Sendable {
     private func isLunlet(_ hook: Any) -> Bool {
         guard let hook = hook as? [String: Any], hook["type"] as? String == "command",
               let command = hook["command"] as? String else { return false }
-        return command == self.command || command.contains("com.lunlet/hook/lunlet-hook")
+        return command == self.command || command == legacyCommand || command.contains("com.lunlet/hook/lunlet-hook")
+    }
+    /// The hooks with every entry of Lunlet's that has another command than this build's replaced where it stands;
+    /// nil when there is none.
+    private func upgrading(_ hooks: [String: Any]) -> [String: Any]? {
+        guard let stops = hooks[Self.event] as? [[String: Any]] else { return nil }
+        var changed = false
+        let upgraded = stops.map { group -> [String: Any] in
+            guard let entries = group["hooks"] as? [Any] else { return group }
+            var copy = group
+            copy["hooks"] = entries.map { hook -> Any in
+                guard isLunlet(hook), (hook as? [String: Any])?["command"] as? String != command else { return hook }
+                changed = true
+                return entry
+            }
+            return copy
+        }
+        guard changed else { return nil }
+        var result = hooks
+        result[Self.event] = upgraded
+        return result
     }
     private func containsLunlet(_ hooks: [String: Any]) -> Bool {
         guard let stops = hooks[Self.event] as? [[String: Any]] else { return false }
@@ -60,25 +95,42 @@ public struct ClaudeHookConnection: Sendable {
         return containsLunlet(hooks) ? .connected : .notConnected
     }
 
+    /// Each change is one read-modify-write run by the settings file's single editor, so it never overlaps the
+    /// status line's and starts over when another writer changed the file underneath.
     public func connect() throws -> ClaudeHookState {
+        try ClaudeSettingsEditor.edit(startingOverOn: ClaudeHookFailure.settingsChanged) { try connectOnce() }
+    }
+    public func disconnect() throws -> ClaudeHookState {
+        try ClaudeSettingsEditor.edit(startingOverOn: ClaudeHookFailure.settingsChanged) { try disconnectOnce() }
+    }
+
+    private func connectOnce() throws -> ClaudeHookState {
         try installLauncher()
         let settings = try readSettings()
+        afterRead?()
         let document = try document(settings)
         var hooks = try self.hooks(of: document) ?? [:]
-        if containsLunlet(hooks) { return .connected }
-        var stops = hooks[Self.event] as? [[String: Any]] ?? []
-        stops.insert(["hooks": [entry]], at: 0)
-        hooks[Self.event] = stops
+        if containsLunlet(hooks) {
+            // An entry an earlier build wrote gets this build's command where it stands; nothing else moves.
+            guard let upgraded = upgrading(hooks) else { return .connected }
+            hooks = upgraded
+        } else {
+            var stops = hooks[Self.event] as? [[String: Any]] ?? []
+            stops.insert(["hooks": [entry]], at: 0)
+            hooks[Self.event] = stops
+        }
         let text = Self.render(hooks, indent: document == nil ? "  " : document?.style.indent, colon: document.map { String(decoding: $0.style.colon, as: UTF8.self) } ?? ": ")
         let updated = try document?.setting(Self.key, to: text)
             ?? Data(("{\n  " + (try ClaudeSettingsDocument.literal(Self.key)) + ": " + text + "\n}\n").utf8)
         try verify(updated, original: document?.object ?? [:], hooks: hooks)
         try replace(settings, with: updated)
+        afterWrite?()
         return .connected
     }
 
-    public func disconnect() throws -> ClaudeHookState {
+    private func disconnectOnce() throws -> ClaudeHookState {
         let settings = try readSettings()
+        afterRead?()
         let document = try document(settings)
         guard let document, var hooks = try hooks(of: document), containsLunlet(hooks) else { return .notConnected }
         var stops = (hooks[Self.event] as? [[String: Any]] ?? []).compactMap { group -> [String: Any]? in
@@ -99,6 +151,7 @@ public struct ClaudeHookConnection: Sendable {
         }
         try verify(updated, original: document.object, hooks: hooks.isEmpty ? nil : hooks)
         try replace(settings, with: updated)
+        afterWrite?()
         return .notConnected
     }
 
@@ -194,14 +247,45 @@ public struct ClaudeHookConnection: Sendable {
     }
 }
 
-/// What the running app does for the hook: announces itself, publishes its bundled helper and sweeps the folders
-/// of stops whose helper is gone. Claude Code's settings change only through `ClaudeHookConnection`.
-public enum ClaudeHookInstallation {
-    public static func prepare(helper: URL?, spool: HookSpool = .standard(), pid: Int32 = getpid(), now: Date = Date()) {
-        try? HookSpool.createPrivateDirectory(spool.root)
-        if let encoded = try? HookSpool.encoder.encode(HookSpool.AppRecord(pid: pid, startedAt: now)) {
-            try? HookSpool.writeAtomically(encoded, to: spool.appRecordURL)
+/// Whether Lunlet's hook is in Claude Code's settings, for the session monitor, which asks on every scan only to
+/// word a note. The settings are read and parsed again only when the file changed.
+final class ClaudeHookStateCache: @unchecked Sendable {
+    private struct Stamp: Equatable { let device: Int32; let inode: UInt64; let size: Int64; let seconds: Int; let nanoseconds: Int }
+    private let connection: ClaudeHookConnection
+    private let lock = NSLock()
+    private var stamp: Stamp?
+    private var connected = false
+    /// How often the settings were actually read.
+    private(set) var reads = 0
+
+    init(_ connection: ClaudeHookConnection) { self.connection = connection }
+
+    func isConnected() -> Bool {
+        // The file the connection edits: a linked settings file is judged at its target.
+        var info = stat()
+        guard stat(connection.home.settings.resolvingSymlinksInPath().path, &info) == 0 else {
+            lock.lock(); defer { lock.unlock() }
+            stamp = nil; connected = false
+            return false
         }
+        let current = Stamp(device: info.st_dev, inode: info.st_ino, size: info.st_size,
+                            seconds: info.st_mtimespec.tv_sec, nanoseconds: info.st_mtimespec.tv_nsec)
+        lock.lock(); defer { lock.unlock() }
+        if current == stamp { return connected }
+        reads += 1
+        connected = (try? connection.state()) == .connected
+        stamp = current
+        return connected
+    }
+}
+
+/// What the launched app does for the hook: publishes its bundled helper and sweeps the folders of stops whose
+/// helper is gone. It does not announce a running app: only the Claude session monitor answers stops, so only it
+/// writes the app record, and a helper never waits on an app that is not listening. Claude Code's settings change
+/// only through `ClaudeHookConnection`.
+public enum ClaudeHookInstallation {
+    public static func prepare(helper: URL?, spool: HookSpool = .standard()) {
+        try? HookSpool.createPrivateDirectory(spool.root)
         if let helper, FileManager.default.isExecutableFile(atPath: helper.path) {
             try? HookSpool.writeAtomically(Data((helper.path + "\n").utf8), to: spool.helperPathFile)
         }
@@ -213,23 +297,41 @@ public enum ClaudeHookInstallation {
         sweepStale(spool: spool, isProcessAlive: { kill($0, 0) == 0 })
     }
 
-    /// Removes the app record at quit, so a hook that fires afterwards exits at once.
-    public static func retire(spool: HookSpool = .standard()) {
-        try? FileManager.default.removeItem(at: spool.appRecordURL)
-    }
-
-    /// Removes stop files whose helper process is gone; a live helper is waiting on the app's verdict.
-    public static func sweepStale(spool: HookSpool, isProcessAlive: (Int32) -> Bool) {
-        let names = (try? FileManager.default.contentsOfDirectory(atPath: spool.stopsDirectory.path)) ?? []
-        for name in names {
+    /// Removes what a gone helper left, stop by stop. A stop whose signal names a live helper keeps every file. A
+    /// stop whose helper is gone loses its signal and verdicts at once. A follow-up request or receipt, which the
+    /// reply path may still be reading, a file with no signal beside it and an empty folder go only once they are
+    /// older than `grace`, so nothing a helper or the reply path is using right now is taken away. Folders of the
+    /// `keeping` sessions stay even when empty, because the running monitor watches them.
+    public static func sweepStale(spool: HookSpool, isProcessAlive: (Int32) -> Bool, keeping: Set<UUID> = [],
+                                  now: Date = Date(), grace: TimeInterval = 60) {
+        func isOld(_ url: URL) -> Bool {
+            var info = stat()
+            guard lstat(url.path, &info) == 0 else { return false }
+            return now.timeIntervalSince1970 - Double(info.st_mtimespec.tv_sec) > grace
+        }
+        let verdicts = [HookSpool.signalSuffix, HookSpool.holdSuffix, HookSpool.releaseSuffix]
+        for name in (try? FileManager.default.contentsOfDirectory(atPath: spool.stopsDirectory.path)) ?? [] {
             guard let session = UUID(uuidString: name) else { continue }
             let directory = spool.stopDirectory(session)
-            var live = false
-            for url in HookSpool.files(in: directory, suffix: HookSpool.signalSuffix) {
-                if let data = try? HookSpool.readSmall(url), let signal = try? HookSpool.decoder.decode(HookSpool.StopSignal.self, from: data),
-                   isProcessAlive(signal.pid) { live = true }
+            let files = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
+            var live = Set<String>(), gone = Set<String>()
+            for file in files where file.hasSuffix(HookSpool.signalSuffix) && !file.hasPrefix(".") {
+                let stop = String(file.dropLast(HookSpool.signalSuffix.count))
+                if let data = try? HookSpool.readSmall(directory.appendingPathComponent(file, isDirectory: false)),
+                   let signal = try? HookSpool.decoder.decode(HookSpool.StopSignal.self, from: data), isProcessAlive(signal.pid) {
+                    live.insert(stop)
+                } else { gone.insert(stop) }
             }
-            if !live { try? FileManager.default.removeItem(at: directory) }
+            for file in files {
+                // Every file of a stop starts with its id; a temporary sibling has a leading dot before it.
+                let stop = file.split(separator: ".").first.map(String.init) ?? file
+                guard !live.contains(stop) else { continue }
+                let url = directory.appendingPathComponent(file, isDirectory: false)
+                let left = gone.contains(stop) && !file.hasPrefix(".") && verdicts.contains(where: file.hasSuffix)
+                if left || isOld(url) { try? FileManager.default.removeItem(at: url) }
+            }
+            // Succeeds only for an empty folder.
+            if !keeping.contains(session), isOld(directory) { rmdir(directory.path) }
         }
     }
 }

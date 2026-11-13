@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
 // Refs: US-41, AC-41.01, AC-41.02, AC-41.03, AC-41.04, AC-41.05; US-04, AC-04.01, AC-04.05, AC-04.15; US-25, AC-25.01.
+// Refs: US-19, AC-19.01.
 import AppKit
 import Combine
 import Foundation
@@ -100,12 +101,15 @@ struct AllowanceAlertRule: Codable, Equatable {
                 // The same reading published again, or an older one, is not a new reading.
                 guard reading.observedAt > previous.observedAt else { continue }
                 warned = previous.warned
+                // One reported window's reset timestamp may differ slightly from read to read; within the
+                // estimator's tolerance it is the same window, which neither resets nor warns again.
+                let moved = reading.resetsAt.timeIntervalSince(previous.resetsAt)
                 let refreshed = reading.observedAt > previous.resetsAt
-                    && (reading.resetsAt > previous.resetsAt || reading.remainingPercent > previous.remaining)
+                    && (moved > WeeklyQuotaEstimator.resetTimeTolerance || reading.remainingPercent > previous.remaining)
                 if refreshed {
                     if resetNotices { notices.append(.reset(reading)) }
                     warned = false
-                } else if reading.resetsAt != previous.resetsAt { warned = false }
+                } else if abs(moved) > WeeklyQuotaEstimator.resetTimeTolerance { warned = false }
             }
             if reading.remainingPercent < level {
                 if !warned { notices.append(.low(reading)); warned = true }
@@ -142,6 +146,8 @@ enum AllowanceNotificationAuthorization: Equatable, Sendable {
     var openProvider: ((SessionProvider) -> Void)?
 
     static let memoryKey = "allowanceNotifications.windows"
+    /// How often the rule has been written; a resource bound, not user-facing state.
+    private(set) var ruleSaves = 0
     private let deliverer: any AllowanceNotificationDelivering
     private let defaults: UserDefaults?
     private let now: @MainActor () -> Date
@@ -177,14 +183,23 @@ enum AllowanceNotificationAuthorization: Equatable, Sendable {
     func preferencesChanged(_ value: LunletPreferences) {
         let wasOn = preferences?.allowanceNotifications ?? false
         preferences = value
+        // An agent the panel does not show has no window to report (AC-41.03); a reading taken before it was
+        // deselected is dropped, so selecting it again reports only what is read from then on.
+        readings = readings.filter { value.sessionProviders.contains($0.key) }
         if value.allowanceNotifications, !wasOn { enqueue { [deliverer] in await deliverer.requestAuthorization() } }
         else { evaluate() }
     }
     func codexChanged(_ snapshot: AccountLimitsSnapshot) {
+        guard shows(.codex) else { return }
         readings[.codex] = AllowanceReading.codex(snapshot, now: now()); evaluate()
     }
     func claudeChanged(_ limits: ClaudePlanLimits?, connected: Bool) {
+        guard shows(.claude) else { return }
         readings[.claude] = AllowanceReading.claude(limits, connected: connected, now: now()); evaluate()
+    }
+    /// Whether the agent is selected; before the preferences are known every reading is kept and none is evaluated.
+    private func shows(_ provider: SessionProvider) -> Bool {
+        preferences?.sessionProviders.contains(provider) ?? true
     }
     /// Re-reads the permission, for a grant made in System Settings after a denial (AC-41.01).
     func checkAuthorization() {
@@ -217,9 +232,11 @@ enum AllowanceNotificationAuthorization: Equatable, Sendable {
     }
     private func evaluate() {
         guard !closed, let preferences, preferences.allowanceNotifications, authorization == .granted else { return }
+        let before = rule
         let notices = rule.notices(for: readings.values.flatMap { $0 }, warnBelow: preferences.allowanceWarnBelow,
                                    resetNotices: preferences.allowanceResetNotices, now: now())
-        if let data = try? JSONEncoder().encode(rule) { defaults?.set(data, forKey: Self.memoryKey) }
+        // The memory is written when a reading changed it, not on every limits file event or preference change.
+        if rule != before, let data = try? JSONEncoder().encode(rule) { defaults?.set(data, forKey: Self.memoryKey); ruleSaves += 1 }
         guard !notices.isEmpty else { return }
         let previous = work, deliverer = deliverer
         work = Task {

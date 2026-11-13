@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
-// Refs: US-12, AC-12.02.
+// Refs: US-12, AC-12.02; US-14, AC-14.01, AC-14.07.
 // Refs: US-20, AC-20.04, AC-20.06 (shared process interaction policy).
 import Foundation
 import Security
 import Testing
+import LunletCore
 @testable import LunletSecureStorage
 
 // Every Security operation is injected; these fixtures never access a keychain.
@@ -74,6 +75,31 @@ private final class SyntheticKeychain: KeychainAPI, @unchecked Sendable {
     api.seed(Data("current".utf8), service: "current")
     #expect(try await store.perform(.storageLoad) { try $0.load() } == Data("current".utf8))
     #expect(labels.values.count == 3 && labels.values.allSatisfy { $0 == "com.lunlet.keychain" })
+}
+
+// Refs: US-14, AC-14.01, AC-14.07. A build without a certificate (the unsigned preview) has no Keychain access by
+// design. Asking is refused before the Keychain is touched and recorded as unavailable, never as a storage failure
+// in the error file; a real Keychain failure of a signed build still is. Each case records an event no other test
+// in this process records, so the shared error file can be read without interference.
+@Test func aBuildWithoutACertificateRecordsNoStorageFailure() async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("lunlet-keychain-log-\(UUID())", isDirectory: true)
+    let file = DiagnosticFile(url: directory.appendingPathComponent("lunlet.log"))
+    DiagnosticLog.file = file
+    defer { DiagnosticLog.file = nil; try? FileManager.default.removeItem(at: directory) }
+    let api = SyntheticKeychain()
+    let unsigned = SecureItemStore(services: ["synthetic"], keychain: api, signingIdentity: { false })
+    await #expect(throws: EnrollmentIdentityFailure.certificateRequired) {
+        try await unsigned.perform(.powerAssertion) { try $0.load() }
+    }
+    #expect(api.events.isEmpty)
+    let signed = SecureItemStore(services: ["synthetic"], keychain: api, signingIdentity: { true })
+    await #expect(throws: SecureStorageFailure(status: errSecAuthFailed)) {
+        try await signed.perform(.sessionBinding) { _ in throw SecureStorageFailure(status: errSecAuthFailed) }
+    }
+    file.flush()
+    let text = (try? String(contentsOf: file.url, encoding: .utf8)) ?? ""
+    #expect(!text.contains("event=powerAssertion"))
+    #expect(text.contains("component=keychain event=sessionBinding outcome=failed") && text.contains("reason=storage"))
 }
 
 private final class LabelRecorder: @unchecked Sendable {

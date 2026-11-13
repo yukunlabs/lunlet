@@ -62,6 +62,14 @@ enum PanelStyle {
         static let limitsGroup: CGFloat = line + Grid.row + meterHeight + Grid.row + secondaryLine + Grid.row + secondaryLine
         static let cardHeight: CGFloat = 2 * Grid.margin + line + Grid.row + secondaryLine + Grid.group + limitsGroup
             + Grid.group + secondaryLine
+        /// One agent block of the Overview's Limits card: its name line, its meter and its countdown line.
+        static let overviewBlock: CGFloat = secondaryLine + Space.tight + meterHeight + Space.tight + secondaryLine
+        /// The gap above each agent block of the Overview's Limits card: the card's free height shared equally, so
+        /// the last block ends at the card's padding whatever the provider cards' height is (AC-19.06).
+        static func overviewBlockGap(blocks: Int) -> CGFloat {
+            let free = cardHeight - 2 * Grid.margin - line - CGFloat(blocks) * overviewBlock
+            return max(Grid.group, free / CGFloat(max(1, blocks)))
+        }
         /// One compact Claude window: its line, a tight gap and the meter; two with a tight gap fill a limits group.
         static let compactWindow: CGFloat = secondaryLine + Space.tight + meterHeight
         /// Three whole rows in their list module, with hairlines between them.

@@ -111,6 +111,38 @@ import LunletCore
         await limits.shutdown()
     }
 
+    // Refs: US-21, AC-21.04; US-25, AC-25.01. The one-minute tick keeps the countdown's time only while the menu-bar
+    // entry is shown with a countdown; hidden in notch or pet mode it does not run, and showing the entry starts it
+    // with a fresh text.
+    @Test func theCountdownTickRunsOnlyWhileTheMenuEntryIsShownWithACountdown() async throws {
+        _ = NSApplication.shared
+        let suite = "com.lunlet.test.menu.\(UUID())"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let preferences = PreferencesStore(defaults: defaults)
+        preferences.update { $0.providers = [.claude]; $0.menuBarAllowance = .percentAndReset }
+        let fixture = try ClaudeLimitsFixture(); defer { fixture.remove() }
+        _ = try fixture.connection.connect()
+        let t = Int(Date().timeIntervalSince1970)
+        try fixture.write(state: "lunlet-claude-limits 1\nseven_day 30 \(t + 33 * 3_600 + 60) \(t - 5)\n")
+        let limits = ClaudePlanLimitsModel(service: fixture.connection)
+        let companion = CompanionPanelController(), sessions = SessionListModel()
+        let menu = MenuBarController(panel: companion, sessions: sessions, claudeLimits: limits, preferences: preferences)
+        defer { menu.shutdown(); sessions.shutdown(); companion.shutdown() }
+        // No reading yet: no countdown, so nothing ticks.
+        #expect(!menu.countdownActive)
+        limits.setActive(true)
+        try await ClaudeLimitsFixture.settle(limits) { limits.limits?.sevenDay != nil }
+        #expect(menu.countdownActive && menu.item?.button?.title == " 70% · 1d 9h")
+        menu.setVisible(false)
+        #expect(!menu.countdownActive)
+        menu.setVisible(true)
+        #expect(menu.countdownActive && menu.item?.button?.title == " 70% · 1d 9h")
+        preferences.update { $0.menuBarAllowance = .percent }
+        #expect(!menu.countdownActive)
+        await limits.shutdown()
+    }
+
     @Test func menuCountsConfirmedRuntimeWaitingAndKeepsUnknownCountsDistinct() throws {
         _ = NSApplication.shared
         let companion = CompanionPanelController(), sessions = SessionListModel()

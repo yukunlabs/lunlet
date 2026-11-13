@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: 0BSD
 // Refs: US-14, AC-14.01, AC-14.02, AC-14.03, AC-14.06, AC-14.07.
 // Refs: US-02, AC-02.03; US-03, AC-03.04, AC-03.05, AC-03.06, AC-03.07, AC-03.10.
-// Refs: US-12, AC-12.04, AC-12.05; US-05, AC-05.05.
+// Refs: US-12, AC-12.04, AC-12.05; US-05, AC-05.05; US-39, AC-39.07.
 import AppKit
 import LunletCore
 import LunletDesktop
@@ -30,9 +30,12 @@ import LunletDesktop
         // Only the app keeps the local error file; tests and tools leave it off (AC-14.07).
         DiagnosticLog.file = DiagnosticFile()
         runtime.start()
-        NSApplication.shared.mainMenu = ApplicationMenu.make()
+        NSApplication.shared.mainMenu = ApplicationMenu.make(target: self, open: #selector(openPanel(_:)),
+                                                             settings: #selector(openSettings(_:)))
         DiagnosticLog.record(.startup, component: .app, outcome: .completed, operation: operation)
     }
+    @objc private func openPanel(_ sender: Any?) { if terminating == nil { runtime.showPanel() } }
+    @objc private func openSettings(_ sender: Any?) { if terminating == nil { runtime.showSettings() } }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if terminating == nil { runtime.showPanel() }
         return false

@@ -3,7 +3,7 @@
 // Refs: US-07, AC-07.02, AC-07.03, AC-07.04; US-08, AC-08.01, AC-08.03.
 // Refs: US-09, AC-09.02; US-10, AC-10.01, AC-10.02, AC-10.03, AC-10.04.
 // Refs: US-11, AC-11.02, AC-11.03, AC-11.04, AC-11.05; US-12, AC-12.01, AC-12.02, AC-12.03.
-// Refs: US-05, AC-05.08, AC-05.09.
+// Refs: US-05, AC-05.08, AC-05.09; US-38, AC-38.03.
 import Foundation
 import Testing
 import LunletCore
@@ -75,6 +75,33 @@ struct CardActionRouterTests {
         let reply = try JSONSerialization.jsonObject(with: result.responseJSON()) as! [String: [String: String]]
         #expect(reply["toast"]?["content"] == "Received. Waiting for Codex confirmation.")
         #expect(reply["toast"]?["type"] == "info")
+    }
+
+    // Refs: US-10, AC-10.01; US-38, AC-38.03. A toast names the agent whose turn the card was issued for, in the
+    // same words for every agent.
+    @Test func toastsNameTheAgentTheCardWasIssuedFor() async throws {
+        let router = await ready()
+        let control = try #require(await router.prepare(sessionID: sessionID, form: form, provider: .claude))
+        #expect(await router.bind(controlID: control.id, receipt: receipt))
+        func toast(_ result: CardActionResult) async throws -> String? {
+            let agent = try #require(await router.provider(forSession: sessionID))
+            let reply = try JSONSerialization.jsonObject(with: result.responseJSON(agent: agent)) as? [String: [String: String]]
+            return reply?["toast"]?["content"]
+        }
+        let first = await router.handle(try CardCallbackFixture.data(control: control.id), connectionID: feishuConnection)
+        let action = try accepted(first)
+        #expect(await router.provider(forSession: sessionID) == .claude)
+        #expect(try await toast(first) == "Received. Waiting for Claude Code confirmation.")
+        func again(_ event: String) async throws -> CardActionResult {
+            await router.handle(try CardCallbackFixture.data(control: control.id, event: event), connectionID: feishuConnection)
+        }
+        #expect(try await toast(again("event_second")) == "Already received. Waiting for Claude Code confirmation.")
+        await router.updateReceipt(action.receipt.id, status: .submitted)
+        #expect(try await toast(again("event_third")) == "Already submitted to Claude Code.")
+        await router.updateReceipt(action.receipt.id, status: .processing)
+        #expect(try await toast(again("event_fourth")) == "Claude Code is processing this action.")
+        // A card issued without naming an agent is a Codex card, as a snapshot without one is.
+        #expect(await router.provider(forSession: UUID()) == nil)
     }
 
     @Test func repeatedCallbacksReturnTheSameReceiptWithoutAnotherDispatchableAction() async throws {

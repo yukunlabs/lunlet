@@ -8,6 +8,45 @@ import Glibc
 #endif
 import Foundation
 
+/// A live process's start time as the kernel reports it. With the pid it names one process, so a pid the system
+/// handed to another process is never mistaken for the app that wrote a record.
+public enum HookProcess {
+    /// Nil when there is no such process, it cannot be inspected, or the platform has no reading.
+    public static func startTime(of pid: Int32) -> Date? {
+        #if canImport(Darwin)
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        guard pid > 0, proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else { return nil }
+        return Date(timeIntervalSince1970: Double(info.pbi_start_tvsec) + Double(info.pbi_start_tvusec) / 1_000_000)
+        #else
+        return nil
+        #endif
+    }
+    /// Records keep whole seconds, so two readings of one process may differ by up to one.
+    public static let startTolerance: TimeInterval = 1
+    /// False where `startTime` always answers nil, so a missing reading there is not evidence against a process.
+    public static var canReadStartTimes: Bool {
+        #if canImport(Darwin)
+        true
+        #else
+        false
+        #endif
+    }
+}
+
+/// The helper's answer to being told to end: Claude Code ends its hooks with TERM or HUP when a session is quit
+/// mid-hold. The handlers only raise a flag; the helper's waits end on it, so it removes its files and exits 0.
+public enum HookInterrupt {
+    /// Written only by the signal handlers, which may do nothing else safely.
+    private nonisolated(unsafe) static var raised: sig_atomic_t = 0
+    public static var isRaised: Bool { raised != 0 }
+    public static func install() {
+        // Touched first, so a handler never runs the flag's one-time initialization.
+        raised = 0
+        for number in [SIGTERM, SIGHUP] { signal(number) { _ in HookInterrupt.raised = 1 } }
+    }
+}
+
 /// The user-only folder through which Claude Code's Stop hook and the app meet. Each time a session's turn ends,
 /// the hook helper writes `stops/<session>/<stop>.stop`; the app answers with `<stop>.hold` or `<stop>.release`;
 /// while holding, the app may write `<stop>.push` with one follow-up, which the helper answers with `<stop>.pushed`
@@ -21,8 +60,9 @@ public struct HookSpool: Equatable, Sendable {
     public static let receiptSuffix = ".pushed"
     /// A follow-up above this size is refused by the app before it is written, and by the helper if it ever is.
     public static let maximumTextBytes = 8_192
-    /// The final reply text kept from a stop signal; the completion notice shows a bounded excerpt of it anyway.
-    public static let maximumReplyBytes = 16_384
+    /// The final reply text kept from a stop signal: as many bytes as a notice captures from any agent's reply
+    /// (`NoticeText.captureLimit`), so a longer reply reaches the notice at that size and is marked as shortened there.
+    public static let maximumReplyBytes = 36_864
 
     public let root: URL
     public init(root: URL) { self.root = root.standardizedFileURL }
@@ -50,6 +90,8 @@ public struct HookSpool: Equatable, Sendable {
     public struct AppRecord: Codable, Equatable, Sendable {
         public var version: Int
         public var pid: Int32
+        /// When the app's process started, as the kernel reports it; the helper compares it with the live process
+        /// of that pid, so a pid reused after a crash or restart is not taken for a running app.
         public var startedAt: Date
         public init(pid: Int32, startedAt: Date) { version = HookSpool.formatVersion; self.pid = pid; self.startedAt = startedAt }
     }
@@ -68,7 +110,7 @@ public struct HookSpool: Equatable, Sendable {
                     pid: Int32, parentPID: Int32, at: Date) {
             version = HookSpool.formatVersion
             self.stopID = stopID; self.sessionID = sessionID; self.promptID = promptID
-            self.lastAssistantMessage = String(lastAssistantMessage.utf8.prefix(HookSpool.maximumReplyBytes)) ?? ""
+            self.lastAssistantMessage = HookSpool.prefix(lastAssistantMessage, utf8Limit: HookSpool.maximumReplyBytes)
             self.stopHookActive = stopHookActive; self.pid = pid; self.parentPID = parentPID; self.at = at
         }
     }
@@ -137,11 +179,22 @@ public struct HookSpool: Equatable, Sendable {
         }
     }
 
-    /// Bounded read of one small spool file.
+    /// At most `limit` UTF-8 bytes of `text`, cut where a character starts, so a cut never empties or corrupts it.
+    public static func prefix(_ text: String, utf8Limit limit: Int) -> String {
+        let bytes = text.utf8
+        guard bytes.count > limit, limit > 0 else { return limit > 0 ? text : "" }
+        var end = bytes.index(bytes.startIndex, offsetBy: limit)
+        // A continuation byte at the cut means the limit fell inside a character: back off to its first byte.
+        while end > bytes.startIndex, bytes[end] & 0xC0 == 0x80 { end = bytes.index(before: end) }
+        return String(decoding: bytes[..<end], as: UTF8.self)
+    }
+
+    /// Bounded read of one small spool file. Encoding escapes quotes, slashes and line breaks to two bytes and
+    /// control characters to six, so the bound allows for six times the largest text a file may carry.
     public static func readSmall(_ url: URL) throws -> Data {
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
-        let limit = maximumReplyBytes + maximumTextBytes + 2_048
+        let limit = 6 * (maximumReplyBytes + maximumTextBytes) + 2_048
         guard let data = try handle.read(upToCount: limit + 1) else { return Data() }
         guard data.count <= limit else { throw CocoaError(.fileReadTooLarge) }
         return data

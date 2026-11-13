@@ -133,7 +133,7 @@ public enum PetPackReader {
                             sheetSize: (URL) -> (width: Int, height: Int)?) -> Result<PetPack, PetPackFailure> {
         let manifestURL = directory.appendingPathComponent("pet.json")
         guard FileManager.default.fileExists(atPath: manifestURL.path) else { return .failure(.manifestMissing) }
-        guard let data = try? Data(contentsOf: manifestURL), data.count <= manifestLimit else { return .failure(.manifestUnreadable) }
+        guard let data = manifestData(manifestURL) else { return .failure(.manifestUnreadable) }
         let manifest: PetPackManifest
         do { manifest = try JSONDecoder().decode(PetPackManifest.self, from: data) } catch let DecodingError.keyNotFound(key, _) {
             return .failure(.missingField(key.stringValue))
@@ -158,6 +158,19 @@ public enum PetPackReader {
             return .failure(.wrongSheetSize(width: size.width, height: size.height, expectedHeight: version.sheetHeight))
         }
         return .success(PetPack(reference: reference, manifest: manifest, version: version, directory: directory, spritesheet: sheet))
+    }
+    /// The manifest's bytes when it is a regular file within the limit. Packs come from folders other tools write, so
+    /// the file is opened without blocking and judged through its own descriptor before anything is read: a pipe
+    /// never stalls the scan, and a larger file is refused by its size instead of being loaded and then measured.
+    private static func manifestData(_ url: URL) -> Data? {
+        let descriptor = open(url.path, O_RDONLY | O_NONBLOCK)
+        guard descriptor >= 0 else { return nil }
+        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        defer { try? handle.close() }
+        var status = stat()
+        guard fstat(descriptor, &status) == 0, status.st_mode & S_IFMT == S_IFREG, status.st_size <= manifestLimit,
+              let data = try? handle.read(upToCount: manifestLimit + 1), data.count <= manifestLimit else { return nil }
+        return data
     }
     /// Every folder with a `pet.json` under `directory`, sorted by folder name; a missing directory lists nothing.
     public static func scan(source: PetPackSource, directory: URL,

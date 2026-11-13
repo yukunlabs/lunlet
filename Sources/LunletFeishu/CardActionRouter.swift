@@ -4,7 +4,7 @@
 // Refs: US-07, AC-07.02, AC-07.03, AC-07.04; US-08, AC-08.01, AC-08.03.
 // Refs: US-09, AC-09.02; US-10, AC-10.01, AC-10.02, AC-10.03, AC-10.04.
 // Refs: US-11, AC-11.02, AC-11.03, AC-11.05; US-12, AC-12.01, AC-12.02, AC-12.03.
-// Refs: US-05, AC-05.08, AC-05.09.
+// Refs: US-05, AC-05.08, AC-05.09; US-38, AC-38.03.
 import Foundation
 import LunletCore
 
@@ -24,19 +24,22 @@ public enum CardActionResult: Sendable, CustomStringConvertible {
     case refused(ContinuationRefusal, report: FeishuCardRefusal?)
     public var description: String { "Card action result (redacted)" }
 
-    public func responseJSON() throws -> Data {
+    /// The toast answering the tap. `agent` is the agent whose turn the card was issued for
+    /// (`CardActionRouter.provider(forSession:)`), so a Claude Code card is never answered in Codex's name.
+    public func responseJSON(agent: SessionProvider = .codex) throws -> Data {
         let type: String
         let text: String
+        let name = agent.displayName
         switch self {
         case .received:
             type = "info"
-            text = "Received. Waiting for Codex confirmation."
+            text = "Received. Waiting for \(name) confirmation."
         case .duplicate(let receipt):
             type = receipt.status == .uncertain || receipt.status == .failed ? "warning" : "info"
             switch receipt.status {
-            case .received: text = "Already received. Waiting for Codex confirmation."
-            case .submitted: text = "Already submitted to Codex."
-            case .processing: text = "Codex is processing this action."
+            case .received: text = "Already received. Waiting for \(name) confirmation."
+            case .submitted: text = "Already submitted to \(name)."
+            case .processing: text = "\(name) is processing this action."
             case .failed: text = "The earlier submission failed. Check your Mac."
             case .uncertain: text = "Submission outcome is unknown. Check your Mac before trying again."
             }
@@ -61,6 +64,8 @@ public actor CardActionRouter {
         let form: CardForm
         /// The exact observation the control was issued for.
         let session: ObservedSession
+        /// The agent whose turn the card is for, for the wording of toasts only.
+        let provider: SessionProvider
         var receipt: FeishuMessageReceipt?
         /// Set once the control can no longer authorize anything; a delivered card keeps its
         /// reason for a while so a later tap receives an accurate answer (AC-05.09).
@@ -151,11 +156,18 @@ public actor CardActionRouter {
         return true
     }
 
-    public func prepare(sessionID: UUID, form: CardForm) -> ContinuationControl? {
+    /// The agent whose turn a card for this session was issued for; nil when no such card is known. A session
+    /// belongs to one agent, so every card issued for it agrees.
+    public func provider(forSession sessionID: UUID) -> SessionProvider? {
+        issued.values.first { $0.session.sessionID == sessionID }?.provider
+    }
+
+    /// `provider` is the agent whose turn the card is for; it only words the toasts and decides nothing.
+    public func prepare(sessionID: UUID, form: CardForm, provider: SessionProvider = .codex) -> ContinuationControl? {
         let time = elapsed()
         guard prune(at: time), connectionID != nil, let observation = observations[sessionID],
               form.matches(observation.phase), let control = gate.issueControl(for: sessionID, now: time) else { return nil }
-        issued[control.id] = Issued(control: control, form: form, session: observation)
+        issued[control.id] = Issued(control: control, form: form, session: observation, provider: provider)
         return control
     }
 

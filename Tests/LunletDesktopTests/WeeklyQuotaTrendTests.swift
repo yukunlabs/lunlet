@@ -378,6 +378,25 @@ struct WeeklyQuotaTrendTests {
         trend.record(try sample(hours: 200, remaining: 50, email: "another@example.invalid", resetOffset: 9 * 86_400))
         #expect(trend.readings.map(\.remaining) == [50])
     }
+    @Test func anUnusableReadOfTheSameAccountKeepsEarlierReadings() throws {
+        // AC-32.07, AC-32.03: earlier readings stay. The first read after a weekly reset may report its reset a few
+        // seconds more than seven days ahead, within the estimator's tolerance; a read whose weekly window is
+        // unusable adds nothing and takes nothing away; another account's read still clears.
+        var trend = WeeklyQuotaTrend()
+        trend.record(try sample(hours: 0, remaining: 80))
+        trend.record(try sample(hours: 1, remaining: 100, resetOffset: 3_600 + 7 * 86_400 + 5))
+        #expect(trend.readings.map(\.remaining) == [80, 100])
+        let window = trend.resetAt
+        trend.record(try sample(hours: 2, remaining: -10))
+        trend.record(try sample(hours: 3, remaining: 50, resetOffset: 3 * 3_600 + 8 * 86_400))
+        trend.record(try sample(hours: 4, remaining: 50, resetOffset: 3_600))
+        #expect(trend.readings.map(\.remaining) == [80, 100] && trend.resetAt == window && window != nil)
+        // Beyond the tolerance the bound still holds.
+        trend.record(try sample(hours: 5, remaining: 50, resetOffset: 5 * 3_600 + 7 * 86_400 + WeeklyQuotaEstimator.resetTimeTolerance + 1))
+        #expect(trend.readings.map(\.remaining) == [80, 100])
+        trend.record(try sample(hours: 6, remaining: -10, email: "another@example.invalid"))
+        #expect(trend.readings.isEmpty && trend.resetAt == nil)
+    }
     @Test func missingIdentityAndInvalidPercentDoNotInventAnObservation() throws {
         var trend = WeeklyQuotaTrend()
         trend.record(try sample(hours: 0, remaining: 80))

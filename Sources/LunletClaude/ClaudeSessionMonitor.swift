@@ -34,6 +34,8 @@ public actor ClaudeSessionMonitor: ClaudeSessionObserving {
         static let freshDiscovery: TimeInterval = 10
         static let changeCoalescing: Duration = .milliseconds(100)
         static let eventScanInterval: Duration = .seconds(1)
+        static let handledStops = 4_096
+        static let sweepInterval: TimeInterval = 30
     }
     /// Blocking process and file inspection stays off the shared cooperative pool.
     private nonisolated let executor = DispatchSerialQueue(label: "com.lunlet.claude.sessions", qos: .utility)
@@ -62,8 +64,14 @@ public actor ClaudeSessionMonitor: ClaudeSessionObserving {
     private var holds: [UUID: Hold] = [:]
     private var stopsRecheck: Task<Void, Never>?
     private var handledStops: Set<UUID> = []
+    /// The same stops, oldest first, so the bound forgets the oldest.
+    private var handledOrder: [UUID] = []
+    private var lastSweepAt: Date?
     private var hookSeen: Set<UUID> = []
     private var hookCompletions: [UUID: HookCompletion] = [:]
+    /// The latest turn of each session that was published as completed or held; a later stop of the same turn
+    /// completes nothing new and is not held again.
+    private var settledTurns: [UUID: String] = [:]
     private var replyWindow = false
     private var hookConnectedNow = false
     private var closed = false
@@ -71,9 +79,10 @@ public actor ClaudeSessionMonitor: ClaudeSessionObserving {
 
     public init(home: ClaudeHome = .current()) {
         let spool = HookSpool.standard()
+        // Asked on every scan; the settings are read again only when the file changed.
+        let hookState = ClaudeHookStateCache(ClaudeHookConnection(home: home, spool: spool))
         self.init(home: home, registry: ClaudeSessionRegistry(directory: home.sessions), processes: ClaudeProcessReader(),
-                  watchingFiles: true, hooks: spool,
-                  hookConnected: { (try? ClaudeHookConnection(home: home, spool: spool).state()) == .connected })
+                  watchingFiles: true, hooks: spool, hookConnected: { hookState.isConnected() })
     }
     init(home: ClaudeHome, registry: any ClaudeRegistryReading, processes: any ClaudeProcessInspecting,
          watchingFiles: Bool = false, eventQueue: DispatchQueue = .global(qos: .utility),
@@ -138,6 +147,8 @@ public actor ClaudeSessionMonitor: ClaudeSessionObserving {
             previousScanAt = nil
             for id in Array(tracked.keys) { unconfirm(id) }
             availability(false, partial: true)
+            // A scan was attempted, so no helper waits out its verdict timeout on this failure.
+            scanStops(afterScan: true)
         }
     }
     public func reconcile() async {
@@ -171,7 +182,8 @@ public actor ClaudeSessionMonitor: ClaudeSessionObserving {
         var partial = uncertain
         hookConnectedNow = hookConnected()
         try apply(owners, scanComplete: !uncertain, partial: &partial)
-        scanStops()
+        scanStops(afterScan: true)
+        sweepStops(now: scanAt)
         reconcileWatches()
         previousScanAt = uncertain ? nil : scanAt
         availability(true, partial: partial || tracked.values.contains { !$0.snapshot.hasConfirmedActivity })
@@ -187,6 +199,8 @@ public actor ClaudeSessionMonitor: ClaudeSessionObserving {
             if exited || (certain && current.isEmpty) {
                 continuation?.yield(.snapshot(old.snapshot.degraded(liveness: .ended, phase: .ended), baseline: true))
                 tracked.removeValue(forKey: id)
+                // An ended session's hook history goes with it.
+                hookSeen.remove(id); hookCompletions[id] = nil; settledTurns[id] = nil
             } else if !current.isEmpty {
                 // Another live process now shares or holds the session: rebind it with a new connection.
                 unconfirm(id); tracked.removeValue(forKey: id)
@@ -271,7 +285,9 @@ public actor ClaudeSessionMonitor: ClaudeSessionObserving {
             inputPath: holding ? .claudeHook : nil, inputPathNote: note)
         // Several live owners, or an uninspected major version, stay observation-only with unknown state.
         let supported = record.version.map(ClaudeTranscriptReader.supportsVersion) ?? true
-        return sole && supported ? value : value.degraded(liveness: .unverified, phase: .unknown)
+        let result = sole && supported ? value : value.degraded(liveness: .unverified, phase: .unknown)
+        if case .idle(let completed) = result.observation.phase { settledTurns[id] = completed }
+        return result
     }
 
     /// Appends to a confirmed binding need only its transcript; anything else waits for a registry scan.
@@ -399,10 +415,12 @@ public actor ClaudeSessionMonitor: ClaudeSessionObserving {
         }
     }
 
-    /// The app record the hook helper checks before it writes anything; removed at shutdown.
+    /// The app record the hook helper checks before it writes anything, with this process's start time so a later
+    /// process with the same pid is not taken for it; removed at shutdown. Only this monitor writes it.
     private func announceToHooks() {
         try? HookSpool.createPrivateDirectory(hooks.stopsDirectory)
-        if let encoded = try? HookSpool.encoder.encode(HookSpool.AppRecord(pid: getpid(), startedAt: wallNow())) {
+        let started = HookProcess.startTime(of: getpid()) ?? wallNow()
+        if let encoded = try? HookSpool.encoder.encode(HookSpool.AppRecord(pid: getpid(), startedAt: started)) {
             try? HookSpool.writeAtomically(encoded, to: hooks.appRecordURL)
         }
     }
@@ -410,31 +428,51 @@ public actor ClaudeSessionMonitor: ClaudeSessionObserving {
     /// Reads every new stop signal of a tracked session: a signal from that session's own child process is a
     /// completion, held for one phone reply while the window is open and released otherwise; anything else is
     /// released at once. Holds end when the window closes, the helper exits or the window's length passes.
-    private func scanStops() {
+    /// `afterScan` is true when a registry scan has just run, so a session still untracked will not appear by waiting.
+    private func scanStops(afterScan: Bool = false) {
         guard !closed else { return }
+        defer { answerUntrackedStops(afterScan: afterScan) }
         let now = wallNow()
-        for (id, hold) in holds where now.timeIntervalSince(hold.since) > 600 || processes.parent(of: hold.hookPID) == nil {
-            release(id, hold)
+        for (id, hold) in holds {
+            if processes.parent(of: hold.hookPID) == nil {
+                // The helper is gone without removing its files, which hold the reply text: the app removes them
+                // instead of answering a process that no longer reads.
+                holds[id] = nil
+                for suffix in [HookSpool.signalSuffix, HookSpool.holdSuffix, HookSpool.releaseSuffix] {
+                    try? FileManager.default.removeItem(at: hooks.file(id, stop: hold.stopID, suffix: suffix))
+                }
+                republish(id)
+            } else if now.timeIntervalSince(hold.since) > 600 { release(id, hold) }
         }
         for (id, value) in tracked {
             let directory = hooks.stopDirectory(id)
             for url in HookSpool.files(in: directory, suffix: HookSpool.signalSuffix) {
                 guard let stopID = HookSpool.stopID(of: url, suffix: HookSpool.signalSuffix), !handledStops.contains(stopID) else { continue }
-                handledStops.insert(stopID)
+                markHandled(stopID)
                 guard let data = try? HookSpool.readSmall(url),
                       let signal = try? HookSpool.decoder.decode(HookSpool.StopSignal.self, from: data),
                       signal.version == HookSpool.formatVersion, signal.stopID == stopID, signal.sessionID == id,
                       let owner = value.sole, processes.presence(of: owner) == .same, processes.parent(of: signal.pid) == owner.pid
                 else { writeVerdict(id, stopID, HookSpool.releaseSuffix); continue }
-                hookSeen.insert(id)
+                // Only an interactive session is ever held, so only it is said to take phone replies.
+                if value.record.isInteractive { hookSeen.insert(id) }
                 if let previous = holds[id] { release(id, previous) }
                 let base = signal.promptID ?? value.content?.turn
                 let continuations = value.content?.continuations ?? 0
                 let turn = ClaudeTurnID.compose(base ?? stopID.uuidString.lowercased(), continuations: continuations)
                 let text = signal.lastAssistantMessage.trimmingCharacters(in: .whitespacesAndNewlines)
-                hookCompletions[id] = .init(turn: turn, base: base, continuations: continuations, conclusion: text.isEmpty ? nil : text)
-                if replyWindow {
+                // A stop for another turn than the transcript's, such as one an injected prompt started, completes
+                // nothing; the completion already reported for the transcript's turn stands.
+                let namesTranscriptTurn = base == value.content?.turn
+                if namesTranscriptTurn {
+                    hookCompletions[id] = .init(turn: turn, base: base, continuations: continuations, conclusion: text.isEmpty ? nil : text)
+                }
+                // A hold waits for a reply to this stop's completion notice. A stop that completes nothing new (another
+                // turn than the transcript's, or a turn already completed or held) gets no notice, and a run that is
+                // not interactive has nobody to reply, so both are released at once (AC-38.02, AC-38.07).
+                if replyWindow, value.record.isInteractive, namesTranscriptTurn, settledTurns[id] != turn {
                     holds[id] = .init(stopID: stopID, hookPID: signal.pid, turn: turn, since: now)
+                    settledTurns[id] = turn
                     writeVerdict(id, stopID, HookSpool.holdSuffix)
                 } else {
                     writeVerdict(id, stopID, HookSpool.releaseSuffix)
@@ -442,7 +480,40 @@ public actor ClaudeSessionMonitor: ClaudeSessionObserving {
                 republish(id)
             }
         }
-        if handledStops.count > 4_096 { handledStops.removeAll() }
+    }
+    /// Remembers an answered stop so it is never answered twice. Past the bound the oldest are forgotten first, and
+    /// never a stop that is still held: forgetting that one would read its signal again and end its hold.
+    private func markHandled(_ stopID: UUID) {
+        guard handledStops.insert(stopID).inserted else { return }
+        handledOrder.append(stopID)
+        guard handledOrder.count > Budget.handledStops else { return }
+        let held = Set(holds.values.map(\.stopID))
+        var excess = handledOrder.count - Budget.handledStops / 2
+        handledOrder.removeAll { id in
+            guard excess > 0, !held.contains(id) else { return false }
+            excess -= 1; handledStops.remove(id)
+            return true
+        }
+    }
+    /// The helper waits up to three seconds for a verdict, so the stops of sessions this monitor does not track (an
+    /// unverified owner, no transcript, over a budget, no registry record) are released too. One scan may still
+    /// discover the session, so a signal is released only once a scan has looked: the one that just ran, one that
+    /// started within the last second, or one requested here.
+    private func answerUntrackedStops(afterScan: Bool) {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: hooks.stopsDirectory.path)) ?? []
+        let looked = afterScan || lastScanStarted.map { ContinuousClock.now - $0 < Budget.eventScanInterval } ?? false
+        var waiting = false
+        for name in names {
+            guard let id = UUID(uuidString: name), tracked[id] == nil else { continue }
+            for url in HookSpool.files(in: hooks.stopDirectory(id), suffix: HookSpool.signalSuffix) {
+                guard let stopID = HookSpool.stopID(of: url, suffix: HookSpool.signalSuffix), !handledStops.contains(stopID) else { continue }
+                guard looked else { waiting = true; continue }
+                markHandled(stopID)
+                writeVerdict(id, stopID, HookSpool.releaseSuffix)
+            }
+        }
+        // The scan ends by answering whatever is still untracked.
+        if waiting { refresh() }
     }
     private func releaseAllHolds() {
         for (id, hold) in holds { release(id, hold) }
@@ -453,9 +524,17 @@ public actor ClaudeSessionMonitor: ClaudeSessionObserving {
         republish(id)
     }
     private func writeVerdict(_ id: UUID, _ stopID: UUID, _ suffix: String) {
-        let url = hooks.file(id, stop: stopID, suffix: suffix)
-        guard ClaudeProjects.isDirectory(url.deletingLastPathComponent()) else { return }
-        try? HookSpool.writeAtomically(Data("{}\n".utf8), to: url)
+        // A helper removes its signal as it exits; a verdict written after that would never be read or removed.
+        guard FileManager.default.fileExists(atPath: hooks.file(id, stop: stopID, suffix: HookSpool.signalSuffix).path) else { return }
+        try? HookSpool.writeAtomically(Data("{}\n".utf8), to: hooks.file(id, stop: stopID, suffix: suffix))
+    }
+    /// What gone helpers left is swept while the monitor runs, about twice a minute; the folders of observed
+    /// sessions stay, since they are watched for the next stop.
+    private func sweepStops(now: Date) {
+        guard lastSweepAt.map({ now.timeIntervalSince($0) >= Budget.sweepInterval }) ?? true else { return }
+        lastSweepAt = now
+        ClaudeHookInstallation.sweepStale(spool: hooks, isProcessAlive: { processes.parent(of: $0) != nil },
+                                          keeping: Set(tracked.keys), now: now)
     }
     /// Re-derives a tracked session's snapshot after a hook event; only a changed snapshot is yielded.
     private func republish(_ id: UUID) {

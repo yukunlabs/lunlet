@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: 0BSD
 // Refs: US-22, AC-22.01, AC-22.02, AC-22.03.
 // Refs: US-05, AC-05.04, AC-05.05, AC-05.06; US-06, AC-06.01, AC-06.05; US-12, AC-12.02, AC-12.04.
-// Refs: US-33, AC-33.05.
+// Refs: US-33, AC-33.05; US-38, AC-38.02, AC-38.07; US-05, AC-05.09; US-25, AC-25.01.
 import Foundation
 import Testing
 import LunletCore
@@ -53,6 +53,8 @@ private final class CompletionPower: IdleSleepControlling {
     var value: Bool?
     init(_ value: Bool?) { self.value = value }
 }
+@MainActor private final class LockReads { var count = 0 }
+@MainActor private final class LockClock { var now = ContinuousClock.now }
 
 @MainActor struct LockedCompletionNotificationsTests {
     private func snapshot(_ turn: String, session: UUID, connection: UUID, alive: Bool = true) -> SessionSnapshot {
@@ -72,6 +74,83 @@ private final class CompletionPower: IdleSleepControlling {
         while subject.status != .delivered, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
         #expect(await sender.received == [value])
         #expect(!SessionNotice.prepare(value).allowsFollowup)
+        await subject.shutdown()
+    }
+
+    // Refs: US-38, AC-38.02, AC-38.07; US-05, AC-05.09. A finished Claude Code turn is held for a phone reply only
+    // while a notice can carry one: the Mac confirmed locked and a channel's sender configured.
+    @Test func theReplyWindowOpensOnlyWhileLockedWithASender() async throws {
+        let lock = LockState(true)
+        let subject = LockedCompletionNotifications(isLocked: { lock.value }, power: CompletionPower())
+        var windows: [Bool] = []
+        subject.replyWindowObserver = { windows.append($0) }
+        // Locked with no channel: nothing could answer, so no turn may wait.
+        subject.refreshLockState()
+        #expect(windows.last != true)
+        subject.configure(sender: CompletionSender())
+        #expect(windows.last == true)
+        // Losing the sender closes it, as unlocking does.
+        subject.configure(sender: nil)
+        #expect(windows.last == false)
+        subject.configure(sender: CompletionSender())
+        #expect(windows.last == true)
+        lock.value = false; subject.refreshLockState()
+        #expect(windows.last == false)
+        // An unknown lock state never opens it.
+        lock.value = nil; subject.refreshLockState()
+        #expect(windows.last == false)
+        // Each opening is reported once.
+        #expect(windows.filter { $0 }.count == 2)
+        await subject.shutdown()
+    }
+
+    // Refs: US-38, AC-38.02. The runtime attaches its observer after saved connections may already be configured, as
+    // when Lunlet starts on a locked Mac; the observer then learns the window as it stands.
+    @Test func anObserverAttachedLaterLearnsTheCurrentReplyWindow() async throws {
+        let subject = LockedCompletionNotifications(isLocked: { true }, power: CompletionPower())
+        subject.configure(sender: CompletionSender())
+        var windows: [Bool] = []
+        subject.replyWindowObserver = { windows.append($0) }
+        #expect(windows == [true])
+        await subject.shutdown()
+        #expect(windows == [true, false])
+    }
+
+    // Refs: US-25, AC-25.01; US-05, AC-05.06. A streaming session sends several records a second. The lock is read
+    // before a completion not handled before, and otherwise at most once a second, never once per record.
+    @Test func theLockIsReadForACompletionToSendNotForEveryRecord() async throws {
+        let lock = LockState(true), reads = LockReads(), clock = LockClock()
+        let sender = CompletionSender()
+        let subject = LockedCompletionNotifications(isLocked: { reads.count += 1; return lock.value }, power: CompletionPower(),
+                                                    now: { clock.now })
+        subject.configure(sender: sender)
+        let configured = reads.count
+        let session = UUID(), connection = UUID()
+        let running = SessionSnapshot(observation: .init(sessionID: session, connectionID: connection, liveness: .alive, phase: .running),
+                                      project: "Synthetic", title: "Task", turnID: "live", activityConfirmed: true)
+        for _ in 0..<50 { subject.receive(running, baseline: false) }
+        #expect(reads.count == configured)
+        clock.now += .seconds(1)
+        subject.receive(running, baseline: false); subject.receive(running, baseline: false)
+        #expect(reads.count == configured + 1)
+        // A completion that could be sent has the lock read first, whatever was read a moment ago.
+        let completion = snapshot("live", session: session, connection: connection)
+        subject.receive(completion, baseline: false)
+        #expect(reads.count == configured + 2)
+        let deadline = ContinuousClock.now + .seconds(10)
+        while subject.status != .delivered, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
+        #expect(await sender.received == [completion])
+        // The same completion again is nothing to act on.
+        let delivered = reads.count
+        for _ in 0..<50 { subject.receive(completion, baseline: false) }
+        #expect(reads.count == delivered)
+        // An unlock that arrived without a signal is still found within a second, and stops delivery.
+        lock.value = false; clock.now += .seconds(1)
+        subject.receive(running, baseline: false)
+        #expect(reads.count == delivered + 1)
+        subject.receive(snapshot("later", session: session, connection: connection), baseline: false)
+        #expect(subject.status == .delivered)
+        #expect(await sender.received == [completion])
         await subject.shutdown()
     }
 

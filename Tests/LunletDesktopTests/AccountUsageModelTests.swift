@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
-// Refs: US-04, AC-04.01, AC-04.03, AC-04.04, AC-04.05; US-12, AC-12.04; US-32, AC-32.07.
+// Refs: US-04, AC-04.01, AC-04.03, AC-04.04, AC-04.05; US-12, AC-12.04; US-32, AC-32.07; US-19, AC-19.01; US-25, AC-25.01.
 import Foundation
 import Testing
 @testable import LunletCore
@@ -44,6 +44,47 @@ private actor UsageReader: CodexAccountReading {
     try await eventually(.available(reader.snapshot), in: model)
     model.start()
     #expect(await reader.reads == 1)
+    await model.shutdown()
+}
+
+@Test @MainActor func anUnselectedAgentsAccountIsNotReadAndItsLastReadingDoesNotLinger() async throws {
+    // AC-19.01, AC-25.01: while Codex is not a selected agent nothing starts its account read, on launch, on a panel
+    // opening or on Refresh; turning it off drops the reading, and turning it on reads again.
+    let reader = try UsageReader()
+    let model = AccountUsageModel(client: reader)
+    model.setActive(false)
+    model.start(); model.refresh(); model.refreshIfNeeded()
+    #expect(model.state == .disabled)
+    #expect(await reader.reads == 0)
+    model.setActive(true)
+    try await eventually(.available(reader.snapshot), in: model)
+    #expect(await reader.reads == 1)
+    model.setActive(false)
+    #expect(model.state == .disabled && model.displayedSnapshot == nil && model.weeklyTrend.readings.isEmpty)
+    model.refresh(); model.refreshIfNeeded()
+    #expect(model.state == .disabled)
+    #expect(await reader.reads == 1)
+    // Selected again, the five-minute floor of the earlier read does not delay the first one.
+    model.setActive(true)
+    try await eventually(.available(reader.snapshot), in: model)
+    #expect(await reader.reads == 2)
+    await model.shutdown()
+}
+
+@Test @MainActor func deselectingDuringAReadCancelsItAndNeverPublishesItsResult() async throws {
+    // AC-19.01, AC-04.05: a read in flight when Codex is turned off is cancelled, and a later selection starts one
+    // client only after the cancelled one has ended.
+    let reader = try UsageReader(blocked: true)
+    let model = AccountUsageModel(client: reader)
+    model.start()
+    let deadline = ContinuousClock.now + .seconds(10)
+    while await reader.reads == 0, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
+    model.setActive(false)
+    #expect(model.state == .disabled)
+    model.setActive(true)
+    #expect(model.state == .loading)
+    while await reader.reads < 2, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
+    #expect(await reader.reads == 2)
     await model.shutdown()
 }
 

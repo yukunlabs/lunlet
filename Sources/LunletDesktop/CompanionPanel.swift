@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
 // Refs: US-17, AC-17.08; US-24, AC-24.01, AC-24.02, AC-24.03; US-13, AC-13.09.
-// Refs: US-41, AC-41.05.
+// Refs: US-41, AC-41.05; US-39, AC-39.05.
 // Refs: US-02, AC-02.07; US-22, AC-22.01, AC-22.03.
 // Refs: US-16, AC-16.02; US-18, AC-18.01; US-20, AC-20.02; US-31, AC-31.01, AC-31.03.
 // Refs: US-01, AC-01.01, AC-01.02, AC-01.04, AC-01.06, AC-01.08; US-02, AC-02.05.
@@ -19,8 +19,17 @@ import SwiftUI
 typealias ViewState<Value> = State<Value>
 
 struct CompanionPanel: View {
-    /// Home is the single selected provider's page, or the Overview when several are selected.
-    private enum Page: Equatable { case home, provider(SessionProvider), settings }
+    private typealias Page = PanelNavigation.Page
+    /// The shown page and the Settings category a page asked for; the runtime owns them (AC-39.05).
+    @ObservedObject private var navigation: PanelNavigation
+    private var page: Page {
+        get { navigation.page }
+        nonmutating set { navigation.page = newValue }
+    }
+    private var settingsEntry: PreferenceCategory? {
+        get { navigation.settingsEntry }
+        nonmutating set { navigation.settingsEntry = newValue }
+    }
     @ObservedObject private var preferences: PreferencesStore
     @ObservedObject private var skins: SkinCatalog
     @ObservedObject private var setup: FeishuSetupModel
@@ -33,13 +42,10 @@ struct CompanionPanel: View {
     private let refresh: () -> Void
     @ObservedObject private var sessions: SessionListModel
     @ObservedObject private var notifications: LockedCompletionNotifications
-    @ViewState private var page = Page.home
     /// Each provider tab keeps its own Active/History choice.
     @ViewState private var historyShown: [SessionProvider: Bool] = [:]
     @ViewState private var connectionExpanded = false
     @ViewState private var connectionHovered = false
-    /// The Settings category a page asked for; the header's Settings button opens the default category.
-    @ViewState private var settingsEntry: PreferenceCategory?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.companionPanelHost) private var host
     @Environment(\.notchBand) private var band
@@ -52,11 +58,12 @@ struct CompanionPanel: View {
                 notifications: LockedCompletionNotifications, usage: AccountUsageModel, sessions: SessionListModel,
                 history: LocalUsageModel, usageHover: UsageHoverPanelController,
                 claudeHistory: LocalUsageModel, claudeUsageHover: UsageHoverPanelController,
-                refresh: @escaping () -> Void, openingTab: SessionProvider? = nil, openingHistory: Bool = false,
-                openingSettings: PreferenceCategory? = nil) {
-        // The runtime opens home; the opt-in page renders open a provider tab or a Settings category directly.
-        _page = ViewState(initialValue: openingSettings != nil ? .settings : openingTab.map(Page.provider) ?? .home)
-        _settingsEntry = ViewState(initialValue: openingSettings)
+                refresh: @escaping () -> Void, navigation: PanelNavigation? = nil, openingTab: SessionProvider? = nil,
+                openingHistory: Bool = false, openingSettings: PreferenceCategory? = nil) {
+        // The runtime passes its navigation and opens home; the opt-in page renders open a provider tab or a
+        // Settings category directly.
+        self.navigation = navigation ?? PanelNavigation(
+            page: openingSettings != nil ? .settings : openingTab.map(Page.provider) ?? .home, settingsEntry: openingSettings)
         _historyShown = ViewState(initialValue: openingTab.map { [$0: openingHistory] } ?? [:])
         self.preferences = preferences; self.skins = skins
         self.history = history; self.usageHover = usageHover; self.refresh = refresh
@@ -121,14 +128,16 @@ struct CompanionPanel: View {
         }
         // Opening right after a cue shows its agent's page with the conversation selected, in Active or History
         // wherever it now is (AC-13.09).
-        .onChange(of: sessions.cueFocus) { _, focus in
+        // The content is created at the panel's first opening, when a focus may already be published, so both
+        // handlers also run for the value present then.
+        .onChange(of: sessions.cueFocus, initial: true) { _, focus in
             guard let focus, selected.contains(focus.provider) else { return }
             connectionExpanded = false
             historyShown[focus.provider] = sessions.history.contains { $0.observation.sessionID == focus.sessionID }
             if hasTabs { select(tab: focus.provider) } else { page = .home }
         }
         // An activated allowance notification opens that agent's page (AC-41.05).
-        .onChange(of: sessions.providerFocus) { _, focus in
+        .onChange(of: sessions.providerFocus, initial: true) { _, focus in
             guard let focus, selected.contains(focus.provider) else { return }
             connectionExpanded = false
             if hasTabs { select(tab: focus.provider) } else { page = .home }
@@ -157,7 +166,7 @@ struct CompanionPanel: View {
             if selected.isEmpty {
                 Text("The selected agents are unavailable in this build.")
                     .font(PanelStyle.Text.secondary).foregroundStyle(.secondary)
-                Button("Choose an available agent") { page = .settings }
+                Button("Choose an available agent") { navigation.openSettings(.agents) }
             } else if let provider = shownProvider {
                 providerPage(provider)
             } else {
@@ -351,4 +360,3 @@ struct CompanionPanel: View {
     private var channelExplanation: String { notifications.status.explanation }
     private var channelHealth: ChannelHealth { ChannelHealth(stages: readinessStages) }
 }
-

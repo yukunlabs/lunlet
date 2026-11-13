@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: 0BSD
 // Refs: US-02, AC-02.08.
 // Refs: US-03, AC-03.02, AC-03.03.
-// Refs: US-02, AC-02.01, AC-02.04, AC-02.05; US-11, AC-11.06.
+// Refs: US-02, AC-02.01, AC-02.04, AC-02.05; US-11, AC-11.03, AC-11.06.
 import Darwin
 import Foundation
 import Testing
@@ -24,6 +24,29 @@ struct CodexProcessReaderTests {
         let own = try #require(CodexProcessReader.argumentBuffer(getpid()))
         #expect(CodexProcessReader.arguments(from: own) == CommandLine.arguments)
         #expect(CodexDestinationReader.launchExecutable(own) != nil)
+    }
+    // Refs: US-11, AC-11.03; US-02, AC-02.05. A process that has exited but whose parent has not collected it holds
+    // no session open: its sessions end instead of staying unverified until the parent gets to it.
+    @Test func anExitedProcessItsParentHasNotCollectedIsEnded() throws {
+        var pid: pid_t = 0
+        let arguments: [UnsafeMutablePointer<CChar>?] = [strdup("/bin/sleep"), strdup("0.3"), nil]
+        defer { for argument in arguments { free(argument) } }
+        #expect(posix_spawn(&pid, "/bin/sleep", nil, nil, arguments, nil) == 0)
+        guard pid > 0 else { return }
+        var collected = false
+        defer { if !collected { var status: Int32 = 0; waitpid(pid, &status, 0) } }
+        let reader = CodexProcessReader()
+        let identity = CodexProcessReader.identity(try #require(CodexProcessReader.info(pid)))
+        #expect(reader.presence(of: identity) == .same)
+        // Once it exits the kernel no longer describes it, while its PID still answers until it is collected.
+        let deadline = ContinuousClock.now + .seconds(5)
+        while CodexProcessReader.info(pid) != nil, ContinuousClock.now < deadline { usleep(10_000) }
+        #expect(CodexProcessReader.info(pid) == nil && kill(pid, 0) == 0)
+        #expect(reader.presence(of: identity) == .ended)
+        var status: Int32 = 0
+        #expect(waitpid(pid, &status, 0) == pid)
+        collected = true
+        #expect(reader.presence(of: identity) == .ended)
     }
     @Test func accountingRootsComeOnlyFromSessionRecordPaths() {
         #expect(CodexProcessReader.accountingRoot(for: URL(fileURLWithPath: "/synthetic/custom/sessions/2026/record.jsonl"))?.path == "/synthetic/custom")

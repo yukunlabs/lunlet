@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
-// Refs: US-32, AC-32.01, AC-32.03.
+// Refs: US-32, AC-32.01, AC-32.03; US-24, AC-24.02.
 // Refs: US-04, AC-04.01, AC-04.03, AC-04.07, AC-04.08, AC-04.09, AC-04.15.
 import Foundation
 import LunletCore
@@ -59,6 +59,14 @@ enum AccountUsagePresentation {
         let days = Int(seconds / 86_400), hours = Int(seconds.truncatingRemainder(dividingBy: 86_400) / 3_600)
         if days > 0 { return "\(days)d" + (hours > 0 ? " \(hours)h" : "") }
         return hours > 0 ? "\(hours)h" : "<1h"
+    }
+
+    /// The reset credits line for assistive tools (AC-24.02): the count and the expiry the line shows, since the
+    /// group's own label replaces its children's text.
+    static func resetCreditsSpoken(_ resets: EarnedResets?, now: Date) -> String {
+        guard let count = resets?.availableCount else { return "unknown" }
+        let expiry = resetExpiryLabels(resets, now: now).map { $0 == "—" ? "unknown" : $0 }
+        return "\(count) available" + (expiry.isEmpty ? "" : ", expiring in " + expiry.joined(separator: ", "))
     }
 
     static func resetExpiryLabels(_ resets: EarnedResets?, now: Date) -> [String] {

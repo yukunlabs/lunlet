@@ -53,7 +53,7 @@ public actor FeishuReplyService {
     private var latest: [UUID: SessionSnapshot] = [:]
     private var connection: Connection?
     private var connectionID: UUID?
-    /// A connection that failed for a non-retryable reason waits for a new enrollment.
+    /// A connection the provider refused on the app's credentials or permissions waits for a new enrollment.
     private var blocked = false
     private var preparing = 0
     private var unbound: [UUID: ContinuousClock.Instant] = [:]
@@ -120,18 +120,20 @@ public actor FeishuReplyService {
         let session = snapshot.observation.sessionID
         // Only a session with a verified original-CLI input path takes replies: Codex's queue, or Lunlet's channel
         // helper running inside a Claude Code session (US-38).
+        // The newest observation must be this same turn. Its title, preview or activity time may change between
+        // two observations of one turn, also while the connection opens; those never decide a capability.
         guard !closed, !blocked, replyWindow, owner?.isComplete == true, snapshot.inputPath != nil,
-              snapshot.parentSessionID == nil, latest[session] == snapshot,
+              snapshot.parentSessionID == nil, latest[session]?.observesSameTurn(as: snapshot) == true,
               case .idle = snapshot.observation.phase, snapshot.observation.liveness == .alive else { return nil }
         preparing += 1
         startConnectionIfNeeded()
         var capability: FeishuReplyCapability?
-        if await waitForConnection(), !closed, replyWindow, latest[session] == snapshot {
-            // Opening the connection reconfigured access, which requires a fresh observation. This
-            // snapshot is still the newest local one, and dispatch rechecks the live binding.
-            await coordinator.observe(snapshot)
-            capability = await coordinator.prepareReply(for: snapshot)
-            if let issued = capability, latest[session] != snapshot {
+        if await waitForConnection(), !closed, replyWindow, let current = latest[session], current.observesSameTurn(as: snapshot) {
+            // Opening the connection reconfigured access, which requires a fresh observation. The newest local
+            // observation is still this turn, and dispatch rechecks the live binding.
+            await coordinator.observe(current)
+            capability = await coordinator.prepareReply(for: current)
+            if let issued = capability, latest[session]?.observesSameTurn(as: snapshot) != true {
                 await coordinator.withdrawReply(issued)
                 if let newer = latest[session] { await coordinator.observe(newer) }
                 capability = nil
@@ -225,15 +227,15 @@ public actor FeishuReplyService {
         connectionID = nil
         let token = UUID(), runner = connect(), router = router
         let task = Task { [weak self] in
-            var failed = false
+            var verdict = false
             do {
                 try await runner.run(router: router,
                     onState: { [weak self] state in await self?.transport(state, token: token) },
                     onAction: { [weak self] action in Task { await self?.handle(action) } },
                     onRefusal: { [weak self] refusal in Task { await self?.report(refusal) } })
             } catch is CancellationError {
-            } catch { failed = true }
-            await self?.connectionEnded(token: token, failed: failed)
+            } catch { verdict = (error as? FeishuBotFailure)?.isVerdict ?? false }
+            await self?.connectionEnded(token: token, verdict: verdict)
         }
         connection = Connection(token: token, task: task)
     }
@@ -257,10 +259,12 @@ public actor FeishuReplyService {
         await configureCoordinator()
     }
 
-    private func connectionEnded(token: UUID, failed: Bool) async {
+    private func connectionEnded(token: UUID, verdict: Bool) async {
         guard connection?.token == token else { return }
         connection = nil
-        if failed { blocked = true }
+        // Only the provider's verdict on the app stops later cards from trying; a connection that gave up on a
+        // network fault or an unreadable answer is started again by the next finished turn (AC-05.09).
+        if verdict { blocked = true }
         if connectionID != nil { connectionID = nil; await configureCoordinator() }
     }
 

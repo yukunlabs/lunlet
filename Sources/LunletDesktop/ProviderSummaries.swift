@@ -327,8 +327,9 @@ private struct OverviewLimitsCard: View {
             VStack(alignment: .leading, spacing: 0) {
                 Text("Limits").font(PanelStyle.Text.title).frame(height: PanelStyle.Layout.line)
                     .accessibilityAddTraits(.isHeader)
-                // Two agent blocks and the title fill the card: 20 + 8 + 2 × (14 + 4 + 6 + 4 + 14) + 8 = 120 inside the padding.
-                VStack(alignment: .leading, spacing: PanelStyle.Space.medium) {
+                // The title and the agent blocks fill the card: the free height is shared equally above each block.
+                let gap = PanelStyle.Layout.overviewBlockGap(blocks: providers.count)
+                VStack(alignment: .leading, spacing: gap) {
                     ForEach(providers, id: \.self) { provider in
                         switch provider {
                         case .codex: codex(now: now)
@@ -336,7 +337,7 @@ private struct OverviewLimitsCard: View {
                         }
                     }
                 }
-                .padding(.top, PanelStyle.Space.medium)
+                .padding(.top, gap)
                 Spacer(minLength: 0)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -470,9 +471,7 @@ private struct ClaudeUsageCard: View {
             .background(UsageHoverAnchor(controller: hoverPanel))
         }
         .modifier(PanelModule())
-        .help("Percent used and reset times as Claude Code reported them through Lunlet's status line: official values, "
-            + "not estimates. Hover This week for an estimate from those readings, never a guarantee. Model-specific "
-            + "weekly limits and the plan tier are only in Claude Code's own /usage. Hover for daily usage on this Mac.")
+        .help(ClaudeLimitsText.cardHelp)
     }
 
     /// The source line plus one inline action: Connect while not connected, Undo right after connecting here.
@@ -533,10 +532,7 @@ private struct ClaudeUsageCard: View {
             }
         }
     }
-    private static let connectHelp = "Lunlet adds its status line to Claude Code's settings.json while Claude Code is "
-        + "selected, unless you disconnected it; an existing status line keeps running. A custom status line hides most of Claude Code's footer keyboard hints. Lunlet keeps only percent "
-        + "used and reset times and reads no credentials. Undo, or Disconnect in Settings › Agents, restores the previous "
-        + "setting exactly."
+    private static let connectHelp = ClaudeLimitsText.connectHelp
 
     private var hasReadings: Bool {
         limits.connection == .connected && limits.limits?.sevenDay != nil
@@ -557,7 +553,7 @@ private struct ClaudeUsageCard: View {
                     Text((remaining > 0 && remaining < 1 ? "<1" : String(Int(remaining))) + "%")
                     Text("left").fontWeight(.regular).foregroundStyle(.secondary)
                 } else {
-                    Text(limits.connection == .notConnected ? "Not connected" : "Unknown").fontWeight(.regular).foregroundStyle(.secondary)
+                    Text(ClaudeLimitsText.missing(connected: limits.connection != .notConnected)).fontWeight(.regular).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 0)
             }
@@ -589,7 +585,7 @@ private struct ClaudeUsageCard: View {
         .help(estimate.map { $0 + (estimateHelp.map { "\n" + $0 } ?? "") } ?? "")
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(ClaudeLimitsText.weekTitle)
-        .accessibilityValue(spoken ?? "Unknown")
+        .accessibilityValue(spoken ?? ClaudeLimitsText.missing(connected: limits.connection != .notConnected))
     }
 
     /// Recorded usage today in the Codex footnote's shape: two labeled facts, tokens first and the API-price estimate

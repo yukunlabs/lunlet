@@ -1,7 +1,7 @@
 <!doctype html>
 <!-- SPDX-FileCopyrightText: 2026 yukunlabs -->
 <!-- SPDX-License-Identifier: 0BSD -->
-<!-- Refs: US-28, AC-28.01, AC-28.02, AC-28.03, AC-28.04; US-27, AC-27.04; US-30, AC-30.01, AC-30.02, AC-30.03; US-33, AC-33.01. -->
+<!-- Refs: US-28, AC-28.01, AC-28.02, AC-28.03, AC-28.04; US-27, AC-27.04, AC-27.05; US-30, AC-30.01, AC-30.02, AC-30.03; US-33, AC-33.01. -->
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -137,7 +137,7 @@
       <div class="columns reveal">
         <div><h3>Runs on your Mac</h3><p>Codex and Claude Code observation, limits and usage work locally, from the GitHub download or a source build. macOS {{macos}} or later; on-device validation currently covers macOS 27 on Apple silicon.</p></div>
         <div><h3>Verified so far</h3><p>Read-only observation of locally owned Codex and Claude Code records. Locked-Mac notices and one reply per notice are verified on Feishu, Telegram and Slack. Some client workflows still need on-device validation.</p></div>
-        <div><h3>Not in the first release</h3><p id="release-status">No download yet. The first one will be an unsigned preview: macOS asks you to allow it on first open; updates ask for nothing. No new mobile conversations, SSH, remote-host discovery or general computer control.</p><a class="button primary" data-link="releaseURL" hidden>Download on GitHub</a></div>
+        <div><h3>{{releaseHeading}}</h3><p id="release-status">{{releaseStatus}}</p>{{releaseLink}}</div>
       </div>
     </section>
   </main>

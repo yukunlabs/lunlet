@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
 // Refs: US-18, AC-18.01, AC-18.02, AC-18.03; US-33, AC-33.04.
-// Refs: US-25, AC-25.02.
+// Refs: US-25, AC-25.01, AC-25.02; US-19, AC-19.01.
 // Refs: US-23, AC-23.01.
 // Refs: US-04, AC-04.01, AC-04.02, AC-04.03, AC-04.05, AC-04.08; US-12, AC-12.04.
 import Combine
@@ -21,6 +21,19 @@ import LunletCore
     private var lastAttempt: ContinuousClock.Instant?
     private var closed = false
     private var rangeRevision = UUID()
+    /// Whether this model's agent is selected. While it is not, nothing starts a scan and no history is kept.
+    private(set) var isActive = true
+
+    /// Follows the agent selection (AC-19.01): turning the agent off cancels a scan in flight and drops what was
+    /// read; turning it on lets the next request scan at once, whatever the earlier scan's five-minute floor.
+    func setActive(_ active: Bool) {
+        guard !closed, active != isActive else { return }
+        isActive = active
+        lastAttempt = nil
+        guard !active else { return }
+        rangeRevision = UUID(); operation?.cancel()
+        snapshot = nil; unavailable = false; lastSuccessfulRefresh = nil
+    }
 
     init(reader: any LocalUsageReading = CodexLocalUsageReader(), now: @escaping @MainActor () -> Date = Date.init) {
         self.reader = reader; self.now = now
@@ -30,7 +43,7 @@ import LunletCore
         refresh()
     }
     func refresh() {
-        guard !closed, operation == nil else { return }
+        guard !closed, isActive, operation == nil else { return }
         lastAttempt = .now; isLoading = true; unavailable = false
         let days = historyDays, revision = rangeRevision
         operation = Task {

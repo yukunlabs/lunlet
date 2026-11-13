@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
 // Refs: US-01, AC-01.02, AC-01.04; US-10, AC-10.01, AC-10.02, AC-10.04.
-// Refs: US-11, AC-11.01, AC-11.02; US-12, AC-12.02, AC-12.04; US-05, AC-05.09.
+// Refs: US-11, AC-11.01, AC-11.02; US-12, AC-12.02, AC-12.04; US-05, AC-05.09; US-38, AC-38.03.
 import Foundation
 import Testing
 import SwiftProtobuf
@@ -72,6 +72,38 @@ struct FeishuSocketTests {
         do { try await running.value; Issue.record("Closing must stop the receive loop") }
         catch { #expect(error as? FeishuSocketFailure == .closed) }
         #expect(await router.prepare(sessionID: observed.sessionID, form: .followup(field: "followup")) == nil)
+    }
+
+    // Refs: US-10, AC-10.01; US-38, AC-38.03. The toast the connection answers with names the agent whose turn the
+    // card was issued for.
+    @Test func theAcknowledgmentToastNamesTheCardsAgent() async throws {
+        let server = try WebSocketTestServer()
+        defer { server.stop() }
+        let socket = FeishuSocket(endpoint: endpoint(try await server.start()), path: SyntheticFeishuPath())
+        defer { socket.close() }
+        let router = CardActionRouter(elapsed: { 0 }, wallTime: { CardCallbackFixture.date })
+        let access = MobileAccess(owner: CardCallbackFixture.owner, connected: true, awayMode: true, inputEnabled: true)
+        await router.setAccess(access, connectionID: socket.connectionID)
+        let observed = ObservedSession(sessionID: UUID(), connectionID: UUID(), liveness: .alive, phase: .idle(completedTurnID: "turn_synthetic"))
+        await router.observe(observed)
+        let control = try #require(await router.prepare(sessionID: observed.sessionID, form: .followup(field: "followup"), provider: .claude))
+        let receipt = FeishuMessageReceipt(messageID: "om_synthetic", chatID: "oc_synthetic", applicationID: "cli_synthetic", ownerID: "ou_owner", tenantID: "tenant_synthetic")
+        #expect(await router.bind(controlID: control.id, receipt: receipt))
+        var frame = FeishuWireFrame()
+        frame.seqID = 7; frame.logID = 2; frame.service = 42; frame.method = 1
+        frame.headers = [("type", "event"), ("message_id", "message_synthetic"), ("seq", "0"), ("sum", "1")].map { key, value in
+            var header = FeishuWireHeader(); header.key = key; header.value = value; return header
+        }
+        frame.payload = try CardCallbackFixture.data(control: control.id)
+        server.sendOnConnect([try frame.serializedData()])
+        let running = Task { try await socket.run(router: router, onAction: { _ in }) }
+        defer { running.cancel() }
+        try await waitUntil { !server.messages().isEmpty }
+        let ack = try FeishuWireFrame(serializedBytes: server.messages()[0])
+        let response = try JSONSerialization.jsonObject(with: ack.payload) as! [String: Any]
+        let data = try #require(Data(base64Encoded: response["data"] as? String ?? ""))
+        let toast = (try JSONSerialization.jsonObject(with: data) as? [String: [String: String]])?["toast"]
+        #expect(toast?["content"] == "Received. Waiting for Claude Code confirmation.")
     }
 
     // Refs: US-05, AC-05.09; US-10, AC-10.01.
@@ -173,6 +205,27 @@ struct FeishuSocketTests {
         await #expect(throws: FeishuSocketFailure.unavailable) { try await running.value }
         #expect(actions.snapshot().isEmpty)
         #expect(await router.prepare(sessionID: observed.sessionID, form: .followup(field: "followup")) == nil)
+    }
+
+    // Refs: US-05, AC-05.09; US-11, AC-11.01. A pong that carries no settings, or text that is not settings, still
+    // proves the connection is alive: the socket keeps running on its current settings and pings again.
+    @Test(arguments: ["", "ok"]) func aPongWithoutSettingsIsLivenessOnly(_ payload: String) async throws {
+        let server = try WebSocketTestServer()
+        defer { server.stop() }
+        var pong = FeishuWireFrame()
+        pong.seqID = 0; pong.logID = 0; pong.service = 42; pong.method = 0
+        var header = FeishuWireHeader(); header.key = "type"; header.value = "pong"
+        pong.headers = [header]
+        if !payload.isEmpty { pong.payload = Data(payload.utf8) }
+        server.sendOnConnect([try pong.serializedData()])
+        let socket = FeishuSocket(endpoint: endpoint(try await server.start(), ping: 1), path: SyntheticFeishuPath())
+        defer { socket.close() }
+        let running = Task { try await socket.run(router: CardActionRouter(), onAction: { _ in }) }
+        defer { running.cancel() }
+        try await waitUntil { !server.messages().isEmpty }
+        #expect(socket.currentSettings.pingSeconds == 1)
+        running.cancel()
+        await #expect(throws: CancellationError.self) { try await running.value }
     }
 
     @Test func aShorterPongIntervalReschedulesTheNextNativePing() async throws {

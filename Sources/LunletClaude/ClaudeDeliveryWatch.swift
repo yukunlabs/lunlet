@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
-// Refs: US-38, AC-38.03, AC-38.04, AC-38.05; US-10, AC-10.01, AC-10.03.
+// Refs: US-38, AC-38.03, AC-38.04, AC-38.05; US-10, AC-10.01, AC-10.03; US-25, AC-25.01.
 import CryptoKit
 import Darwin
 import Foundation
@@ -63,21 +63,26 @@ struct ClaudeDeliveryWatch {
         do { try handle.seek(toOffset: offset) } catch { return .unavailable }
         while offset < size {
             guard budget > 0 else { return .unavailable }
-            let count = min(65_536, budget, Int(size - offset))
-            guard let chunk = try? handle.read(upToCount: count), !chunk.isEmpty else { break }
-            offset += UInt64(chunk.count); budget -= chunk.count
-            pending.append(chunk)
-            while let newline = pending.firstIndex(of: 0x0A) {
-                let line = pending.subdata(in: pending.startIndex..<newline)
-                pending.removeSubrange(pending.startIndex...newline)
-                guard line.count <= Self.maximumLine else { continue }
-                switch Self.inspect(line, expected: expected) {
-                case .delivered: return .delivered
-                case .mismatched: return .mismatched
-                case .pending, .unavailable: continue
+            // Each chunk and each decoded record is released as it goes, not when the poll's job ends (AC-25.01).
+            // Nil goes on to the next chunk; a status ends the poll.
+            let outcome = autoreleasepool { () -> Status? in
+                let count = min(65_536, budget, Int(size - offset))
+                guard let chunk = try? handle.read(upToCount: count), !chunk.isEmpty else { return .pending }
+                offset += UInt64(chunk.count); budget -= chunk.count
+                pending.append(chunk)
+                while let newline = pending.firstIndex(of: 0x0A) {
+                    let line = pending.subdata(in: pending.startIndex..<newline)
+                    pending.removeSubrange(pending.startIndex...newline)
+                    guard line.count <= Self.maximumLine else { continue }
+                    switch Self.inspect(line, expected: expected) {
+                    case .delivered: return .delivered
+                    case .mismatched: return .mismatched
+                    case .pending, .unavailable: continue
+                    }
                 }
+                return pending.count <= Self.maximumLine ? nil : .unavailable
             }
-            guard pending.count <= Self.maximumLine else { return .unavailable }
+            if let outcome { return outcome }
         }
         return .pending
     }

@@ -61,7 +61,10 @@ public enum NoticeReplyText {
 }
 
 /// What the paired owner did with a notice: replied to one of the bot's messages, or tapped its reply button.
+/// A transport also says once per connection that the provider accepted it and replies can now arrive.
 public enum BotReplyEvent: Equatable, Sendable {
+    /// The provider accepted this connection; it carries nothing from the owner.
+    case listening
     case reply(BotReply)
     /// The owner asked to reply to the notice `messageID`; `callbackID` identifies the tap to the provider.
     case replyRequested(messageID: String, callbackID: String)

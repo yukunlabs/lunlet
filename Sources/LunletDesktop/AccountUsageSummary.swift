@@ -107,8 +107,10 @@ struct AccountUsageSummary: View {
                         Text(expiry.joined(separator: " · ")).foregroundStyle(.secondary)
                     }
                 }.help(resetHelp)
-                    .accessibilityElement(children: .combine)
+                    // The label replaces the children's text, so the count and expiry are the element's value.
+                    .accessibilityElement(children: .ignore)
                     .accessibilityLabel("Limit reset credits")
+                    .accessibilityValue(AccountUsagePresentation.resetCreditsSpoken(snapshot?.earnedResets, now: now))
             }
             .font(PanelStyle.Text.secondary).lineLimit(1)
             .frame(height: PanelStyle.Layout.secondaryLine)

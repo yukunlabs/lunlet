@@ -26,7 +26,7 @@ public struct ClaudeStatusLineLocation: Equatable, Sendable {
     static func quoted(_ path: String) -> String { "'" + path.replacingOccurrences(of: "'", with: #"'\''"#) + "'" }
 }
 
-/// The status-line command. POSIX `sh` with macOS's own `plutil`, `cat`, `date`, `tail`, `awk`, `mv` and `rm`:
+/// The status-line command. POSIX `sh` with macOS's own `plutil`, `cat`, `date`, `tail`, `awk`, `wc`, `mv` and `rm`:
 /// no network, interpreter or package. It parses only `rate_limits.seven_day`, keeps
 /// the higher value of one window when sessions report it out of order, chains the replaced command and exits 0.
 enum ClaudeStatusLineScript {
@@ -182,7 +182,12 @@ enum ClaudeStatusLineScript {
                 { IFS= read -r lunlet_first; } < "$lunlet_log" 2>/dev/null
                 lunlet_first=${lunlet_first%% *}
                 case $lunlet_first in [1-9]*) case $lunlet_first in *[!0-9]*) lunlet_first=0 ;; esac ;; *) lunlet_first=0 ;; esac
-                if [ "$lunlet_first" -lt "$lunlet_cutoff" ]; then
+                # Lunlet reads at most a megabyte of this log. A value that changes with every response can pass that
+                # within the eight days, so the log is also cut back to its latest lines at half that size.
+                lunlet_bytes=$(/usr/bin/wc -c < "$lunlet_log" 2>/dev/null)
+                lunlet_bytes=${lunlet_bytes##* }
+                case $lunlet_bytes in ''|*[!0-9]*) lunlet_bytes=0 ;; esac
+                if [ "$lunlet_first" -lt "$lunlet_cutoff" ] || [ "$lunlet_bytes" -gt 524288 ]; then
                     lunlet_temporary=$lunlet_dir/.weekly-readings.$$
                     trap '/bin/rm -f "$lunlet_temporary"; exit 0' HUP INT PIPE TERM
                     if /usr/bin/awk -v cutoff="$lunlet_cutoff" 'NF == 3 && $1 + 0 >= cutoff' "$lunlet_log" 2>/dev/null \
@@ -198,10 +203,13 @@ enum ClaudeStatusLineScript {
     trap 'exit 0' HUP INT PIPE TERM
 
     # The status line this one replaced, run through /bin/sh with the same input; its output shows only on success.
-    if [ -n "$lunlet_dir" ] && lunlet_previous=$(/usr/bin/plutil -extract previousCommand raw -expect string -o - \
+    # LUNLET_STATUS_LINE marks that run: a replaced command that leads back to this script finds the mark set and is
+    # not run again from inside itself, so the two can never start each other without end.
+    if [ -z "${LUNLET_STATUS_LINE:-}" ] && [ -n "$lunlet_dir" ] \
+        && lunlet_previous=$(/usr/bin/plutil -extract previousCommand raw -expect string -o - \
         "$lunlet_dir/previous-status-line.json" 2>/dev/null) && [ -n "$lunlet_previous" ]
     then
-        if lunlet_output=$(printf '%s' "$lunlet_input" | /bin/sh -c "$lunlet_previous") && [ -n "$lunlet_output" ]; then
+        if lunlet_output=$(printf '%s' "$lunlet_input" | LUNLET_STATUS_LINE=1 /bin/sh -c "$lunlet_previous") && [ -n "$lunlet_output" ]; then
             printf '%s\n' "$lunlet_output"
         fi
     fi

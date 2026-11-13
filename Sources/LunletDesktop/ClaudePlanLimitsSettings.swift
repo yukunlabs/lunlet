@@ -20,7 +20,7 @@ struct ClaudePlanLimitsSettings: View {
                         Button("Forget", action: model.forget).controlSize(.small)
                             .help("Lunlet stops tracking its earlier connection and leaves Claude Code's settings unchanged.")
                     } else if model.actionIssue != nil {
-                        Button("Try again", action: model.connect).controlSize(.small)
+                        Button("Try again", action: model.retry).controlSize(.small)
                     }
                 }
             } header: {

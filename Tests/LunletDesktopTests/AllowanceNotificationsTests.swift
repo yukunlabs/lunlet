@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
-// Refs: US-41, AC-41.01, AC-41.02, AC-41.03, AC-41.04, AC-41.05; US-04, AC-04.01, AC-04.15.
+// Refs: US-41, AC-41.01, AC-41.02, AC-41.03, AC-41.04, AC-41.05; US-04, AC-04.01, AC-04.15; US-19, AC-19.01; US-25, AC-25.01.
 import Foundation
 import Testing
 import LunletClaude
@@ -76,6 +76,23 @@ private actor FixedReader: CodexAccountReading {
                                  resetNotices: false, now: after)
         #expect(fresh.count == 1)
         if case .low? = fresh.first {} else { Issue.record("a refreshed window below the level warns again") }
+    }
+
+    @Test func aResetMomentThatDriftsBetweenReadsIsStillTheSameWindow() throws {
+        // AC-41.03: the reset timestamp of one reported window may differ slightly from read to read; that neither
+        // warns again nor counts as a reset. A reset moment further away than the estimator's tolerance is another window.
+        var rule = AllowanceAlertRule()
+        let reset = now.timeIntervalSince1970 + 86_400
+        #expect(rule.notices(for: try weekly(left: 15, reset: reset), warnBelow: 20, resetNotices: true, now: now).count == 1)
+        for (step, drift) in [(1, 1.0), (2, -2.0), (3, 240.0), (4, 0.0)] {
+            let at = now.addingTimeInterval(Double(step) * 60)
+            let later = rule.notices(for: try weekly(left: 15 - Double(step), reset: reset + drift, at: at), warnBelow: 20,
+                                     resetNotices: true, now: at)
+            #expect(later.isEmpty, "a drift of \(drift) s warned again")
+        }
+        let moved = now.addingTimeInterval(600)
+        #expect(rule.notices(for: try weekly(left: 10, reset: reset + WeeklyQuotaEstimator.resetTimeTolerance + 3_600, at: moved),
+                             warnBelow: 20, resetNotices: true, now: moved).count == 1)
     }
 
     @Test func aResetNoticeNeedsAReadingAfterTheResetMomentThatShowsTheWindowRefreshed() throws {
@@ -208,10 +225,86 @@ private actor FixedReader: CodexAccountReading {
         await notifier.shutdown()
     }
 
+    @Test func theRuleIsSavedOnlyWhenAReadingChangesIt() async throws {
+        // AC-41.03, AC-25.01: the per-window memory is written when a reading changes it, not on every evaluation;
+        // a limits file event, a permission check or a preference change that brings no new reading writes nothing.
+        let (preferences, defaults, suite) = try store()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        preferences.update { $0.allowanceNotifications = true }
+        let deliverer = RecordingDeliverer(state: .granted)
+        let notifier = AllowanceNotifier(deliverer: deliverer, defaults: defaults, now: { self.now })
+        notifier.observe(preferences: preferences)
+        await notifier.settle()
+        #expect(notifier.ruleSaves == 0 && defaults.data(forKey: AllowanceNotifier.memoryKey) == nil)
+        let reset = Int(now.timeIntervalSince1970) + 86_400
+        let reading = try codex("""
+        {"rateLimits":{"primary":{"usedPercent":50,"windowDurationMins":10080,"resetsAt":\(reset)}}}
+        """)
+        notifier.codexChanged(reading)
+        await notifier.settle()
+        #expect(notifier.ruleSaves == 1 && defaults.data(forKey: AllowanceNotifier.memoryKey) != nil)
+        for _ in 0..<20 { notifier.codexChanged(reading) }
+        notifier.checkAuthorization()
+        preferences.update { $0.allowanceResetNotices = true }
+        await notifier.settle()
+        #expect(notifier.ruleSaves == 1)
+        notifier.codexChanged(try codex("""
+        {"rateLimits":{"primary":{"usedPercent":90,"windowDurationMins":10080,"resetsAt":\(reset)}}}
+        """, observedAt: now.addingTimeInterval(60)))
+        await notifier.settle()
+        #expect(notifier.ruleSaves == 2 && deliverer.delivered.count == 1)
+        // What was saved is the rule as it now stands: a relaunch does not warn again.
+        let relaunched = AllowanceNotifier(deliverer: deliverer, defaults: defaults, now: { self.now.addingTimeInterval(120) })
+        relaunched.observe(preferences: preferences)
+        relaunched.codexChanged(try codex("""
+        {"rateLimits":{"primary":{"usedPercent":91,"windowDurationMins":10080,"resetsAt":\(reset)}}}
+        """, observedAt: now.addingTimeInterval(120)))
+        await relaunched.settle()
+        #expect(deliverer.delivered.count == 1)
+        await notifier.shutdown(); await relaunched.shutdown()
+    }
+
+    @Test func anAgentThatIsNotSelectedNeverNotifies() async throws {
+        // AC-41.03 ("a window Lunlet shows"), AC-19.01: readings of an agent the panel does not show send nothing, and
+        // a reading taken while it was unselected is not reported when the agent is selected later.
+        let (preferences, defaults, suite) = try store()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        preferences.update { $0.providers = [.claude]; $0.allowanceNotifications = true }
+        let deliverer = RecordingDeliverer(state: .granted)
+        let notifier = AllowanceNotifier(deliverer: deliverer, defaults: defaults, now: { self.now })
+        notifier.observe(preferences: preferences)
+        await notifier.settle()
+        let reset = Int(now.timeIntervalSince1970) + 86_400
+        notifier.codexChanged(try codex("""
+        {"rateLimits":{"primary":{"usedPercent":90,"windowDurationMins":10080,"resetsAt":\(reset)}}}
+        """))
+        await notifier.settle()
+        #expect(deliverer.delivered.isEmpty)
+        preferences.update { $0.providers = [.claude, .codex] }
+        await notifier.settle()
+        #expect(deliverer.delivered.isEmpty)
+        // The first reading taken while Codex is selected is what counts.
+        notifier.codexChanged(try codex("""
+        {"rateLimits":{"primary":{"usedPercent":91,"windowDurationMins":10080,"resetsAt":\(reset)}}}
+        """, observedAt: now.addingTimeInterval(60)))
+        await notifier.settle()
+        #expect(deliverer.delivered.map(\.title) == ["Codex weekly allowance: 9% left"])
+        // Turning Claude Code off withdraws its window without a notice of any kind.
+        notifier.claudeChanged(claude(left: 8, resetIn: 86_400), connected: true)
+        await notifier.settle()
+        #expect(deliverer.delivered.count == 2)
+        preferences.update { $0.providers = [.codex] }
+        notifier.claudeChanged(claude(left: 3, resetIn: 86_400), connected: true)
+        await notifier.settle()
+        #expect(deliverer.delivered.count == 2)
+        await notifier.shutdown()
+    }
+
     @Test func turningTheSwitchOnAsksForPermissionOnceAndReportsTheLatestReadingsOfBothAgents() async throws {
         // AC-41.01, AC-41.03, AC-41.05: one request, then the readings already held are evaluated; the Claude window too.
         let (preferences, defaults, suite) = try store()
         defer { defaults.removePersistentDomain(forName: suite) }
+        preferences.update { $0.providers = [.codex, .claude] }
         let deliverer = RecordingDeliverer(state: .granted)
         let notifier = AllowanceNotifier(deliverer: deliverer, defaults: defaults, now: { self.now })
         notifier.observe(preferences: preferences)

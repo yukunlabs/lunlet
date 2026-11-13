@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: 0BSD
 // Refs: US-04, AC-04.01, AC-04.02, AC-04.03, AC-04.05, AC-04.08, AC-04.10; US-12, AC-12.04.
 // Refs: US-18, AC-18.01, AC-18.02, AC-18.03.
-// Refs: US-25, AC-25.02.
+// Refs: US-25, AC-25.01, AC-25.02; US-19, AC-19.01.
 // Refs: US-23, AC-23.01.
 import Combine
 import AppKit
@@ -49,6 +49,33 @@ private actor RangeHistoryReader: LocalUsageReading {
 }
 
 @MainActor struct LocalUsageModelTests {
+    // Refs: US-19, AC-19.01; US-25, AC-25.01. An agent that is not selected has no history scanned, on launch, on a
+    // panel opening or on Refresh; turning it off drops what was read, and turning it on reads again at once.
+    @Test func anUnselectedAgentsHistoryIsNotScannedAndDoesNotLinger() async throws {
+        let reader = HistoryReader()
+        let subject = LocalUsageModel(reader: reader)
+        subject.setActive(false)
+        subject.refresh(); subject.refreshIfNeeded(); subject.setHistoryDays(3)
+        #expect(!subject.isLoading && subject.snapshot == nil && subject.historyDays == 3)
+        #expect(await reader.reads == 0)
+        subject.setActive(true)
+        subject.refreshIfNeeded()
+        try await settle(subject)
+        #expect(subject.snapshot != nil)
+        #expect(await reader.reads == 1)
+        subject.setActive(false)
+        #expect(subject.snapshot == nil && subject.lastSuccessfulRefresh == nil && !subject.unavailable)
+        subject.refresh()
+        #expect(await reader.reads == 1)
+        // Selected again, the five-minute floor of the earlier scan does not delay the first one.
+        subject.setActive(true)
+        subject.refreshIfNeeded()
+        try await settle(subject)
+        #expect(subject.snapshot != nil)
+        #expect(await reader.reads == 2)
+        await subject.shutdown()
+    }
+
     @Test func freshnessTracksSuccessInsteadOfAttemptsFailuresOrCanceledReads() async throws {
         let reader = HistoryReader()
         var now = Date(timeIntervalSince1970: 1_800_000_000)

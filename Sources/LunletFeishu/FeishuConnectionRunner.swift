@@ -25,10 +25,13 @@ public actor FeishuConnectionRunner: FeishuCallbackConnecting {
     private let provider: any FeishuEndpointProviding
     private let makePath: @Sendable () -> any FeishuPathObserving
     private var hasRun = false
-    public init(client: FeishuBotClient) { provider = client; makePath = { SystemFeishuPath() } }
+    /// How long a connection must have stayed open to count as one that worked.
+    private let settledAfter: Duration
+    public init(client: FeishuBotClient) { provider = client; makePath = { SystemFeishuPath() }; settledAfter = .seconds(5) }
     init(provider: any FeishuEndpointProviding,
-         makePath: @escaping @Sendable () -> any FeishuPathObserving = { SystemFeishuPath() }) {
-        self.provider = provider; self.makePath = makePath
+         makePath: @escaping @Sendable () -> any FeishuPathObserving = { SystemFeishuPath() },
+         settledAfter: Duration = .seconds(5)) {
+        self.provider = provider; self.makePath = makePath; self.settledAfter = settledAfter
     }
 
     public func run(router: CardActionRouter, onState: @escaping @Sendable (FeishuTransportState) async -> Void,
@@ -43,7 +46,7 @@ public actor FeishuConnectionRunner: FeishuCallbackConnecting {
             while true {
                 try Task.checkCancellation()
                 await onState(.connecting)
-                let opened = OSAllocatedUnfairLock(initialState: false)
+                let opened = OSAllocatedUnfairLock<ContinuousClock.Instant?>(initialState: nil)
                 var activeSocket: FeishuSocket?
                 do {
                     let endpoint = try await provider.requestConnectionEndpoint()
@@ -52,14 +55,18 @@ public actor FeishuConnectionRunner: FeishuCallbackConnecting {
                     let socket = FeishuSocket(endpoint: endpoint, path: makePath(), diagnostic: diagnostic)
                     activeSocket = socket
                     try await socket.run(router: router, onOpen: {
-                        opened.withLock { $0 = true }
+                        opened.withLock { $0 = .now }
                         await onState(.socketOpen(socket.connectionID))
                     }, onAction: onAction, onRefusal: onRefusal)
                     throw FeishuSocketFailure.unavailable
                 } catch {
                     if error is CancellationError || Task.isCancelled { throw CancellationError() }
                     if let activeSocket { settings = activeSocket.currentSettings }
-                    if opened.withLock({ $0 }) { retries = 0 }
+                    let openedAt = opened.withLock { $0 }
+                    if openedAt != nil { retries = 0 }
+                    // A connection the provider dropped as soon as it opened did not work; only one that stayed
+                    // open earns the quick retry below, so an accept-then-close fault never becomes a storm.
+                    let settled = openedAt.map { $0.duration(to: .now) >= settledAfter } ?? false
                     let failure = Self.failure(error)
                     guard Self.retryable(failure), settings.reconnectCount == -1 || retries < settings.reconnectCount else {
                         FeishuDiagnostics.failure(.reconnect, operation: diagnostic, error: failure)
@@ -67,7 +74,11 @@ public actor FeishuConnectionRunner: FeishuCallbackConnecting {
                         throw failure
                     }
                     retries += 1
-                    let delay = max(1, settings.reconnectSeconds) + Int.random(in: 0...settings.reconnectJitterSeconds)
+                    // A connection that had worked is retried after the jitter alone, as the provider's own clients
+                    // do, so a card finishing right after a network blip still gets its reply box (AC-05.09); the
+                    // provider's interval separates consecutive failures. Never less than a second.
+                    let jitter = Int.random(in: 0...settings.reconnectJitterSeconds)
+                    let delay = settled ? max(1, jitter) : max(1, settings.reconnectSeconds) + jitter
                     DiagnosticLog.record(.reconnect, component: .feishu, outcome: .retrying, operation: diagnostic)
                     await onState(.waitingToReconnect(attempt: retries, delaySeconds: delay))
                     try await Task.sleep(for: .seconds(delay))
@@ -89,9 +100,13 @@ public actor FeishuConnectionRunner: FeishuCallbackConnecting {
         return .invalidResponse
     }
 
+    /// Faults of the network, of one answer or of one frame are retried under the provider's limit. An answer
+    /// that cannot be read (a proxy's page, a cut-off body, a rejected frame) says nothing about the app, so it
+    /// is retried too; the provider's credential and permission verdicts and a closed client are not.
     private static func retryable(_ failure: FeishuBotFailure) -> Bool {
         switch failure {
-        case .unavailable, .rateLimited, .providerRejected(1), .providerRejected(1000040343): return true
+        case .unavailable, .rateLimited, .invalidResponse: return true
+        case .providerRejected(let code): return FeishuBotFailure.transientProviderCodes.contains(code)
         default: return false
         }
     }

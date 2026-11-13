@@ -147,6 +147,16 @@ private struct FixedUsage: LocalUsageReading {
     }
 
     // Refs: US-19, AC-19.05.
+    // Refs: US-19, AC-19.06. The Overview's Limits card has the provider cards' height, and its agent blocks fill it:
+    // the last block ends at the card's padding, with no blank band beneath it.
+    @Test func overviewLimitsBlocksFillTheCardAtTheProviderCardsHeight() {
+        let layout = PanelStyle.Layout.self
+        let gap = layout.overviewBlockGap(blocks: 2)
+        #expect(layout.line + 2 * (gap + layout.overviewBlock) == layout.cardHeight - 2 * PanelStyle.Grid.margin)
+        // More agents than fit keep the grid's group gap instead of closing up.
+        #expect(layout.overviewBlockGap(blocks: 8) == PanelStyle.Grid.group)
+    }
+
     @Test func overviewSharesTheProviderPagesFrameWithoutSessions() async throws {
         _ = NSApplication.shared
         let today = Calendar.current.startOfDay(for: Date())

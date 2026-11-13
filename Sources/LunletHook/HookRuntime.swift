@@ -25,16 +25,24 @@ public struct HookRuntime: Sendable {
 
     private let spool: HookSpool
     private let isProcessAlive: @Sendable (Int32) -> Bool
+    private let processStartedAt: @Sendable (Int32) -> Date?
     private let verdictTimeout: TimeInterval
     private let holdLimit: TimeInterval
     private let pollInterval: TimeInterval
     private let now: @Sendable () -> Date
+    private let isInterrupted: @Sendable () -> Bool
+    private let holdPollInterval: TimeInterval
+    private let appCheckInterval: TimeInterval
 
     public init(spool: HookSpool = .standard(), isProcessAlive: @escaping @Sendable (Int32) -> Bool = { kill($0, 0) == 0 },
+                processStartedAt: @escaping @Sendable (Int32) -> Date? = { HookProcess.startTime(of: $0) },
                 verdictTimeout: TimeInterval = 3, holdLimit: TimeInterval = 600, pollInterval: TimeInterval = 0.05,
-                now: @escaping @Sendable () -> Date = { Date() }) {
-        self.spool = spool; self.isProcessAlive = isProcessAlive
+                now: @escaping @Sendable () -> Date = { Date() }, isInterrupted: @escaping @Sendable () -> Bool = { false },
+                holdPollInterval: TimeInterval = 0.25, appCheckInterval: TimeInterval = 1) {
+        self.spool = spool; self.isProcessAlive = isProcessAlive; self.processStartedAt = processStartedAt
         self.verdictTimeout = verdictTimeout; self.holdLimit = holdLimit; self.pollInterval = pollInterval; self.now = now
+        self.isInterrupted = isInterrupted
+        self.holdPollInterval = holdPollInterval; self.appCheckInterval = appCheckInterval
     }
 
     /// Runs to completion; `output` receives the continuation line when there is one.
@@ -54,12 +62,25 @@ public struct HookRuntime: Sendable {
         let release = spool.file(hook.sessionID, stop: stopID, suffix: HookSpool.releaseSuffix)
         let push = spool.file(hook.sessionID, stop: stopID, suffix: HookSpool.pushSuffix)
         // The app answers within milliseconds when it runs; a late or missing verdict never delays the turn for long.
-        guard wait(until: verdictTimeout, for: { exists(hold) || exists(release) }), exists(hold), !exists(release) else { return .released }
-        let held = wait(until: holdLimit, for: { exists(push) || exists(release) || !appIsRunning() })
-        guard held, exists(push), let data = try? HookSpool.readSmall(push),
+        // Being told to end (TERM or HUP) ends either wait at once; the deferred cleanup then removes this stop's files.
+        guard wait(until: verdictTimeout, every: pollInterval, for: { exists(hold) || exists(release) || isInterrupted() }),
+              !isInterrupted(), exists(hold), !exists(release) else { return .released }
+        // A hold lasts up to ten minutes, so it looks for its files a few times a second rather than twenty, and asks
+        // whether the app still runs about once a second: the app ends a hold by writing a release, and only an app
+        // that died without one is found this way.
+        var appGone = false, lastAppCheck = now()
+        let held = wait(until: holdLimit, every: holdPollInterval, for: {
+            if exists(push) || exists(release) || isInterrupted() { return true }
+            let moment = now()
+            guard moment.timeIntervalSince(lastAppCheck) >= appCheckInterval else { return false }
+            lastAppCheck = moment
+            appGone = !appIsRunning()
+            return appGone
+        })
+        guard held, !isInterrupted(), exists(push), let data = try? HookSpool.readSmall(push),
               let request = try? HookSpool.decoder.decode(HookSpool.PushRequest.self, from: data),
               request.stopID == stopID, request.isAcceptable else {
-            return exists(release) || !appIsRunning() ? .released : .expired
+            return exists(release) || isInterrupted() || appGone ? .released : .expired
         }
         output(HookOutput.continuation(text: request.text))
         let receipt = HookSpool.PushReceipt(stopID: stopID, pushedAt: now())
@@ -72,16 +93,18 @@ public struct HookRuntime: Sendable {
     private func appIsRunning() -> Bool {
         guard let data = try? HookSpool.readSmall(spool.appRecordURL),
               let record = try? HookSpool.decoder.decode(HookSpool.AppRecord.self, from: data),
-              record.version == HookSpool.formatVersion, record.pid > 0 else { return false }
-        return isProcessAlive(record.pid)
+              record.version == HookSpool.formatVersion, record.pid > 0, isProcessAlive(record.pid) else { return false }
+        // The pid must still be the process that wrote the record. Where the platform gives no start time, the pid stands.
+        guard let started = processStartedAt(record.pid) else { return !HookProcess.canReadStartTimes }
+        return abs(started.timeIntervalSince(record.startedAt)) <= HookProcess.startTolerance
     }
     private func exists(_ url: URL) -> Bool { FileManager.default.fileExists(atPath: url.path) }
-    private func wait(until seconds: TimeInterval, for condition: () -> Bool) -> Bool {
+    private func wait(until seconds: TimeInterval, every interval: TimeInterval, for condition: () -> Bool) -> Bool {
         let deadline = now().addingTimeInterval(seconds)
         while true {
             if condition() { return true }
             guard now() < deadline else { return false }
-            Thread.sleep(forTimeInterval: pollInterval)
+            Thread.sleep(forTimeInterval: interval)
         }
     }
     /// Everything but the receipt, which the app removes after reading it.

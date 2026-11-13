@@ -8,6 +8,26 @@ import Testing
 private extension Result where Success == PetPack, Failure == PetPackFailure {
     var fault: PetPackFailure? { if case .failure(let failure) = self { failure } else { nil } }
 }
+/// A read's result, handed over from the thread it ran on.
+private final class Outcome: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: Result<PetPack, PetPackFailure>?
+    var value: Result<PetPack, PetPackFailure>? { lock.withLock { stored } }
+    func set(_ value: Result<PetPack, PetPackFailure>) { lock.withLock { stored = value } }
+}
+/// This process's physical footprint: now, and the highest the kernel has recorded for it.
+private enum Footprint {
+    private static func info() -> task_vm_info_data_t {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
+        _ = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count) }
+        }
+        return info
+    }
+    static func current() -> UInt64 { info().phys_footprint }
+    static func lifetimePeak() -> UInt64 { UInt64(max(0, info().ledger_phys_footprint_peak)) }
+}
 
 struct PetPackTests {
     private func makePack(in root: URL, folder: String, manifest: String?, sheet: Bool = true) throws -> URL {
@@ -64,6 +84,40 @@ struct PetPackTests {
         #expect(PetPackReference(key: "codex/blob") == PetPackReference(source: .codex, folder: "blob"))
         #expect(PetPackReference(key: "other/blob") == nil && PetPackReference(key: "codex/") == nil && PetPackReference(key: "codex/../x") == nil)
         #expect(PetPackReference(key: "lunlet/a/b")?.folder == nil)
+    }
+
+    // Refs: US-40, AC-40.02, AC-40.07. Packs arrive from other tools' folders, so the manifest is opened only as a
+    // regular file within its limit: a pipe would stall the reader for good.
+    @Test func aManifestThatIsAPipeIsRefusedWithoutWaitingOnIt() throws {
+        let root = try root(); defer { try? FileManager.default.removeItem(at: root) }
+        let directory = try makePack(in: root, folder: "pipe", manifest: nil)
+        let path = directory.appendingPathComponent("pet.json").path
+        #expect(mkfifo(path, 0o600) == 0)
+        // Whatever happens, a writer lets a reader that is still waiting on the pipe return.
+        defer { let writer = open(path, O_WRONLY | O_NONBLOCK); if writer >= 0 { close(writer) } }
+        let outcome = Outcome(), finished = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            outcome.set(PetPackReader.read(reference: .init(source: .codex, folder: "pipe"), directory: directory, sheetSize: { _ in nil }))
+            finished.signal()
+        }
+        #expect(finished.wait(timeout: .now() + 2) == .success)
+        #expect(outcome.value?.fault == .manifestUnreadable)
+    }
+
+    // Refs: US-40, AC-40.02, AC-40.07. A manifest over the limit is refused by its size, not loaded and then measured.
+    @Test func aManifestOverTheLimitIsRefusedWithoutBeingLoaded() throws {
+        let root = try root(); defer { try? FileManager.default.removeItem(at: root) }
+        let directory = try makePack(in: root, folder: "huge", manifest: v1)
+        // 512 MiB that occupy no disk: only reading them costs anything.
+        let megabytes: UInt64 = 512
+        let handle = try FileHandle(forWritingTo: directory.appendingPathComponent("pet.json"))
+        try handle.truncate(atOffset: megabytes * 1_048_576); try handle.close()
+        let before = Footprint.current()
+        let result = PetPackReader.read(reference: .init(source: .codex, folder: "huge"), directory: directory, sheetSize: { _ in nil })
+        let peak = Footprint.lifetimePeak()
+        #expect(result.fault == .manifestUnreadable)
+        // The process's highest footprint so far stays well under what loading the file on top of `before` would take.
+        #expect(peak < before + megabytes * 1_048_576 / 2, "the footprint peaked at \(peak / 1_048_576) MiB from \(before / 1_048_576) MiB")
     }
 
     @Test func rowsHoldTheirContractDurations() {

@@ -119,7 +119,19 @@ struct CodexProcessReader: CodexProcessInspecting {
             guard current.pbi_uid == getuid() else { return .unknown }
             return Self.identity(current) == process && current.pbi_status != UInt32(SZOMB) ? .same : .ended
         }
-        return kill(process.pid, 0) != 0 && errno == ESRCH ? .ended : .unknown
+        if kill(process.pid, 0) != 0 { return errno == ESRCH ? .ended : .unknown }
+        // The kernel no longer describes a process that has exited, yet its PID answers until the parent collects it.
+        return Self.exitedUncollected(process.pid) ? .ended : .unknown
+    }
+    /// Whether this user's process with the PID has exited and only awaits collection. Whichever process that is,
+    /// the one that held the PID before is gone.
+    private static func exitedUncollected(_ pid: Int32) -> Bool {
+        var name: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+        var entry = kinfo_proc()
+        var size = MemoryLayout<kinfo_proc>.stride
+        guard sysctl(&name, UInt32(name.count), &entry, &size, nil, 0) == 0, size == MemoryLayout<kinfo_proc>.stride,
+              entry.kp_proc.p_pid == pid, entry.kp_eproc.e_ucred.cr_uid == getuid() else { return false }
+        return Int32(entry.kp_proc.p_stat) == SZOMB
     }
     /// The kernel's path for the process image, so a shell function or PATH wrapper that launched
     /// the session is never re-run. The start time is checked on both sides of the lookup, so a

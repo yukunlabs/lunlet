@@ -3,7 +3,7 @@
 // Refs: US-05, AC-05.01, AC-05.02, AC-05.03; US-06, AC-06.01, AC-06.05.
 // Refs: US-07, AC-07.02, AC-07.03, AC-07.04; US-08, AC-08.01, AC-08.03, AC-08.04.
 // Refs: US-10, AC-10.01, AC-10.03, AC-10.04; US-11, AC-11.01, AC-11.02, AC-11.03.
-// Refs: US-12, AC-12.01, AC-12.02, AC-12.03, AC-12.04.
+// Refs: US-12, AC-12.01, AC-12.02, AC-12.03, AC-12.04; US-05, AC-05.09; US-38, AC-38.03.
 // Refs: US-05, AC-05.08, AC-05.09; US-08, AC-08.05; US-09, AC-09.03.
 import Foundation
 import LunletCore
@@ -102,14 +102,18 @@ public actor MobileCoordinator {
     /// Issues one single-use reply capability for this exact, latest, verified completed turn.
     public func prepareReply(for snapshot: SessionSnapshot) async -> FeishuReplyCapability? {
         let session = snapshot.observation.sessionID
+        // The newest observation must be this same turn and must itself allow a follow-up; an observation that
+        // differs only in presentation is still this turn.
         guard !closed, replyWindow, canEnableAway, remoteInput, adapterAvailable, validated.contains(session),
-              snapshots[session] == snapshot, snapshot.observation.liveness == .alive, !snapshot.isEnded,
+              let newest = snapshots[session], newest.observesSameTurn(as: snapshot),
+              snapshot.observation.liveness == .alive, !snapshot.isEnded,
               case .idle(let turn) = snapshot.observation.phase, !turn.isEmpty,
-              SessionNotice.prepare(snapshot).allowsFollowup else { return nil }
+              SessionNotice.prepare(snapshot).allowsFollowup, SessionNotice.prepare(newest).allowsFollowup else { return nil }
         let current = epoch
-        guard let control = await router.prepare(sessionID: session, form: .followup(field: FeishuReplyCapability.fieldName))
+        guard let control = await router.prepare(sessionID: session, form: .followup(field: FeishuReplyCapability.fieldName),
+                                                 provider: snapshot.provider)
         else { return nil }
-        guard current == epoch, snapshots[session] == snapshot, !closed else {
+        guard current == epoch, snapshots[session]?.observesSameTurn(as: snapshot) == true, !closed else {
             await router.withdraw(controlID: control.id)
             return nil
         }
@@ -243,7 +247,7 @@ public actor MobileCoordinator {
         do {
             var control: ContinuationControl?
             if remoteInput, let form = SessionCard.form(for: snapshot) {
-                control = await router.prepare(sessionID: session, form: form)
+                control = await router.prepare(sessionID: session, form: form, provider: snapshot.provider)
             }
             guard current == epoch, publishable(snapshot), snapshots[session] == snapshot, !Task.isCancelled else { return }
             let rendered = try SessionCard.render(snapshot, control: control)

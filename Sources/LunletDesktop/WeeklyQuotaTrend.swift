@@ -92,12 +92,19 @@ struct WeeklyQuotaTrend: Equatable {
             guard let used = window.usedPercent else { return false }
             return used <= 100
         }
-        guard let email = snapshot.identity?.email, !email.isEmpty,
-              let weekly = AccountUsagePresentation.weekly(in: snapshot), weeklyPercentsValid,
+        // Without an account, or for another account, earlier readings are nobody's evidence (AC-32.03).
+        guard let email = snapshot.identity?.email, !email.isEmpty else {
+            identity = nil; resetAt = nil; readings = []; return
+        }
+        // The bound carries the estimator's tolerance: a fresh window can report its reset a few seconds more than
+        // seven days ahead. A read whose weekly window is unusable adds no reading and, for the same account, takes
+        // none away (AC-32.07).
+        guard let weekly = AccountUsagePresentation.weekly(in: snapshot), weeklyPercentsValid,
               let remaining = weekly.remainingPercent, remaining.isFinite, (0...100).contains(remaining),
               let reset = weekly.resetsAt, reset > snapshot.observedAt,
-              reset.timeIntervalSince(snapshot.observedAt) <= 7 * 86_400 else {
-            identity = nil; resetAt = nil; readings = []; return
+              reset.timeIntervalSince(snapshot.observedAt) <= 7 * 86_400 + WeeklyQuotaEstimator.resetTimeTolerance else {
+            if identity?.account != email { identity = nil; resetAt = nil; readings = [] }
+            return
         }
         if let latest = readings.last, snapshot.observedAt <= latest.at { return }
         let current = Identity(account: email, plan: snapshot.identity?.plan, bucketID: weekly.bucketID, bucket: weekly.bucketName)

@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
-// Refs: US-33, AC-33.01, AC-33.03, AC-33.04, AC-33.06, AC-33.07; US-38, AC-38.04.
+// Refs: US-33, AC-33.01, AC-33.03, AC-33.04, AC-33.06, AC-33.07; US-38, AC-38.04; US-25, AC-25.01.
 // Synthetic Claude Code 2.1-shaped records under a per-test temporary root; no real Claude data is read.
 import Foundation
 import LunletHook
@@ -25,10 +25,11 @@ struct ClaudeFixture {
 
     @discardableResult
     func record(pid: Int32, session: String, cwd: String = cwd, procStart: Any = processStart, status: String = "busy",
-                waitingFor: String? = nil, version: String = "2.1.314") throws -> URL {
+                waitingFor: String? = nil, version: String = "2.1.314", kind: String? = "interactive") throws -> URL {
         var object: [String: Any] = ["pid": Int(pid), "sessionId": session, "cwd": cwd, "startedAt": 1_793_354_400_000,
-                                     "procStart": procStart, "version": version, "kind": "interactive", "entrypoint": "cli",
+                                     "procStart": procStart, "version": version, "entrypoint": "cli",
                                      "status": status, "statusUpdatedAt": 1_793_354_405_000]
+        if let kind { object["kind"] = kind }
         if let waitingFor { object["waitingFor"] = waitingFor }
         let url = root.appendingPathComponent("sessions/\(pid).json")
         try JSONSerialization.data(withJSONObject: object).write(to: url)
@@ -125,5 +126,65 @@ struct ClaudeFixture {
     }
     static func ignored(session: String = first) -> String {
         line(["type": "permission-mode", "permissionMode": "default", "sessionId": session])
+    }
+}
+
+/// Samples this process's physical footprint on its own thread, so a scan that holds its input in memory is
+/// seen while it runs; the growth is over the footprint at creation.
+final class FootprintSampler: @unchecked Sendable {
+    private let lock = NSLock()
+    private let baseline: UInt64
+    private var peak: UInt64
+    private var running = true
+    init() {
+        baseline = Self.footprint(); peak = baseline
+        Thread.detachNewThread { [self] in
+            while true {
+                let value = Self.footprint()
+                lock.lock(); peak = max(peak, value); let more = running; lock.unlock()
+                if !more { return }
+                usleep(500)
+            }
+        }
+    }
+    /// Stops sampling and returns the largest growth seen, in bytes.
+    func stop() -> UInt64 {
+        lock.lock(); defer { lock.unlock() }
+        running = false
+        return peak - baseline
+    }
+    private static func footprint() -> UInt64 {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count) }
+        }
+        return result == KERN_SUCCESS ? info.phys_footprint : 0
+    }
+}
+
+extension FootprintSampler {
+    /// The least growth over up to `attempts` runs of `body`, stopping at the first run under `bound`. Tests run in
+    /// parallel in one process, so one run's reading can include what another test allocated meanwhile; a scan that
+    /// holds its input exceeds the bound on every run.
+    static func leastGrowth(under bound: UInt64, attempts: Int = 3, _ body: () async throws -> Void) async rethrows -> UInt64 {
+        var least = UInt64.max
+        for _ in 0..<attempts {
+            let sampler = FootprintSampler()
+            try await body()
+            least = min(least, sampler.stop())
+            if least < bound { break }
+        }
+        return least
+    }
+    static func leastGrowth(under bound: UInt64, attempts: Int = 3, _ body: () throws -> Void) rethrows -> UInt64 {
+        var least = UInt64.max
+        for _ in 0..<attempts {
+            let sampler = FootprintSampler()
+            try body()
+            least = min(least, sampler.stop())
+            if least < bound { break }
+        }
+        return least
     }
 }

@@ -31,6 +31,19 @@ enum AgentProvider: String, Codable, CaseIterable, Identifiable {
     var title: String {
         switch self { case .codex: "Codex"; case .claude: "Claude Code" }
     }
+    /// What selecting the agent changes outside Lunlet, for its switch's help (AC-33.08, AC-38.06).
+    var switchHelp: String? {
+        switch self {
+        case .codex: nil
+        case .claude:
+            "Claude Code is observed from its own local session records and transcripts, without sockets. "
+                + "While it is selected, Lunlet adds two things to Claude Code's user settings and removes both when it is "
+                + "turned off: a status line for plan limits (a custom status line hides most footer keyboard hints; any "
+                + "existing one keeps running and is restored exactly) and a Stop hook for phone replies, which keeps a "
+                + "finished turn open for one reply only while this Mac is locked. Only the account email and plan are kept "
+                + "from Claude Code's profile; credentials and environment values are never read."
+        }
+    }
 }
 enum CommunicationChannel: String, Codable, CaseIterable, Identifiable {
     case feishu, slack, telegram
@@ -40,6 +53,36 @@ enum CommunicationChannel: String, Codable, CaseIterable, Identifiable {
     }
 }
 enum PreferenceFailure: Error { case unsupportedVersion, invalidValue, oversized }
+
+/// One JSON value of a field this build does not know, saved by a newer one. It is written back as it was read
+/// and never interpreted (AC-26.01).
+enum UnknownPreferenceValue: Codable, Equatable {
+    case null, bool(Bool), integer(Int64), number(Double), string(String)
+    case array([UnknownPreferenceValue]), object([String: UnknownPreferenceValue])
+
+    init(from decoder: any Decoder) throws {
+        let value = try decoder.singleValueContainer()
+        if value.decodeNil() { self = .null }
+        else if let bool = try? value.decode(Bool.self) { self = .bool(bool) }
+        else if let integer = try? value.decode(Int64.self) { self = .integer(integer) }
+        else if let number = try? value.decode(Double.self) { self = .number(number) }
+        else if let string = try? value.decode(String.self) { self = .string(string) }
+        else if let array = try? value.decode([UnknownPreferenceValue].self) { self = .array(array) }
+        else { self = .object(try value.decode([String: UnknownPreferenceValue].self)) }
+    }
+    func encode(to encoder: any Encoder) throws {
+        var value = encoder.singleValueContainer()
+        switch self {
+        case .null: try value.encodeNil()
+        case .bool(let bool): try value.encode(bool)
+        case .integer(let integer): try value.encode(integer)
+        case .number(let number): try value.encode(number)
+        case .string(let string): try value.encode(string)
+        case .array(let array): try value.encode(array)
+        case .object(let object): try value.encode(object)
+        }
+    }
+}
 
 /// Only non-secret preferences belong here. Importing this value cannot authorize
 /// a provider, install executable code, or grant access to credentials.
@@ -58,8 +101,10 @@ struct LunletPreferences: Codable, Equatable {
     var providers: [AgentProvider] = [.codex]
     var channel = CommunicationChannel.feishu
 
-    /// Where the pet sits on one display, as the window's origin in that display's coordinates (AC-39.02).
-    struct PetPosition: Codable, Equatable { var x: Double; var y: Double }
+    /// Where the pet sits on one display (AC-39.02): with `relative` true, the window origin's offset from the corner
+    /// of that display's visible area, which a change of the display arrangement leaves valid; without it, a place
+    /// an earlier build saved as an origin in global screen coordinates.
+    struct PetPosition: Codable, Equatable { var x: Double; var y: Double; var relative: Bool? }
     var petCoat: PetCoat = .golden
     /// Keyed by display number, so each display keeps its own place.
     var petPositions: [String: PetPosition] = [:]
@@ -78,13 +123,26 @@ struct LunletPreferences: Codable, Equatable {
     var allowanceWarnBelow = 20
     var allowanceResetNotices = false
     static let allowanceWarnLevels = [30, 20, 10, 5]
+    /// Fields a newer build of this schema saved and this build does not know. They travel with the value and are
+    /// written back unchanged, so opening newer settings here never strips them (AC-26.01).
+    private(set) var unknownFields: [String: UnknownPreferenceValue] = [:]
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, presentation, skinID, accentOverrides, accentHex, historyDays, providers, channel, petCoat, petPositions, petDisplay,
              petPack, menuBarAllowance, menuBarAllowanceBelow, needsYouSound, allowanceNotifications, allowanceWarnBelow, allowanceResetNotices
     }
+    private struct AnyKey: CodingKey {
+        let stringValue: String
+        var intValue: Int? { nil }
+        init(stringValue: String) { self.stringValue = stringValue }
+        init?(intValue: Int) { nil }
+    }
     init() {}
     init(from decoder: any Decoder) throws {
+        let every = try decoder.container(keyedBy: AnyKey.self)
+        for key in every.allKeys where CodingKeys(stringValue: key.stringValue) == nil {
+            unknownFields[key.stringValue] = try every.decode(UnknownPreferenceValue.self, forKey: key)
+        }
         let data = try decoder.container(keyedBy: CodingKeys.self)
         schemaVersion = try data.decode(Int.self, forKey: .schemaVersion)
         presentation = try data.decodeIfPresent(EntryPresentation.self, forKey: .presentation) ?? .notch
@@ -128,6 +186,10 @@ struct LunletPreferences: Codable, Equatable {
         try data.encode(allowanceNotifications, forKey: .allowanceNotifications)
         try data.encode(allowanceWarnBelow, forKey: .allowanceWarnBelow)
         try data.encode(allowanceResetNotices, forKey: .allowanceResetNotices)
+        var every = encoder.container(keyedBy: AnyKey.self)
+        for (name, value) in unknownFields where CodingKeys(stringValue: name) == nil {
+            try every.encode(value, forKey: AnyKey(stringValue: name))
+        }
     }
     func validate() throws {
         // Same identifier rule as SkinDefinition.validate, so a saved choice can name a real skin.
@@ -156,14 +218,23 @@ struct LunletPreferences: Codable, Equatable {
     @Published private(set) var value: LunletPreferences
     @Published private(set) var issue: String?
     private let defaults: UserDefaults
+    /// The saved value this build could not read, such as a newer schema's. It stays where it is until a setting
+    /// changes, and is then kept under its own key instead of being lost (AC-26.02).
+    private var unreadable: Data?
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         if let current = defaults.data(forKey: "preferences.current") {
-            if let decoded = try? Self.decode(current) { value = decoded }
-            else {
+            do { value = try Self.decode(current) }
+            catch {
                 value = defaults.data(forKey: "preferences.previous").flatMap { try? Self.decode($0) } ?? .init()
-                issue = "Saved settings could not be read. The previous valid settings or defaults are in use."
+                unreadable = current
+                if case PreferenceFailure.unsupportedVersion = error {
+                    issue = "These settings were saved by a newer version of Lunlet, which this version cannot read. "
+                        + "They are kept; the previous valid settings or defaults are in use."
+                } else {
+                    issue = "Saved settings could not be read. The previous valid settings or defaults are in use."
+                }
             }
         } else { value = .init() }
     }
@@ -174,6 +245,7 @@ struct LunletPreferences: Codable, Equatable {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let data = try encoder.encode(next)
         let previous = try encoder.encode(value)
+        if let unreadable { defaults.set(unreadable, forKey: "preferences.unreadable"); self.unreadable = nil }
         defaults.set(previous, forKey: "preferences.previous")
         defaults.set(data, forKey: "preferences.current")
         value = next; issue = nil
@@ -185,13 +257,13 @@ struct LunletPreferences: Codable, Equatable {
     }
     private static func decode(_ data: Data) throws -> LunletPreferences {
         guard data.count <= 65_536 else { throw PreferenceFailure.oversized }
-        let fields: Set<String> = ["schemaVersion", "presentation", "skinID", "accentOverrides", "accentHex", "historyDays",
-                                   "providers", "channel", "petCoat", "petPositions", "petDisplay", "petPack",
-                                   "menuBarAllowance", "menuBarAllowanceBelow", "needsYouSound", "allowanceNotifications",
-                                   "allowanceWarnBelow", "allowanceResetNotices"]
-        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              Set(object.keys).isSubset(of: fields) else { throw PreferenceFailure.invalidValue }
-        return try JSONDecoder().decode(LunletPreferences.self, from: data)
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw PreferenceFailure.invalidValue }
+        // A newer schema is named before any of its fields is read, whatever shape they have. Fields this schema
+        // does not know are carried through by the value itself, never rejected.
+        if let version = object["schemaVersion"] as? Int, version > 1 { throw PreferenceFailure.unsupportedVersion }
+        do { return try JSONDecoder().decode(LunletPreferences.self, from: data) }
+        // Only a later schema is "newer"; any other version number is simply not a saved value of this app.
+        catch PreferenceFailure.unsupportedVersion { throw PreferenceFailure.invalidValue }
     }
 }
 

@@ -134,6 +134,17 @@ import Testing
         #expect(!FileManager.default.fileExists(atPath: fixture.box.root.appendingPathComponent("absent").path))
     }
 
+    // Refs: US-33, AC-33.08. A status line that already runs Lunlet's script cannot be chained: the script would run
+    // that line and the line would run the script, without end. It is left as it is.
+    @Test func aLineThatAlreadyRunsLunletsScriptIsNeverChained() throws {
+        let fixture = try Fixture(settings: nil); defer { fixture.box.remove() }
+        let wrapped = #"{"statusLine":{"type":"command","command":"/bin/sh '"# + fixture.connection.location.script.path + #"' | tr a-z A-Z"}}"#
+        try Data(wrapped.utf8).write(to: fixture.settings)
+        #expect(try fixture.connection.state() == .notConnected)
+        #expect(throws: ClaudeStatusLineFailure.unsupportedStatusLine) { try fixture.connection.connect() }
+        #expect(fixture.text == wrapped && !fixture.backupExists)
+    }
+
     // Refs: US-33, AC-33.08.
     @Test func aStatusLineChangedAfterConnectingIsNeverOverwritten() throws {
         let fixture = try Fixture(settings: Self.twoSpace); defer { fixture.box.remove() }

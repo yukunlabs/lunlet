@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 yukunlabs
 # SPDX-License-Identifier: 0BSD
-# Refs: US-28, AC-28.01, AC-28.02, AC-28.03, AC-28.04; US-30, AC-30.01, AC-30.02, AC-30.03; US-27, AC-27.04.
+# Refs: US-28, AC-28.01, AC-28.02, AC-28.03, AC-28.04; US-30, AC-30.01, AC-30.02, AC-30.03; US-27, AC-27.04, AC-27.05.
 import re
+import struct
 import tempfile
 import unittest
 from pathlib import Path
@@ -86,7 +87,12 @@ class ProductSiteTests(unittest.TestCase):
             config.write_text('{"schemaVersion":1}')
             build(output, config_path=config)
             self.assertTrue((output / "index.html").is_file())
-            self.assertTrue((output / "assets/lunlet-app-icon.png").is_file())
+            # The mark is drawn at 28 points, so the page ships a small copy of the icon, not the 1254-pixel source.
+            icon = (output / "assets/lunlet-app-icon.png").read_bytes()
+            self.assertEqual(icon[:8], b"\x89PNG\r\n\x1a\n")
+            width, height = struct.unpack(">II", icon[16:24])
+            self.assertTrue(width == height and 56 <= width <= 256, (width, height))
+            self.assertLess(len(icon), 100_000)
             self.assertTrue((output / "video/lunlet-walkthrough.mp4").is_file())
             self.assertTrue((output / "video/lunlet-poster.jpg").is_file())
             self.assertTrue((output / "video/lunlet-captions.vtt").is_file())
@@ -113,6 +119,55 @@ class ProductSiteTests(unittest.TestCase):
                 self.assertEqual(panel.count('src="assets/phone-' + channel + '-'), 3)
             with self.assertRaises(FileExistsError):
                 build(output)
+
+    def availability(self, output):
+        """The heading, status text and link markup of the availability section's download column, as built."""
+        page = (output / "index.html").read_text()
+        column = re.search(r'<div><h3>([^<]*)</h3><p id="release-status">(.*?)</p>(.*?)</div>', page, re.S)
+        self.assertIsNotNone(column)
+        return page, column.groups()
+
+    def test_a_published_release_is_linked_and_described_in_the_markup_itself(self):
+        # AC-27.05, AC-28.01: the download, its architecture and both first-open routes are in the page as built, so
+        # they need no script, and the download no longer sits under a heading about what the release lacks.
+        with tempfile.TemporaryDirectory(prefix="lunlet-site-test-") as temporary:
+            output = Path(temporary) / "site"
+            config = Path(temporary) / "config.json"
+            config.write_text('{"schemaVersion":1,"repositoryURL":"https://github.com/example/lunlet"}')
+            build(output, config_path=config, release_tag="v0.1.0")
+            page, (heading, status, link) = self.availability(output)
+            self.assertEqual(heading, "Download the preview")
+            for phrase in ("unsigned preview", "Apple silicon", "macOS 15 and later", "Open Anyway", "right-click",
+                           "Updates ask for nothing", "checksums are on GitHub"):
+                self.assertIn(phrase, status)
+            self.assertNotIn("notarized", status)
+            self.assertEqual(link, '<a class="button primary" href="https://github.com/example/lunlet/releases/tag/v0.1.0" '
+                                   'rel="noopener noreferrer">Download on GitHub</a>')
+            self.assertNotIn("No download yet", page)
+            self.assertNotIn("Not in the first release", page)
+            # The words live in the page; the script neither writes them nor reveals the link.
+            script = (output / "app.js").read_text()
+            self.assertNotIn("release-status", script)
+            self.assertNotIn("unsigned preview", script)
+
+    def test_without_a_release_the_page_stays_source_only(self):
+        # AC-27.04: no binary download is offered or implied, and the later release keeps its place.
+        with tempfile.TemporaryDirectory(prefix="lunlet-site-test-") as temporary:
+            output = Path(temporary) / "site"
+            config = Path(temporary) / "config.json"
+            config.write_text('{"schemaVersion":1,"repositoryURL":"https://github.com/example/lunlet"}')
+            build(output, config_path=config)
+            page, (heading, status, link) = self.availability(output)
+            self.assertEqual(heading, "No download yet")
+            self.assertIn("build it from the source", status)
+            self.assertIn("unsigned preview", status)
+            self.assertEqual(link, "")
+            self.assertNotIn("Download on GitHub", page)
+
+    def test_release_destination_is_escaped_in_the_markup(self):
+        page = render_page(self.PAGE + '<p>{{releaseHeading}}</p>{{releaseLink}}', self.FACTS,
+                           release_url='https://github.com/example/lunlet/releases/tag/v0.1.0?a="b"&c')
+        self.assertIn('href="https://github.com/example/lunlet/releases/tag/v0.1.0?a=&quot;b&quot;&amp;c"', page)
 
     def test_release_tag_becomes_the_download_destination(self):
         with tempfile.TemporaryDirectory(prefix="lunlet-site-test-") as temporary:

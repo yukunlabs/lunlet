@@ -16,7 +16,17 @@ private actor SyntheticReplyClient: ChannelReplyClient {
     private(set) var prompts: [(callbackID: String, refusal: String?)] = []
     private var handler: (@Sendable (BotReplyEvent) async -> Void)?
     private var updatesFail = false
+    /// Listener attempts that fail before one connects, and every attempt made.
+    private var listenerFailures = 0
+    private(set) var attempts = 0
+    private var dropped = false
+    /// Whether a connected listener says so, as the Slack and Telegram transports do.
+    private var announces = false
+    func announceConnections() { announces = true }
     func failUpdates() { updatesFail = true }
+    func failListeners(_ count: Int) { listenerFailures = count }
+    /// Ends the running listener as a lost connection.
+    func dropListener() { dropped = true }
     func prepare() -> BotIdentity { .init(channel: .telegram, id: "9001", name: "SyntheticLunletBot") }
     func pair(_ challenge: PairingChallenge) throws -> BotBinding { throw BotChannelFailure.unavailable }
     func checkAuthorization(_ binding: BotBinding) {}
@@ -34,9 +44,15 @@ private actor SyntheticReplyClient: ChannelReplyClient {
         return refusal == nil ? "p\(prompts.count)" : nil
     }
     func receiveReplies(binding: BotBinding, onEvent: @escaping @Sendable (BotReplyEvent) async -> Void) async throws {
-        handler = onEvent; listeners += 1
+        attempts += 1
+        if listenerFailures > 0 { listenerFailures -= 1; throw BotChannelFailure.unavailable }
+        handler = onEvent; listeners += 1; dropped = false
         defer { handler = nil; listeners -= 1 }
-        do { try await Task.sleep(for: .seconds(3_600)) } catch { throw BotChannelFailure.canceled }
+        if announces { await onEvent(.listening) }
+        while !dropped {
+            do { try await Task.sleep(for: .milliseconds(2)) } catch { throw BotChannelFailure.canceled }
+        }
+        throw BotChannelFailure.unavailable
     }
     func sendText(_ text: String, binding: BotBinding) { texts.append(text) }
     func deliver(_ reply: BotReply) async -> Bool { await deliver(.reply(reply)) }
@@ -67,8 +83,8 @@ struct BotReplyServiceTests {
 
     private func snapshot(_ turn: String = "turn_a", provider: SessionProvider = .codex, phase: SessionPhase? = nil,
                           session: UUID = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!,
-                          inputPath: SessionInputPath? = nil) -> SessionSnapshot {
-        SessionSnapshot(observation: .init(sessionID: session, connectionID: session, liveness: .alive,
+                          inputPath: SessionInputPath? = nil, liveness: CLILiveness = .alive) -> SessionSnapshot {
+        SessionSnapshot(observation: .init(sessionID: session, connectionID: session, liveness: liveness,
                                            phase: phase ?? .idle(completedTurnID: turn)),
                         project: "reply-project", title: "Synthetic task", publicConclusion: "Done.", provider: provider,
                         inputPath: inputPath)
@@ -87,12 +103,83 @@ struct BotReplyServiceTests {
     }
 
     private func service(_ client: SyntheticReplyClient, clock: SyntheticClock, log: DispatchLog,
-                         outcome: ContinuationOutcome = .delivered) -> BotReplyService {
+                         outcome: ContinuationOutcome = .delivered, retries: DispatchLog? = nil) -> BotReplyService {
         BotReplyService(client: client, binding: binding, dispatch: { action, progress in
             if case .followup(let text) = action.input { log.append(text) }
             await progress.submitted()
             return outcome
-        }, elapsed: { clock.now }, checkInterval: .milliseconds(20))
+        }, elapsed: { clock.now }, checkInterval: .milliseconds(20), retryDelay: { failures in
+            retries?.append(String(failures))
+            return .milliseconds(2)
+        })
+    }
+
+    // Refs: US-36, AC-36.02; US-05, AC-05.09; US-10, AC-10.04. A notice's ten minutes keep running while the Mac
+    // sleeps: the window is measured on the clock that counts time asleep, as the Feishu router's is. On a Mac that
+    // has never slept since it started the two clocks read the same.
+    @Test func theWindowClockCountsTimeAsleep() {
+        let continuous = TimeInterval(clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW)) / 1e9
+        #expect(abs(BotReplyService.windowClock() - continuous) < 1)
+    }
+
+    // Refs: US-36, AC-36.02, AC-36.04. A lost network outlasts five attempts; the listener keeps trying, with its
+    // backoff, for as long as a notice can still take a reply.
+    @Test func theListenerKeepsRetryingWhileANoticeIsInItsWindow() async throws {
+        let client = SyntheticReplyClient(), clock = SyntheticClock(), log = DispatchLog(), retries = DispatchLog()
+        let service = service(client, clock: clock, log: log, retries: retries)
+        await client.failListeners(7)
+        service.setReplyWindow(true)
+        service.observe(snapshot())
+        let control = try #require(await service.prepareReply(for: snapshot()))
+        await service.bindReply(control, receipt: .init(messageID: "m1", chatID: "42"), snapshot: snapshot())
+        try await waitUntil { await client.listeners == 1 }
+        #expect(await client.attempts == 8)
+        #expect(retries.texts == ["1", "2", "3", "4", "5", "6", "7"])
+        // The shipped waits double from two seconds to a minute, within a provider's connection rate limit.
+        #expect([1, 2, 5, 6, 40].map(BotReplyService.listenerBackoff) == [.seconds(2), .seconds(4), .seconds(32), .seconds(60), .seconds(60)])
+        // The reply that arrives after the outage still continues the session.
+        #expect(await client.deliver(reply("r1", to: "m1")))
+        try await waitUntil { log.texts == ["Run the tests"] }
+        await service.close()
+    }
+
+    // Refs: US-36, AC-36.04. A connection the provider accepted ends the outage: a later loss backs off from the start.
+    @Test func anAcceptedConnectionStartsTheListenersBackoffAgain() async throws {
+        let client = SyntheticReplyClient(), clock = SyntheticClock(), log = DispatchLog(), retries = DispatchLog()
+        let service = service(client, clock: clock, log: log, retries: retries)
+        await client.announceConnections()
+        await client.failListeners(2)
+        service.setReplyWindow(true)
+        service.observe(snapshot())
+        let control = try #require(await service.prepareReply(for: snapshot()))
+        await service.bindReply(control, receipt: .init(messageID: "m1", chatID: "42"), snapshot: snapshot())
+        try await waitUntil { await client.listeners == 1 }
+        #expect(retries.texts == ["1", "2"])
+        await client.dropListener()
+        try await waitUntil { retries.texts.count == 3 }
+        #expect(retries.texts == ["1", "2", "1"])
+        await service.close()
+    }
+
+    // Refs: US-36, AC-36.04. A new notice starts the listener's backoff again, so an earlier outage does not slow
+    // the replies to a later notice.
+    @Test func aNewNoticeStartsTheListenersBackoffAgain() async throws {
+        let client = SyntheticReplyClient(), clock = SyntheticClock(), log = DispatchLog(), retries = DispatchLog()
+        let service = service(client, clock: clock, log: log, retries: retries)
+        await client.failListeners(2)
+        service.setReplyWindow(true)
+        service.observe(snapshot())
+        let first = try #require(await service.prepareReply(for: snapshot()))
+        await service.bindReply(first, receipt: .init(messageID: "m1", chatID: "42"), snapshot: snapshot())
+        try await waitUntil { await client.listeners == 1 }
+        #expect(retries.texts == ["1", "2"])
+        service.observe(snapshot("turn_b"))
+        let second = try #require(await service.prepareReply(for: snapshot("turn_b")))
+        await service.bindReply(second, receipt: .init(messageID: "m2", chatID: "42"), snapshot: snapshot("turn_b"))
+        await client.dropListener()
+        try await waitUntil { retries.texts.count == 3 }
+        #expect(retries.texts == ["1", "2", "1"])
+        await service.close()
     }
 
     // One reply to the notice continues the session once; the notice shows received, sent and delivered in place,
@@ -111,10 +198,16 @@ struct BotReplyServiceTests {
         #expect(updates.map(\.messageID) == ["m1", "m1", "m1"])
         #expect(updates.map(\.reply) == [.received("Run the tests"), .submitted("Run the tests"), .finished(.delivered, "Run the tests")])
         #expect(log.texts == ["Run the tests"])
-        #expect(await client.deliver(reply("r2", to: "m1", text: "Again")))
+        // A provider's redelivery of the same message is not a second reply and is answered with nothing.
+        #expect(await client.deliver(reply("r1", to: "m1")))
         try await Task.sleep(for: .milliseconds(30))
+        #expect(await client.texts.isEmpty)
+        // AC-36.02: a repeated reply to a known notice is answered with the reason, and the notice keeps its outcome.
+        #expect(await client.deliver(reply("r2", to: "m1", text: "Again")))
+        try await waitUntil { await client.texts.count == 1 }
         let texts = await client.texts, count = await client.updates.count
-        #expect(log.texts == ["Run the tests"] && texts.isEmpty && count == 3)
+        #expect(texts == ["Not sent. " + ContinuationRefusal.alreadySent.explanation])
+        #expect(log.texts == ["Run the tests"] && count == 3)
         await service.close()
         #expect(await client.listeners == 0)
     }
@@ -141,6 +234,84 @@ struct BotReplyServiceTests {
         try await waitUntil { await client.texts.count == 1 }
         #expect(await client.texts == ["Not sent. " + ContinuationRefusal.replyWindowClosed.explanation])
         #expect(log.texts.isEmpty)
+        await service.close()
+    }
+
+    // Refs: US-36, AC-36.02; US-10, AC-10.01, AC-10.04. One scan that cannot confirm the session retires the notice's
+    // control; when the same idle turn is observed again, a reply is refused as unconfirmed, never as "already sent":
+    // nothing was sent.
+    @Test func aReplyAfterAnUnconfirmedScanIsNotCalledAlreadySent() async throws {
+        let client = SyntheticReplyClient(), clock = SyntheticClock(), log = DispatchLog()
+        let service = service(client, clock: clock, log: log)
+        service.setReplyWindow(true)
+        service.observe(snapshot())
+        let control = try #require(await service.prepareReply(for: snapshot()))
+        await service.bindReply(control, receipt: .init(messageID: "m1", chatID: "42"), snapshot: snapshot())
+        try await waitUntil { await client.listeners == 1 }
+        service.observe(snapshot(liveness: .unverified))
+        service.observe(snapshot())
+        // Asking for a control applies both observations first; a running turn gets none.
+        #expect(await service.prepareReply(for: snapshot(phase: .running)) == nil)
+        #expect(await client.deliver(reply("r1", to: "m1")))
+        try await waitUntil { await client.updates.count == 1 }
+        #expect(await client.updates.first?.reply == .closed(.unverified))
+        #expect(log.texts.isEmpty)
+        await service.close()
+    }
+
+    // Refs: US-36, AC-36.03; US-05, AC-05.09. A control can die while its notice is being sent: the Mac is unlocked,
+    // or the session starts another turn. The notice is then closed in place as soon as it is bound, with the
+    // reason, instead of inviting a reply for its ten minutes.
+    @Test func aNoticeBoundAfterItsControlDiedIsClosedAtOnce() async throws {
+        let client = SyntheticReplyClient(), clock = SyntheticClock(), log = DispatchLog()
+        let service = service(client, clock: clock, log: log)
+        service.setReplyWindow(true)
+        service.observe(snapshot())
+        let unlocked = try #require(await service.prepareReply(for: snapshot()))
+        service.setReplyWindow(false)
+        // Asking again applies the unlock first; a closed window issues nothing.
+        #expect(await service.prepareReply(for: snapshot()) == nil)
+        await service.bindReply(unlocked, receipt: .init(messageID: "m1", chatID: "42"), snapshot: snapshot())
+        try await waitUntil { await client.updates.count == 1 }
+        #expect(await client.updates.first?.reply == .closed(.replyWindowClosed))
+
+        service.setReplyWindow(true)
+        let second = UUID(uuidString: "33333333-3333-4333-8333-333333333333")!
+        service.observe(snapshot(session: second))
+        let moved = try #require(await service.prepareReply(for: snapshot(session: second)))
+        service.observe(snapshot(phase: .running, session: second))
+        #expect(await service.prepareReply(for: snapshot(phase: .running, session: second)) == nil)
+        await service.bindReply(moved, receipt: .init(messageID: "m2", chatID: "42"), snapshot: snapshot(session: second))
+        try await waitUntil { await client.updates.count == 2 }
+        let last = await client.updates.last
+        #expect(last?.messageID == "m2" && last?.reply == .closed(.sessionRunning))
+        #expect(log.texts.isEmpty)
+        await service.close()
+    }
+
+    // Refs: US-36, AC-36.01; US-05, AC-05.09. The monitor may observe one idle turn twice with a different title,
+    // preview or activity time. The control follows the turn, so the notice prepared from the earlier observation
+    // still gets it; an observation that withdraws the input path does not.
+    @Test func aCosmeticReobservationOfTheSameTurnStillGetsItsControl() async throws {
+        let client = SyntheticReplyClient(), clock = SyntheticClock(), log = DispatchLog()
+        let service = service(client, clock: clock, log: log)
+        service.setReplyWindow(true)
+        service.observe(snapshot())
+        let renamed = SessionSnapshot(observation: snapshot().observation, project: "reply-project", title: "Renamed since",
+                                      publicConclusion: "Done.", lastActivityAt: Date(timeIntervalSince1970: 1_800_000_000),
+                                      localPreview: "A later preview")
+        #expect(renamed != snapshot())
+        service.observe(renamed)
+        let control = try #require(await service.prepareReply(for: snapshot()))
+        await service.bindReply(control, receipt: .init(messageID: "m1", chatID: "42"), snapshot: snapshot())
+        try await waitUntil { await client.listeners == 1 }
+        #expect(await client.deliver(reply("r1", to: "m1")))
+        try await waitUntil { log.texts == ["Run the tests"] }
+        // The newest observation of another session names no input path: the earlier one cannot be used for it.
+        let other = UUID(uuidString: "44444444-4444-4444-8444-444444444444")!
+        service.observe(snapshot(provider: .claude, session: other, inputPath: .claudeHook))
+        service.observe(snapshot(provider: .claude, session: other))
+        #expect(await service.prepareReply(for: snapshot(provider: .claude, session: other, inputPath: .claudeHook)) == nil)
         await service.close()
     }
 

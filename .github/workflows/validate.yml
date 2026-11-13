@@ -62,4 +62,7 @@ jobs:
           node --check website/app.js
           python3 scripts/build_site.py
           python3 scripts/check_site_assets.py
-          git diff --check
+      # A clean checkout has no working-tree changes, so the committed tree is compared with the empty tree;
+      # upstream license texts keep their own whitespace.
+      - name: Check whitespace in the committed tree
+        run: git diff --check "$(git hash-object -t tree /dev/null)" HEAD -- . ':(exclude)Resources/third-party'

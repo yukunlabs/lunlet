@@ -146,6 +146,79 @@ struct ClaudeTranscriptReaderTests {
         #expect(try subject.read().content.phase == .idle(completedTurnID: "p1"))
     }
 
+    // Refs: US-33, AC-33.03; US-02, AC-02.05. Claude Code also writes records this reader passes over when it can
+    // decode them, such as an API request blob of several megabytes. One too large to decode is passed over the same
+    // way when its first bytes name its type, so the turn stays as it was instead of turning unknown.
+    @Test func anOversizedRecordOfATypeTheReaderPassesOverLeavesTheTurnAsItWas() throws {
+        let blob = String(repeating: "x", count: ClaudeTranscriptReader.maximumLine + 16)
+        for head in [#""type":"api-request-blob","sessionId":""# + F.first + #"","hash":"h""#, #""type":"attachment","promptId":"p3""#] {
+          try autoreleasepool {
+            let fixture = try ClaudeFixture(); defer { fixture.remove() }
+            var (subject, url) = try reader(fixture, [F.typed("First", uuid: "u1", prompt: "p1")])
+            #expect(try subject.read().content.phase == .running)
+            try fixture.append(["{" + head + #","message":{"role":"user","content":""# + blob + #""}}"#], to: url)
+            let after = try subject.read().content
+            #expect(after.phase == .running && after.turn == "p1" && after.localPreview == "First")
+            try fixture.append([F.assistant(stop: "end_turn"), F.turnDuration()], to: url)
+            #expect(try subject.read().content.phase == .idle(completedTurnID: "p1"))
+          }
+        }
+        // A record the reader acts on, or one whose type the first bytes do not show, still leaves the state unknown.
+        for head in [#""type":"assistant","sessionId":""# + F.first + #"""#, #""sessionId":""# + F.first + #"""#] {
+          try autoreleasepool {
+            let fixture = try ClaudeFixture(); defer { fixture.remove() }
+            var (subject, url) = try reader(fixture, [F.typed("First", uuid: "u1", prompt: "p1")])
+            _ = try subject.read()
+            try fixture.append(["{" + head + #","message":{"role":"assistant","content":""# + blob + #""},"type":"assistant"}"#], to: url)
+            #expect(try subject.read().content.phase == .unknown)
+          }
+        }
+    }
+
+    // Refs: US-33, AC-33.03, AC-33.05; US-13, AC-13.04; US-06, AC-06.02. A prompt with pasted screenshots can exceed the
+    // line bound. Its content is not read, but the members before and after it name the record, so the turn still
+    // begins under its own id; otherwise the previous turn's id would complete a second time and no notice would go
+    // out. The members may sit on either side of the oversized one.
+    @Test func anOversizedTypedPromptStillStartsItsOwnTurn() throws {
+        // Each case builds megabytes of text; a pool per case keeps them from adding up in the test process.
+        for idsFirst in [true, false] { try autoreleasepool {
+            let fixture = try ClaudeFixture(); defer { fixture.remove() }
+            var (subject, url) = try reader(fixture, [F.typed("First", uuid: "u1", prompt: "p1"), F.assistant(stop: "end_turn"), F.turnDuration()])
+            #expect(try subject.read().content.phase == .idle(completedTurnID: "p1"))
+            let image = String(repeating: "A", count: ClaudeTranscriptReader.maximumLine + 16)
+            let message = #""message":{"role":"user","content":[{"type":"image","source":{"type":"base64","data":""# + image
+                + #""}},{"type":"text","text":"What is in this \"picture\"?"}]}"#
+            let ids = #""parentUuid":null,"isSidechain":false,"promptId":"p2","type":"user","origin":{"kind":"human"},"#
+                + #""promptSource":"typed","turnOrigin":"human","uuid":"u2","timestamp":"2026-10-30T10:01:00.000Z","#
+                + #""sessionId":""# + F.first + #"","version":"2.1.314""#
+            try fixture.append(["{" + (idsFirst ? ids + "," + message : message + "," + ids) + "}"], to: url)
+            let started = try subject.read()
+            #expect(started.content.phase == .running && started.content.turn == "p2" && started.content.inputActivityID == "u2")
+            // The request's text was not read, so the earlier request is not shown in its place.
+            #expect(started.content.localPreview == nil && started.content.conclusion == nil)
+            #expect(started.lastActivityAt == ISO8601DateFormatter().date(from: "2026-10-30T10:01:00Z"))
+            try fixture.append([F.assistant(stop: "end_turn", id: "msg_2", content: [["type": "text", "text": "A cat"]]),
+                                F.turnDuration(uuid: "c0ffee00-0000-4000-8000-000000000002", at: "2026-10-30T10:01:09.000Z")], to: url)
+            let finished = try subject.read().content
+            #expect(finished.phase == .idle(completedTurnID: "p2") && finished.conclusion == "A cat")
+        } }
+        // An oversized record that is not a typed prompt of this session starts nothing: a tool result of the same
+        // turn, an injected prompt, another session's record.
+        for members in [#""type":"user","promptId":"p1","turnOrigin":"human""#, #""type":"user","promptId":"p3","promptSource":"system""#,
+                        #""type":"user","promptId":"p3","turnOrigin":"human","sessionId":""# + F.second + #"""#,
+                        #""type":"user","promptId":"p3","turnOrigin":"human","isSidechain":true"#] {
+          try autoreleasepool {
+            let fixture = try ClaudeFixture(); defer { fixture.remove() }
+            var (subject, url) = try reader(fixture, [F.typed("First", uuid: "u1", prompt: "p1")])
+            _ = try subject.read()
+            let blob = String(repeating: "x", count: ClaudeTranscriptReader.maximumLine + 16)
+            try fixture.append(["{" + members + #","message":{"role":"user","content":""# + blob + #""}}"#], to: url)
+            let after = try subject.read().content
+            #expect(after.phase == .unknown && after.turn == "p1" && after.localPreview == "First")
+          }
+        }
+    }
+
     // Refs: US-33, AC-33.03; US-13, AC-13.04.
     @Test func appendResumesAtLineBoundariesAndReplacementIsRejected() throws {
         let fixture = try ClaudeFixture(); defer { fixture.remove() }

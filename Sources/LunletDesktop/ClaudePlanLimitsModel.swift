@@ -47,7 +47,17 @@ import SwiftUI
     /// Remembers an explicit disconnect across launches; only a later explicit connect clears it.
     private let choices: UserDefaults?
     static let declinedKey = "claudeStatusLineDeclined"
-    private var automaticAttempted = false, automaticPending = false, shownSinceAdded = false, released = false
+    private var automaticAttempted = false, automaticPending = false, shownSinceAdded = false
+    /// True once the status line Lunlet added was taken out after Claude Code was turned off; set when that removal
+    /// succeeded, never before, so a removal that failed or had to wait is still owed.
+    private var released = false
+    /// The changes this owner makes to Claude Code's settings. `release` is the removal after Claude Code was
+    /// turned off: a line Lunlet connected goes back to what it replaced, any other state is left alone.
+    private enum Change: Sendable { case connect, disconnect, forget, release }
+    /// A change asked for while another was in flight; it runs when that one has settled.
+    private var queuedChange: Change?
+    /// The change `actionIssue` reports, so Try again repeats it.
+    private var failedChange: Change?
 
     init(service: ClaudeStatusLineConnection = .init(), reader: ClaudePlanLimitsReader? = nil,
          now: @escaping @MainActor () -> Date = Date.init, connectsAutomatically: Bool = false, choices: UserDefaults? = nil) {
@@ -68,8 +78,8 @@ import SwiftUI
         // Claude Code not selected: the status line Lunlet added goes back to what it replaced, so the agent switch is
         // the only control; selecting it again connects anew (AC-33.08). A line changed outside Lunlet is left alone.
         if !value, connectsAutomatically, !released {
-            released = true; automaticAttempted = false; addedAutomatically = false
-            change { service in try service.state() == .connected ? service.disconnect() : service.state() }
+            automaticAttempted = false; addedAutomatically = false
+            change(.release)
         }
         guard value != active else { return }
         active = value
@@ -104,13 +114,23 @@ import SwiftUI
     }
 
     /// An explicit connect also lifts an earlier decline.
-    func connect() { choices?.removeObject(forKey: Self.declinedKey); change { try $0.connect() } }
+    func connect() { choices?.removeObject(forKey: Self.declinedKey); change(.connect) }
     /// An explicit disconnect is remembered, so Lunlet does not connect again on its own.
     func disconnect() {
         choices?.set(true, forKey: Self.declinedKey); addedAutomatically = false
-        change { try $0.disconnect() }
+        change(.disconnect)
     }
-    func forget() { change { try $0.forget() } }
+    func forget() { change(.forget) }
+    /// Repeats the change that failed. A removal owed since Claude Code was turned off is repeated as that removal;
+    /// if Claude Code was selected again meanwhile, the connect is what is wanted now.
+    func retry() {
+        switch failedChange {
+        case .disconnect: disconnect()
+        case .forget: forget()
+        case .release where !active: change(.release)
+        case .connect, .release, nil: connect()
+        }
+    }
 
     /// Watches Lunlet's own directory while the panel is visible, so a new reading appears without polling.
     func setWatching(_ value: Bool) {
@@ -150,6 +170,12 @@ import SwiftUI
         if automaticPending, connection == .connected { addedAutomatically = true }
         automaticPending = false
         if settlingChange { settlingChange = false; isChanging = false }
+        // A change that had to wait runs now. A removal queued when Claude Code was turned off is dropped if it was
+        // selected again meanwhile.
+        if !isChanging, let next = queuedChange {
+            queuedChange = nil
+            if !(next == .release && active) { change(next) }
+        }
         connectAutomaticallyIfNeeded()
         if rerun { rerun = false; read() }
     }
@@ -159,26 +185,45 @@ import SwiftUI
     private func connectAutomaticallyIfNeeded() {
         guard connectsAutomatically, active, !automaticAttempted, connection == .notConnected,
               choices?.bool(forKey: Self.declinedKey) != true else { return }
+        // Nothing else is in flight or waiting, so this attempt is the change that runs next.
+        guard !isChanging, queuedChange == nil else { return }
         automaticAttempted = true; automaticPending = true
-        change { try $0.connect() }
+        change(.connect)
     }
 
-    private func change(_ action: @escaping @Sendable (ClaudeStatusLineConnection) throws -> ClaudeStatusLineState) {
-        guard !closed, !isChanging else { return }
-        isChanging = true; actionIssue = nil; generation += 1
+    private nonisolated static func apply(_ change: Change, to service: ClaudeStatusLineConnection) throws -> ClaudeStatusLineState {
+        switch change {
+        case .connect: try service.connect()
+        case .disconnect: try service.disconnect()
+        case .forget: try service.forget()
+        case .release: try service.state() == .connected ? service.disconnect() : service.state()
+        }
+    }
+
+    /// One change at a time. A change asked for while another is in flight waits for it instead of being dropped;
+    /// the latest request is the one that waits.
+    private func change(_ change: Change) {
+        guard !closed else { return }
+        guard !isChanging else { queuedChange = change; return }
+        isChanging = true; actionIssue = nil; failedChange = nil; generation += 1
         let service = service
         Task { [weak self] in
             let outcome = await Task.detached(priority: .userInitiated) { () -> Result<ClaudeStatusLineState, Error> in
-                Result { try action(service) }
+                Result { try Self.apply(change, to: service) }
             }.value
             guard let self, !self.closed else { return }
             // The change reports the state it left behind, so the connection never lags the file it describes; the
             // change counts as in progress until the read that refreshes limits and account has landed too.
-            if case .success(let state) = outcome { self.connection = Self.connection { state } }
+            if case .success(let state) = outcome {
+                self.connection = Self.connection { state }
+                // The removal owed since Claude Code was turned off is done, unless it was selected again meanwhile.
+                if change == .release, !self.active { self.released = true; self.addedAutomatically = false }
+            }
             if case .failure(let error) = outcome {
                 // An automatic attempt that fails stays quiet; the card keeps its own Add status line button.
                 if self.automaticPending { self.automaticPending = false } else {
                     self.actionIssue = error as? ClaudeStatusLineFailure ?? .writeFailed
+                    self.failedChange = change
                 }
             }
             // Settings acts on Claude Code's configuration whether or not Claude Code is a selected agent.

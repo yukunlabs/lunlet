@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
-// Refs: US-04, AC-04.01, AC-04.03, AC-04.07, AC-04.08, AC-04.09, AC-04.15.
+// Refs: US-04, AC-04.01, AC-04.03, AC-04.07, AC-04.08, AC-04.09, AC-04.15; US-24, AC-24.02.
 import AppKit
 import SwiftUI
 import Foundation
@@ -106,6 +106,12 @@ import Testing
         #expect(AccountUsagePresentation.resetExpiryLabels(nil, now: now).isEmpty)
         let empty = try snapshot(#"{"rateLimitResetCredits":{"availableCount":0}}"#)
         #expect(AccountUsagePresentation.resetExpiryLabels(empty.earnedResets, now: now).isEmpty)
+        // Refs: US-24, AC-24.02. Assistive tools hear the count and the expiry the line shows, with unknown said as
+        // a word, never dropped behind the group's label.
+        #expect(AccountUsagePresentation.resetCreditsSpoken(value.earnedResets, now: now) == "2 available, expiring in 1d 1h, 4d 4h")
+        #expect(AccountUsagePresentation.resetCreditsSpoken(partial.earnedResets, now: now) == "2 available, expiring in 1d 1h, unknown")
+        #expect(AccountUsagePresentation.resetCreditsSpoken(empty.earnedResets, now: now) == "0 available")
+        #expect(AccountUsagePresentation.resetCreditsSpoken(nil, now: now) == "unknown")
     }
 
 

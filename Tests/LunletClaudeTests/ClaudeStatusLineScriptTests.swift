@@ -168,6 +168,20 @@ struct StatusLineSandbox {
         #expect(locked.status == 0 && locked.output == "only mine\n7d 6% · resets 10m\n")
     }
 
+    // Refs: US-33, AC-33.08. Should the replaced command ever lead back to Lunlet's script, the script does not run
+    // the replaced command again from inside it; without that the two would start each other without end.
+    @Test func aChainThatLeadsBackToTheScriptStopsAtOnce() throws {
+        let box = try Sandbox(); defer { box.remove() }
+        let count = ClaudeStatusLineLocation.quoted(box.scratch.appendingPathComponent("count").path)
+        // The replaced command counts its runs and runs Lunlet's script again. The bound of five is the test's own,
+        // so a script without the guard stops there instead of exhausting the process table.
+        try box.setPrevious("n=$(cat \(count) 2>/dev/null || echo 0); n=$((n + 1)); echo $n > \(count); "
+            + "if [ $n -lt 5 ]; then /bin/sh \(ClaudeStatusLineLocation.quoted(box.location.script.path)) > /dev/null; fi; printf 'mine\\n'")
+        let run = try box.run(Sandbox.input(sevenDay: (5, now + 630)))
+        #expect(run.status == 0 && run.output == "mine\n7d 5% · resets 10m\n")
+        #expect(box.text(box.scratch.appendingPathComponent("count")) == "1\n")
+    }
+
     // Refs: US-33, AC-33.09.
     @Test func olderResponsesFromIdleSessionsNeverLowerAWindow() throws {
         let box = try Sandbox(); defer { box.remove() }
@@ -205,6 +219,25 @@ struct StatusLineSandbox {
         _ = try box.run(Sandbox.input(sevenDay: (30, week)))
         let lines = try #require(box.text(box.location.weeklyLog)).split(separator: "\n")
         #expect(lines.count == 2 && lines[0] == "\(earlier) 30 \(week)" && lines[1].hasSuffix(" 30 \(week)"))
+        #expect(box.entries == ["claude-status-line.sh", "limits", "weekly-readings.log"])
+    }
+
+    // Refs: US-33, AC-33.09; US-32, AC-32.06; US-04, AC-04.05. A value that changes with every response adds a line
+    // each time, and within eight days that can pass the megabyte the reader accepts; the reader then refused the
+    // whole log and the forecast lost its history. The log is cut back long before that.
+    @Test func theWeeklyLogStaysWithinWhatTheReaderAccepts() throws {
+        let box = try Sandbox(); defer { box.remove() }
+        let week = now + 3 * 86_400, count = 40_000
+        var log = ""
+        for index in 0..<count { log += "\(now - (count - index) * 10) \(String(format: "%.4f", Double(index) / 500)) \(week)\n" }
+        try Data(log.utf8).write(to: box.location.weeklyLog)
+        #expect(log.utf8.count > 1_048_576)
+        try Data("lunlet-claude-limits 1\nseven_day 79.998 \(week) \(now - 10)\n".utf8).write(to: box.location.limits)
+        _ = try box.run(Sandbox.input(sevenDay: (81, week)))
+        let lines = try #require(box.text(box.location.weeklyLog)).split(separator: "\n")
+        #expect(lines.count <= 4_096 && lines.last?.hasSuffix(" 81 \(week)") == true)
+        let limits = try #require(try ClaudePlanLimitsReader(location: box.location).read(now: Date()))
+        #expect(limits.weekly.count > 100)
         #expect(box.entries == ["claude-status-line.sh", "limits", "weekly-readings.log"])
     }
 

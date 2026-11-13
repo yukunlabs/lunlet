@@ -10,6 +10,18 @@ import LunletCore
 /// uses the shared Codex wording. Claude limits are never combined with Codex allowances.
 enum ClaudeLimitsText {
     static let weekTitle = "This week"
+    /// The Limits card's help (AC-33.09, AC-33.11).
+    static let cardHelp = "Percent left and the reset time as Claude Code reported them through Lunlet's status line: official values, "
+        + "not estimates. The estimate beside them is drawn from those readings and is never a guarantee. Model-specific "
+        + "weekly limits are only in Claude Code's own /usage. Hover for the weekly trend and daily usage on this Mac."
+    /// What adding the status line changes and how it is undone (AC-33.08).
+    static let connectHelp = "Lunlet adds its status line to Claude Code's settings.json while Claude Code is "
+        + "selected, unless you undid it; an existing status line keeps running. A custom status line hides most of "
+        + "Claude Code's footer keyboard hints. Lunlet keeps only percent used and reset times and reads no credentials. "
+        + "Undo, or turning Claude Code off in Settings › Agents, restores the previous setting exactly."
+
+    /// What the weekly figure reads when there is no reading, on screen and for assistive tools alike (AC-24.02).
+    static func missing(connected: Bool) -> String { connected ? "Unknown" : "Not connected" }
 
     /// A window that applies now: nil when unknown or once its reset has passed.
     static func current(_ reading: LimitWindowReading?, now: Date) -> LimitWindowReading? {

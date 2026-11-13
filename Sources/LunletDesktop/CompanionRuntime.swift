@@ -8,7 +8,8 @@
 // Refs: US-20, AC-20.03, AC-20.05, AC-20.06.
 // Refs: US-22, AC-22.01, AC-22.02; US-12, AC-12.04; US-14, AC-14.01.
 // Refs: US-17, AC-17.01, AC-17.02, AC-17.04.
-// Refs: US-18, AC-18.01; US-20, AC-20.01, AC-20.02; US-25, AC-25.02; US-26, AC-26.01.
+// Refs: US-18, AC-18.01; US-20, AC-20.01, AC-20.02; US-25, AC-25.01, AC-25.02; US-26, AC-26.01.
+// Refs: US-38, AC-38.01, AC-38.02, AC-38.07; US-40, AC-40.01.
 // Refs: US-06, AC-06.01, AC-06.05; US-05, AC-05.06.
 // Refs: US-02, AC-02.01, AC-02.02, AC-02.04, AC-02.05; US-11, AC-11.03;
 // Refs: US-01, AC-01.04; US-04, AC-04.03, AC-04.05, AC-04.08, AC-04.09; US-05, AC-05.05.
@@ -24,12 +25,32 @@ import LunletFeishu
 import LunletMessaging
 import SwiftUI
 
+/// Writes what Claude Code's Stop hook needs from the running app (the app record, the bundled helper's path and a
+/// sweep of ended stops) once, the first time Claude Code is selected while the app runs; a Mac where Claude Code
+/// is not selected never has those files written or its stop folders read at launch (US-38, US-25).
+@MainActor final class ClaudeHookPreparation {
+    private let prepare: @MainActor () -> Void
+    private var done = false
+    init(_ prepare: @escaping @MainActor () -> Void) { self.prepare = prepare }
+    func selectionChanged(_ selected: Bool, running: Bool) {
+        guard selected, running, !done else { return }
+        done = true
+        prepare()
+    }
+}
+
 /// One application owner for resources that must finish cleanup before macOS quits.
 @MainActor public final class CompanionRuntime {
     let preferences: PreferencesStore
     let skins: SkinCatalog
-    /// Pet packs on this Mac, for the pet entry and Settings (US-40).
-    let petPacks = PetPackLibrary()
+    /// Pet packs on this Mac, for the pet entry and Settings (US-40). Nothing is read at launch: a chosen pack is
+    /// read alone, and the folders are listed when Settings first shows the picker (US-25).
+    let petPacks = PetPackLibrary(deferred: true)
+    /// Claude Code's Stop hook runs the helper this build bundles; stop folders of ended helpers are swept (US-38).
+    private let claudeHookPreparation = ClaudeHookPreparation {
+        ClaudeHookInstallation.prepare(helper: Bundle.main.executableURL?.deletingLastPathComponent()
+            .appendingPathComponent("lunlet-hook", isDirectory: false))
+    }
     private var preferenceObservations: Set<AnyCancellable> = []
     private var savedEnrollment: FeishuEnrollment?
     private var setupLoading: Task<Void, Never>?
@@ -54,7 +75,9 @@ import SwiftUI
     let away: AwayModeModel
     let panel: CompanionPanelController
     private let entry: NotchEntryController
-    private let pet: PetEntryController
+    let pet: PetEntryController
+    /// The panel's page, so an entry's menu and the application menu can ask for Settings (AC-39.05, AC-39.07).
+    let navigation = PanelNavigation()
     private let cues: TransientCuePanel
     private let cueRouter: CueRouter
     private var menu: MenuBarController?
@@ -103,6 +126,7 @@ import SwiftUI
         self.entry = entry
         let pet = PetEntryController(companion: panel, sessions: sessions, preferences: preferences, skins: skins, packs: petPacks)
         self.pet = pet
+        pet.settingsAction = { [weak navigation] in navigation?.openSettings() }
         cueRouter.pet = pet
         cueRouter.mode = preferences.value.presentation
         cueRouter.soundEnabled = preferences.value.needsYouSound
@@ -135,12 +159,18 @@ import SwiftUI
             history?.setHistoryDays($0); claudeHistory?.setHistoryDays($0)
         }.store(in: &preferenceObservations)
         preferences.$value.map(\.sessionProviders).removeDuplicates().sink { [weak self] providers in
-            self?.observation.setProviders(Set(providers))
-            if providers.contains(.claude), self?.started == true { self?.claudeHistory.refreshIfNeeded() }
-            if self?.started == true {
-                self?.claudeLimits.setActive(providers.contains(.claude))
-                self?.claudeHook.setActive(providers.contains(.claude))
-            }
+            guard let self else { return }
+            self.observation.setProviders(Set(providers))
+            // An agent that is not selected has no account or history read, and what was read does not linger
+            // (AC-19.01, AC-25.01); selecting it reads again.
+            self.usage.setActive(providers.contains(.codex))
+            self.history.setActive(providers.contains(.codex)); self.claudeHistory.setActive(providers.contains(.claude))
+            guard self.started else { return }
+            self.history.refreshIfNeeded(); self.claudeHistory.refreshIfNeeded()
+            // The helper's files are in place before the hook that runs it is connected.
+            self.claudeHookPreparation.selectionChanged(providers.contains(.claude), running: true)
+            self.claudeLimits.setActive(providers.contains(.claude))
+            self.claudeHook.setActive(providers.contains(.claude))
         }.store(in: &preferenceObservations)
         preferences.$value.map(\.presentation).removeDuplicates().sink { [weak self] presentation in
             self?.cueRouter.mode = presentation
@@ -187,10 +217,10 @@ import SwiftUI
         panel.beforeShow = { [weak self, weak cues, weak usage, weak history, weak usageHover, weak claudeUsageHover, weak sessions] in
             // Opening right after a cue shows that cue's agent and conversation (AC-13.09).
             sessions?.applyCueFocus()
+            // Each of these reads only while its agent is selected.
             cues?.hideImmediately(); usage?.refreshIfNeeded(); history?.refreshIfNeeded()
-            if self?.preferences.value.sessionProviders.contains(.claude) == true {
-                self?.claudeHistory.refreshIfNeeded(); self?.claudeLimits.refresh()
-            }
+            self?.claudeHistory.refreshIfNeeded()
+            if self?.preferences.value.sessionProviders.contains(.claude) == true { self?.claudeLimits.refresh() }
             usageHover?.prepareForParentPresentation(); claudeUsageHover?.prepareForParentPresentation()
         }
         allowanceNotifier.openProvider = { [weak self, weak sessions, weak panel] provider in
@@ -198,12 +228,12 @@ import SwiftUI
             sessions?.focus(provider: provider)
             panel?.show()
         }
-        panel.setContent { [weak self] in
+        panel.setContent { [weak self, navigation] in
             AnyView(CompanionPanel(preferences: preferences, skins: skins, setup: setup, botSetup: botSetup,
                                    notifications: notifications, usage: usage, sessions: sessions,
                                    history: history, usageHover: usageHover,
                                    claudeHistory: claudeHistory, claudeUsageHover: claudeUsageHover,
-                                   refresh: { [weak self] in self?.refresh() })
+                                   refresh: { [weak self] in self?.refresh() }, navigation: navigation)
                 .environment(\.claudePlanLimits, self?.claudeLimits).environment(\.claudeHook, self?.claudeHook)
                 .environment(\.allowanceNotifier, self?.allowanceNotifier)
                 .environment(\.appUpdater, self?.updater).environment(\.petPacks, self?.petPacks))
@@ -226,20 +256,24 @@ import SwiftUI
         entry.start()
         pet.start()
         started = true
-        usage.start(); history.refreshIfNeeded(); observation.start()
-        if preferences.value.sessionProviders.contains(.claude) { claudeHistory.refreshIfNeeded() }
+        usage.start(); history.refreshIfNeeded(); claudeHistory.refreshIfNeeded(); observation.start()
+        // The helper's files are in place before the hook that runs it is connected, and only for a selected Claude Code.
+        claudeHookPreparation.selectionChanged(preferences.value.sessionProviders.contains(.claude), running: true)
         claudeLimits.setActive(preferences.value.sessionProviders.contains(.claude))
         claudeHook.setActive(preferences.value.sessionProviders.contains(.claude))
         setupLoading = Task { await setup.load() }
         botSetup.sealSavedConnections()
-        // Claude Code's Stop hook runs the helper this build bundles; stop folders of ended helpers are swept (US-38).
-        ClaudeHookInstallation.prepare(helper: Bundle.main.executableURL?.deletingLastPathComponent()
-            .appendingPathComponent("lunlet-hook", isDirectory: false))
-        notifications.lockObserver = { [weak observation] locked in observation?.setClaudeReplyWindow(locked) }
+        notifications.replyWindowObserver = { [weak observation] open in observation?.setClaudeReplyWindow(open) }
     }
 
     public func showPanel() {
         guard closing == nil else { return }
+        panel.show()
+    }
+    /// Opens the panel on its Settings page, for the application menu (AC-39.07).
+    public func showSettings() {
+        guard closing == nil else { return }
+        navigation.openSettings()
         panel.show()
     }
 
@@ -251,8 +285,7 @@ import SwiftUI
     }
     func refresh() {
         guard closing == nil else { return }
-        usage.refresh(); history.refresh()
-        if preferences.value.sessionProviders.contains(.claude) { claudeHistory.refresh() }
+        usage.refresh(); history.refresh(); claudeHistory.refresh()
         claudeLimits.refresh()
         observation.refresh(); entry.refresh(); notifications.checkAuthorization(); allowanceNotifier.checkAuthorization()
         if availabilityRefresh == nil {

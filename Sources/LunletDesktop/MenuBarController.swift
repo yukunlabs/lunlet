@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
-// Refs: US-21, AC-21.02, AC-21.04, AC-21.05.
+// Refs: US-21, AC-21.02, AC-21.04, AC-21.05; US-25, AC-25.01.
 // Refs: US-02, AC-02.03, AC-02.05; US-03, AC-03.04, AC-03.05, AC-03.06, AC-03.07, AC-03.10.
 // Refs: US-12, AC-12.04, AC-12.05.
 import AppKit
@@ -64,8 +64,9 @@ enum LunletWordmark {
     private var codex: AccountLimitsSnapshot?
     private var claude: ClaudePlanLimits?
     private var claudeConnected = false
-    /// Ticks once a minute only while a countdown is on the entry (AC-21.04), so the text keeps time without polling.
+    /// Ticks once a minute only while a countdown is on a shown entry (AC-21.04), so the text keeps time without polling.
     private var countdownTick: Timer?
+    var countdownActive: Bool { countdownTick != nil }
 
     init(panel: CompanionPanelController, sessions: SessionListModel, usage: AccountUsageModel? = nil,
          claudeLimits: ClaudePlanLimitsModel? = nil, preferences: PreferencesStore? = nil) {
@@ -117,7 +118,8 @@ enum LunletWordmark {
         button.title = parts.isEmpty ? "" : " " + parts.joined(separator: "  ")
         button.toolTip = "Lunlet · " + status.description + (allowance.map { " · Allowance " + $0 + " left" } ?? "")
         button.setAccessibilityValue(status.description + (allowance.map { ", allowance " + $0 + " left" } ?? ""))
-        let needsTick = allowance != nil && preferred.menuBarAllowance == .percentAndReset
+        // Hidden in notch or pet mode, the entry shows no countdown to keep (US-25).
+        let needsTick = item?.isVisible == true && allowance != nil && preferred.menuBarAllowance == .percentAndReset
         if needsTick, countdownTick == nil {
             countdownTick = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
                 MainActor.assumeIsolated { self?.updateTitle() }
@@ -136,6 +138,8 @@ enum LunletWordmark {
     func setVisible(_ visible: Bool) {
         guard let item, item.isVisible != visible else { return }
         item.isVisible = visible
+        // The text is brought up to date as the entry appears, and its tick stops as it hides.
+        updateTitle()
     }
     func shutdown() {
         subscriptions.removeAll()

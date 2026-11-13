@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
 // Refs: US-33, AC-33.08, AC-33.09, AC-33.10; US-32, AC-32.05, AC-32.06, AC-32.07, AC-32.08.
-// Refs: US-19, AC-19.04, AC-19.05; US-04, AC-04.03.
+// Refs: US-19, AC-19.04, AC-19.05; US-04, AC-04.03; US-24, AC-24.02.
 import Foundation
 import Testing
 import LunletClaude
@@ -34,6 +34,23 @@ import LunletCore
 }
 
 @MainActor @Suite struct ClaudeLimitsPresentationTests {
+    // Refs: US-33, AC-33.08, AC-33.11. The card's help describes the card as it is: the plan is on its account line,
+    // the estimate is on the card, and the status line goes with Undo or with turning Claude Code off, there being
+    // no separate switch.
+    // Refs: US-24, AC-24.02; US-33, AC-33.09. Without a reading the figure says why, in the same words on screen and
+    // for assistive tools.
+    @Test func aMissingWeeklyFigureReadsTheSameOnScreenAndAloud() {
+        #expect(ClaudeLimitsText.missing(connected: false) == "Not connected")
+        #expect(ClaudeLimitsText.missing(connected: true) == "Unknown")
+    }
+
+    @Test func theCardsHelpDescribesTheCardAsItIs() {
+        #expect(!ClaudeLimitsText.cardHelp.contains("plan tier") && !ClaudeLimitsText.cardHelp.contains("Hover This week"))
+        #expect(ClaudeLimitsText.cardHelp.contains("official values") && ClaudeLimitsText.cardHelp.contains("/usage"))
+        #expect(!ClaudeLimitsText.connectHelp.contains("Disconnect in Settings"))
+        #expect(ClaudeLimitsText.connectHelp.contains("turning Claude Code off in Settings › Agents"))
+    }
+
     let now = Date(timeIntervalSince1970: 1_793_390_400)  // Fri 2026-10-30 20:00 UTC
     var calendar: Calendar { var value = Calendar(identifier: .gregorian); value.timeZone = .current; return value }
     private func reading(_ used: Double, resetIn: TimeInterval, age: TimeInterval = 0) -> LimitWindowReading {

@@ -63,6 +63,9 @@ private struct PetPackChoice: View {
         if let problem = packs.chosenProblem {
             Text(problem).font(.caption).foregroundStyle(.secondary)
         }
+        if let note = packs.truncationNote {
+            Text(note).font(.caption).foregroundStyle(.secondary)
+        }
         ForEach(packs.invalidEntries, id: \.reference.key) { entry in
             Text("\(entry.reference.folder) (\(entry.reference.source.title)): \(entry.failure?.description ?? "invalid")")
                 .font(.caption).foregroundStyle(.secondary)
@@ -241,18 +244,15 @@ struct PreferencesPane: View {
                         }
                     }))
                     .disabled(preferences.value.providers == [agent])
+                    // The switch itself says what selecting the agent changes outside Lunlet (AC-33.08, AC-38.06).
+                    .help(agent.switchHelp ?? "")
                 }
             } header: {
                 Text("Show agents")
             } footer: {
                 Text("Several agents share an Overview tab · Claude Code: local sessions and usage")
                     .font(Font.caption).foregroundStyle(.secondary)
-                    .help("Claude Code is observed from its own local session records and transcripts, without sockets. "
-                        + "While it is selected, Lunlet adds two things to Claude Code's user settings and removes both when it is "
-                        + "turned off: a status line for plan limits (a custom status line hides most footer keyboard hints; any "
-                        + "existing one keeps running and is restored exactly) and a Stop hook for phone replies, which keeps a "
-                        + "finished turn open for one reply only while this Mac is locked. Only the account email and plan are kept "
-                        + "from Claude Code's profile; credentials and environment values are never read.")
+                    .help(AgentProvider.claude.switchHelp ?? "")
             }
             ClaudePlanLimitsSettings(model: claudeLimits ?? .placeholder)
             ClaudeHookSettings(model: claudeHook ?? .placeholder)

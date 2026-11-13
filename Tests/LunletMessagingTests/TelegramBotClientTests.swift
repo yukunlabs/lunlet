@@ -314,7 +314,8 @@ private final class TelegramPairingOutcome: @unchecked Sendable {
     }
 
     // Only the paired owner's fresh reply to one of the bot's own messages is handed over; every other update is
-    // consumed, the offset advances past all of them, and the poll asks for messages only.
+    // consumed and the offset advances past all of them. No poll names update types: that setting is stored on
+    // Telegram's side for the bot, and Lunlet leaves the bot's subscription as it found it (AC-20.04).
     @Test func receivesOnlyTheOwnersRepliesToTheBotsMessages() async throws {
         let parent: [String: Any] = ["message_id": 21, "date": 1_000, "from": ["id": 9001, "is_bot": true, "first_name": "Synthetic"],
                                      "chat": ["id": 42, "type": "private", "first_name": "Synthetic Owner"], "text": "notice"]
@@ -336,11 +337,17 @@ private final class TelegramPairingOutcome: @unchecked Sendable {
         try await waitForRequests(4)
         task.cancel()
         _ = await task.result
-        #expect(received.values == [.reply(BotReply(messageID: "31", repliedTo: "21", text: "Run the tests", sentAt: Date(timeIntervalSince1970: 1_001))),
+        // The first answered poll is the accepted connection, reported once and before any reply.
+        #expect(received.values == [.listening,
+                                    .reply(BotReply(messageID: "31", repliedTo: "21", text: "Run the tests", sentAt: Date(timeIntervalSince1970: 1_001))),
                                     .replyRequested(messageID: "21", callbackID: "cb1")])
         let polls = TelegramHTTPProtocol.state.requests().filter { $0.method == "getUpdates" }
         let second = try JSONSerialization.jsonObject(with: try #require(polls.last).body) as? [String: Any]
-        #expect(polls.count == 2 && second?["offset"] as? Int == 39 && second?["allowed_updates"] as? [String] == ["message", "callback_query"])
+        #expect(polls.count == 2 && second?["offset"] as? Int == 39)
+        for poll in polls {
+            let body = try JSONSerialization.jsonObject(with: poll.body) as? [String: Any]
+            #expect(body != nil && body?["allowed_updates"] == nil)
+        }
         try await expectStoppedPolling()
     }
 

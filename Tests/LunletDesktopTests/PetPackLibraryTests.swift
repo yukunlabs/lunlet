@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
-// Refs: US-40, AC-40.01, AC-40.02, AC-40.03, AC-40.05, AC-40.06, AC-40.07; US-26, AC-26.01, AC-26.02.
+// Refs: US-40, AC-40.01, AC-40.02, AC-40.03, AC-40.05, AC-40.06, AC-40.07; US-26, AC-26.01, AC-26.02; US-25, AC-25.01.
 import AppKit
 import Foundation
 import ImageIO
@@ -57,6 +57,51 @@ import LunletCore
         #expect(library.entry(for: PetPackReference(source: .lunlet, folder: "later")) == nil)
         library.refresh()
         #expect(library.entry(for: PetPackReference(source: .lunlet, folder: "later"))?.pack != nil)
+    }
+
+    // Refs: US-25, AC-25.01; US-40, AC-40.01, AC-40.07. The app's own library reads nothing when it is created. A
+    // chosen pack is read alone for the pet; the folders are listed when the picker first needs them, away from the
+    // caller's turn on the main actor.
+    @Test func aDeferredLibraryReadsNothingUntilAskedAndListsAwayFromTheCaller() async throws {
+        let (lunlet, codex) = try roots(); defer { try? FileManager.default.removeItem(at: lunlet.deletingLastPathComponent()) }
+        try Self.pack(in: lunlet, folder: "mochi", version: nil)
+        try Self.pack(in: codex, folder: "blob", version: 2, height: 2288)
+        let library = PetPackLibrary(lunletDirectory: lunlet, codexDirectory: codex, deferred: true)
+        #expect(library.entries.isEmpty && !library.hasScanned)
+        let chosen = PetPackReference(source: .codex, folder: "blob")
+        #expect(library.entry(for: chosen)?.pack?.version == .v2)
+        #expect(library.entry(for: PetPackReference(source: .codex, folder: "missing")) == nil)
+        #expect(library.entries.isEmpty && !library.hasScanned)
+        // The picker's first read starts the listing and shows what is already known, so the chosen pack is never
+        // called unavailable while the rest is read.
+        #expect(library.validEntries.map(\.reference.key) == ["codex/blob"])
+        #expect(library.entries.isEmpty)
+        await library.settle()
+        #expect(library.hasScanned && library.entries.map(\.reference.key) == ["lunlet/mochi", "codex/blob"])
+        #expect(library.validEntries.map(\.reference.key) == ["lunlet/mochi", "codex/blob"])
+        // Refresh lists again without holding the caller.
+        try Self.pack(in: lunlet, folder: "later", version: nil)
+        library.refresh()
+        #expect(library.entries.count == 2)
+        await library.settle()
+        #expect(library.entries.map(\.reference.key) == ["lunlet/later", "lunlet/mochi", "codex/blob"])
+    }
+
+    // Refs: US-25, AC-25.01; US-40, AC-40.01, AC-40.07. A very large pets folder is read up to a cap per folder; a
+    // chosen pack beyond the cap still resolves and is then listed by name.
+    @Test func aLargeFolderIsReadUpToACapAndAChosenPackBeyondItStillResolves() throws {
+        let (lunlet, codex) = try roots(); defer { try? FileManager.default.removeItem(at: lunlet.deletingLastPathComponent()) }
+        try Self.pack(in: lunlet, folder: "mochi", version: nil)
+        for name in ["a", "b", "c"] { try Self.pack(in: codex, folder: name, version: nil) }
+        let library = PetPackLibrary(lunletDirectory: lunlet, codexDirectory: codex, limit: 2)
+        #expect(library.entries.map(\.reference.key) == ["lunlet/mochi", "codex/a", "codex/b"] && library.truncated)
+        #expect(library.entry(for: PetPackReference(source: .codex, folder: "c"))?.pack != nil)
+        #expect(library.entry(for: PetPackReference(source: .codex, folder: "missing")) == nil)
+        #expect(library.validEntries.map(\.reference.key) == ["lunlet/mochi", "codex/a", "codex/b", "codex/c"])
+        // The picker says so, since a listing that stops early must not read as the whole folder.
+        #expect(library.truncationNote == "Showing the first 2 packs of each folder.")
+        let roomy = PetPackLibrary(lunletDirectory: lunlet, codexDirectory: codex)
+        #expect(roomy.entries.count == 4 && !roomy.truncated && roomy.truncationNote == nil)
     }
 
     @Test func sheetCellsMasksAndOpaqueBoundsFollowThePixels() async throws {

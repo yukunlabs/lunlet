@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
-// Refs: US-39, AC-39.01, AC-39.02, AC-39.05, AC-39.06; US-21, AC-21.03; US-26, AC-26.01.
+// Refs: US-39, AC-39.01, AC-39.02, AC-39.03, AC-39.04, AC-39.05, AC-39.06, AC-39.07, AC-39.08; US-21, AC-21.03; US-26, AC-26.01; US-25, AC-25.01.
 import AppKit
 import Foundation
 import SwiftUI
@@ -13,12 +13,12 @@ import LunletCore
         let defaults = try #require(UserDefaults(suiteName: "lunlet-pet-" + UUID().uuidString))
         return PreferencesStore(defaults: defaults)
     }
-    private func controller(_ preferences: PreferencesStore, screen: NSScreen?, available: Bool = true)
-        -> (PetEntryController, SessionListModel) {
+    private func controller(_ preferences: PreferencesStore, screen: NSScreen?, available: Bool = true,
+                            uptime: @escaping @MainActor () -> TimeInterval = { 0 }) -> (PetEntryController, SessionListModel) {
         let companion = CompanionPanelController(motionAllowed: { false }, observesSystemEvents: false)
         let sessions = SessionListModel(displayAvailable: { true }, elapsed: { 0 }, presenter: NoCues())
         let entry = PetEntryController(companion: companion, sessions: sessions, preferences: preferences,
-                                       display: { screen }, available: { available }, motionAllowed: { false })
+                                       display: { screen }, available: { available }, motionAllowed: { false }, uptime: uptime)
         return (entry, sessions)
     }
     private final class NoCues: TaskCuePresenting {
@@ -40,6 +40,47 @@ import LunletCore
         preferences.update { $0.presentation = .notch }
         #expect(entry.window?.isVisible == false)
         entry.shutdown()
+    }
+
+    // Refs: US-39, AC-39.05. The right-click menu's Settings asks for the Settings page, then opens the panel.
+    @Test func theContextMenuOffersOpenRefreshSettingsAndQuitAndSettingsAsksForItsPage() throws {
+        let preferences = try store(), screen = try #require(NSScreen.main)
+        let (entry, _) = controller(preferences, screen: screen)
+        var asked = 0
+        entry.settingsAction = { asked += 1 }
+        let menu = entry.menu()
+        #expect(menu.items.filter { !$0.isSeparatorItem }.map(\.title) == ["Open Lunlet", "Refresh", "Settings…", "Quit"])
+        let settings = try #require(menu.item(withTitle: "Settings…"))
+        #expect(settings.target === entry)
+        _ = NSApplication.shared.sendAction(try #require(settings.action), to: settings.target, from: settings)
+        #expect(asked == 1)
+        entry.shutdown()
+    }
+
+    // Refs: US-39, AC-39.03, AC-39.04, AC-39.07. The pose, the tooltip and the accessibility label follow the session
+    // list as it changes, not one change behind it.
+    @Test func theShownStateFollowsTheSessionListAtOnce() throws {
+        let preferences = try store(), screen = try #require(NSScreen.main)
+        let (entry, sessions) = controller(preferences, screen: screen)
+        defer { entry.shutdown() }
+        #expect(entry.shownState.pose == .asleep && entry.shownState.summary == "Monitoring unavailable")
+        // Connected first, so availability stays the same below and only the list changes.
+        sessions.monitoringConnected(partial: false)
+        #expect(entry.shownState.summary == nil)
+        let id = UUID(), connection = UUID()
+        func snapshot(_ phase: SessionPhase, liveness: CLILiveness = .unverified) -> SessionSnapshot {
+            .init(observation: .init(sessionID: id, connectionID: connection, liveness: liveness, phase: phase),
+                  project: "Synthetic", title: "Session", turnID: "one", activityConfirmed: true)
+        }
+        sessions.receive(snapshot(.approval), origin: .snapshot)
+        #expect(entry.shownState.pose == .waiting && entry.shownState.sessionID == id && entry.shownState.waitingCount == 1)
+        sessions.receive(snapshot(.running), origin: .snapshot)
+        #expect(entry.shownState.pose == .working && entry.shownState.runningCount == 1)
+        // The session's process ended: nothing is current, so the dog sleeps at once.
+        sessions.receive(snapshot(.ended, liveness: .ended), origin: .snapshot)
+        #expect(entry.shownState.pose == .asleep && entry.shownState.sessionCount == 0)
+        sessions.monitoringUnavailable()
+        #expect(entry.shownState.summary == "Monitoring unavailable")
     }
 
     @Test func savedPositionIsRestoredPerDisplayAndClamped() throws {
@@ -88,6 +129,39 @@ import LunletCore
         #expect(reads.count == afterRefresh)
     }
 
+    // Refs: US-39, AC-39.06, AC-39.08; US-25, AC-25.01. On another Space, behind a full-screen app or fully covered,
+    // the pet is not shown, so nothing frames it and no pointer move is followed until it shows again.
+    @Test func framingAndPointerTrackingStopWhileThePetIsNotOnScreen() throws {
+        let preferences = try store(), screen = try #require(NSScreen.main)
+        preferences.update { $0.presentation = .pet }
+        var showing = true
+        let companion = CompanionPanelController(motionAllowed: { false }, observesSystemEvents: false)
+        let sessions = SessionListModel(displayAvailable: { true }, elapsed: { 0 }, presenter: NoCues())
+        let entry = PetEntryController(companion: companion, sessions: sessions, preferences: preferences,
+                                       display: { screen }, available: { true }, motionAllowed: { true }, onScreen: { _ in showing })
+        defer { entry.shutdown() }
+        entry.refresh()
+        let window = try #require(entry.window)
+        #expect(entry.isFraming && entry.tracksPointer)
+        showing = false
+        NotificationCenter.default.post(name: NSWindow.didChangeOcclusionStateNotification, object: window)
+        #expect(!entry.isFraming && !entry.tracksPointer)
+        // A session change while the pet is not shown updates its state without starting frames again.
+        sessions.receive(.init(observation: .init(sessionID: UUID(), connectionID: UUID(), liveness: .unverified, phase: .running),
+                               project: "Synthetic", title: "Session", turnID: "one", activityConfirmed: true), origin: .snapshot)
+        #expect(entry.shownState.pose == .working && !entry.isFraming && !entry.tracksPointer)
+        // Another window's occlusion change is not the pet's.
+        showing = true
+        NotificationCenter.default.post(name: NSWindow.didChangeOcclusionStateNotification, object: NSWindow())
+        #expect(!entry.isFraming && !entry.tracksPointer)
+        NotificationCenter.default.post(name: NSWindow.didChangeOcclusionStateNotification, object: window)
+        #expect(entry.isFraming && entry.tracksPointer)
+        // Left not showing, so no frame clock outlives the test.
+        showing = false
+        NotificationCenter.default.post(name: NSWindow.didChangeOcclusionStateNotification, object: window)
+        #expect(!entry.isFraming)
+    }
+
     @Test func aDragSavesThePositionOnceWhenItEnds() throws {
         let preferences = try store(), screen = try #require(NSScreen.main)
         preferences.update { $0.presentation = .pet }
@@ -105,10 +179,101 @@ import LunletCore
         #expect(saves.count == 0)
         entry.dragEnded()
         #expect(saves.count == 1)
+        // The place is the origin's offset from the display's visible corner, so it stays valid if the display moves.
         let saved = preferences.value.petPositions[PetEntryController.key(for: screen)]
-        #expect(saved?.x == origin.x - 24 && saved?.y == origin.y)
+        #expect(saved == .init(x: origin.x - 24 - screen.visibleFrame.minX, y: origin.y - screen.visibleFrame.minY, relative: true))
+        #expect(entry.frame(on: screen).origin == CGPoint(x: origin.x - 24, y: origin.y))
         // The display it was left on is remembered, so a relaunch brings it back there (AC-39.02).
         #expect(preferences.value.petDisplay == PetEntryController.key(for: screen))
+    }
+
+    // Refs: US-39, AC-39.02. A place is kept relative to its display, so it survives the display's origin changing
+    // when another display is unplugged or rearranged; a place an earlier build saved is still read as it was meant.
+    @Test func aPlaceKeepsItsSpotOnItsDisplayWhenTheDisplayArrangementChanges() throws {
+        // The built-in display sits left of an external main display; later it is the only display and starts at zero.
+        let docked = CGRect(x: -1512, y: 0, width: 1512, height: 944), alone = CGRect(x: 0, y: 0, width: 1512, height: 944)
+        let origin = CGPoint(x: -300, y: 120)
+        let place = PetEntryController.place(origin: origin, visible: docked)
+        #expect(place == .init(x: 1212, y: 120, relative: true))
+        #expect(PetEntryController.frame(saved: place, visible: docked).origin == origin)
+        #expect(PetEntryController.frame(saved: place, visible: alone).origin == CGPoint(x: 1212, y: 120))
+        // A Dock that appears at the bottom raises the visible area; the pet keeps its distance from that corner.
+        let raised = CGRect(x: 0, y: 80, width: 1512, height: 864)
+        #expect(PetEntryController.frame(saved: place, visible: raised).origin == CGPoint(x: 1212, y: 200))
+        // A smaller display clamps the place inside its visible area.
+        let small = CGRect(x: 0, y: 0, width: 1000, height: 600)
+        #expect(small.contains(PetEntryController.frame(saved: place, visible: small)))
+        // An earlier build's place has no marker and is a global origin.
+        let earlier = LunletPreferences.PetPosition(x: 900, y: 200)
+        #expect(earlier.relative == nil && PetEntryController.frame(saved: earlier, visible: alone).origin == CGPoint(x: 900, y: 200))
+        // Both forms survive saving: the earlier one stays without a marker.
+        var value = LunletPreferences(); value.petPositions = ["1": place, "2": earlier]
+        let data = try JSONEncoder().encode(value)
+        #expect(try JSONDecoder().decode(LunletPreferences.self, from: data).petPositions == ["1": place, "2": earlier])
+        let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let stored = try #require(object["petPositions"] as? [String: [String: Any]])
+        #expect(stored["1"]?["relative"] as? Bool == true && stored["2"]?["relative"] == nil)
+    }
+
+    // Refs: US-39, AC-39.02; US-26, AC-26.01. At launch an earlier build's place is rewritten for its connected
+    // display without moving the pet; a disconnected display's place waits untouched.
+    @Test func anEarlierBuildsPlaceIsAdoptedForItsConnectedDisplayWithoutMovingThePet() throws {
+        let preferences = try store(), screen = try #require(NSScreen.main)
+        let key = PetEntryController.key(for: screen), visible = screen.visibleFrame
+        let global = CGPoint(x: visible.minX + 40, y: visible.minY + 60)
+        preferences.update {
+            $0.petPositions[key] = .init(x: global.x, y: global.y); $0.petPositions["99999"] = .init(x: 5, y: 6); $0.petDisplay = key
+        }
+        let (entry, _) = controller(preferences, screen: screen)
+        defer { entry.shutdown() }
+        #expect(entry.frame(on: screen).origin == global)
+        entry.start()
+        #expect(preferences.value.petPositions[key] == .init(x: 40, y: 60, relative: true))
+        #expect(entry.frame(on: screen).origin == global)
+        #expect(preferences.value.petPositions["99999"] == .init(x: 5, y: 6) && preferences.value.petDisplay == key)
+        // Adopted once: starting again writes nothing.
+        let saves = Counter()
+        let observation = preferences.$value.dropFirst().sink { _ in saves.count += 1 }
+        defer { observation.cancel() }
+        let (again, _) = controller(preferences, screen: screen)
+        defer { again.shutdown() }
+        again.start()
+        #expect(saves.count == 0)
+    }
+
+    // Refs: US-39, AC-39.02. Only the owner's drag sets the pet's place: a move the system makes when a display
+    // changes is not saved as the place, and the pet returns to where it was left.
+    @Test func aMoveThatIsNoDragIsNotSavedAndThePetReturnsToItsPlace() throws {
+        let preferences = try store(), screen = try #require(NSScreen.main)
+        preferences.update { $0.presentation = .pet }
+        var now: TimeInterval = 100
+        let (entry, _) = controller(preferences, screen: screen, uptime: { now })
+        defer { entry.shutdown() }
+        entry.refresh()
+        let window = try #require(entry.window)
+        let saves = Counter()
+        let observation = preferences.$value.dropFirst().sink { _ in saves.count += 1 }
+        defer { observation.cancel() }
+        let home = window.frame.origin
+        // As the system does when the display the window was on goes away.
+        window.setFrameOrigin(CGPoint(x: home.x - 60, y: home.y + 30))
+        #expect(saves.count == 0 && preferences.value.petPositions.isEmpty && preferences.value.petDisplay == nil)
+        #expect(window.frame.origin == home)
+        // The owner's drag does set it, and the window server's last move of that drag may arrive just after it ends.
+        entry.dragStarted()
+        window.setFrameOrigin(CGPoint(x: home.x - 40, y: home.y))
+        entry.dragEnded()
+        #expect(saves.count == 1)
+        now += 0.1
+        window.setFrameOrigin(CGPoint(x: home.x - 48, y: home.y))
+        #expect(saves.count == 2 && entry.frame(on: screen).origin == CGPoint(x: home.x - 48, y: home.y))
+        // Long after the drag a move is again not the owner's.
+        now += 5
+        window.setFrameOrigin(CGPoint(x: home.x - 120, y: home.y + 50))
+        #expect(saves.count == 2 && window.frame.origin == CGPoint(x: home.x - 48, y: home.y))
+        // If the system insists on the same spot again, the pet stays there rather than fight, still unsaved.
+        window.setFrameOrigin(CGPoint(x: home.x - 120, y: home.y + 50))
+        #expect(saves.count == 2 && window.frame.origin == CGPoint(x: home.x - 120, y: home.y + 50))
     }
 
     @Test func thePetReturnsToTheDisplayItWasLastPlacedOn() {
