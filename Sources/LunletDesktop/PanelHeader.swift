@@ -204,14 +204,9 @@ struct PanelHeaderHost: View {
     private func label(_ provider: SessionProvider, now: Date) -> HeaderAgentLabel {
         switch provider {
         case .codex:
-            let snapshot = account.displayedSnapshot
-            let weekly = snapshot.flatMap(AccountUsagePresentation.weekly)
-            let remaining = weekly?.remainingPercent
-            return HeaderAgentLabel(provider: .codex, remaining: remaining,
-                                    plan: snapshot?.identity?.plan?.replacingOccurrences(of: "_", with: " ").capitalized,
-                                    resetsAt: weekly?.resetsAt,
-                                    unknown: remaining == nil ? HeaderPresentation.codexUnknown(state: account.state, hasWeekly: false) ?? .unknown : nil,
-                                    today: OverviewUsage.today(codexHistory.snapshot, now: now), waiting: waiting[.codex] ?? 0)
+            return HeaderPresentation.codexLabel(snapshot: account.displayedSnapshot, state: account.state,
+                                                 today: OverviewUsage.today(codexHistory.snapshot, now: now),
+                                                 waiting: waiting[.codex] ?? 0)
         case .claude:
             let reading = limits.connection == .connected ? limits.limits?.sevenDay : nil
             let remaining = ClaudeLimitsText.remaining(reading, now: now)

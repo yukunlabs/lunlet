@@ -1,17 +1,21 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
 // Refs: US-32, AC-32.02, AC-32.03, AC-32.05, AC-32.06, AC-32.07, AC-32.08, AC-32.09.
-// Refs: US-04, AC-04.02, AC-04.08; US-33, AC-33.04, AC-33.09, AC-33.10.
+// Refs: US-04, AC-04.02, AC-04.08, AC-04.19; US-33, AC-33.04, AC-33.09, AC-33.10.
 import Foundation
 import LunletCore
 
 /// The floating chart's words: its title, the comparison with the even pace, the one sentence that states the
 /// forecast, and the daily chart's footnote. The estimator's values are only worded here, never changed.
 enum TrendChartText {
-    /// The window and the agent, so a chart read on its own says whose limit it shows.
-    static func title(_ provider: SessionProvider) -> String { "Week limit · " + provider.displayName }
+    /// The window and the agent, so a chart read on its own says whose limit it shows and how long its window is:
+    /// a week, or the month of an account without a weekly limit.
+    static func title(_ provider: SessionProvider, span: AllowanceSpan = .week) -> String {
+        span.name + " limit · " + provider.displayName
+    }
 
-    /// The reset moment in the limit rows' wording: a time today, otherwise the weekday and time.
+    /// The reset moment in the limit rows' wording: a time today, otherwise the weekday and time, or the month and
+    /// day once it is more than six days away.
     static func resets(_ reset: Date, now: Date, calendar: Calendar = .current) -> String {
         "resets " + ClaudeLimitsText.moment(reset, now: now, calendar: calendar)
     }
@@ -36,8 +40,8 @@ enum TrendChartText {
         }
         let body: String
         if let runOut = estimate.runOut {
-            body = "may run out about " + QuotaForecastText.day(runOut)
-                + (estimate.earliestRunOut.map { " (earliest " + QuotaForecastText.day($0) + ")" } ?? "")
+            body = "may run out about " + QuotaForecastText.day(runOut, now: now, calendar: calendar)
+                + (estimate.earliestRunOut.map { " (earliest " + QuotaForecastText.day($0, now: now, calendar: calendar) + ")" } ?? "")
         } else {
             let low = Int(estimate.remainingAtReset.lowerBound.rounded()), high = Int(estimate.remainingAtReset.upperBound.rounded())
             body = "about \(Int(estimate.central.rounded()))% left at reset" + (low == high ? "" : " (\(low)–\(high)%)")

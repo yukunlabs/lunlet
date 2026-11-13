@@ -54,6 +54,42 @@ import LunletCore
         #expect(result.quotaHistory.first?.resetAt == date("2026-10-30T12:00:00Z"))
     }
 
+    // Refs: US-32, AC-32.02; US-04, AC-04.19. A plan without a weekly window records a longer one; its readings are
+    // kept for that window's own lookback and say how long their window is.
+    @Test func quotaHistoryKeepsALongerWindowForItsOwnLookback() async throws {
+        let directory = try root()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        func quota(_ at: String, used: Double, minutes: Int, reset: String, slot: String = "primary") throws -> String {
+            let window: [String: Any] = ["used_percent": used, "window_minutes": minutes, "resets_at": date(reset).timeIntervalSince1970]
+            let rate: [String: Any] = ["limit_id": "codex", "plan_type": "free", slot: window]
+            return try record("event_msg", ["type": "token_count", "info": NSNull(), "rate_limits": rate], at: at)
+        }
+        let lines = try header() + [
+            // Thirty-five days back: outside a 30-day window's lookback of 31 days.
+            quota("2026-09-21T12:00:00Z", used: 5, minutes: 43200, reset: "2026-10-20T12:00:00Z"),
+            // Twenty days back: far outside a week's lookback, inside a month's.
+            quota("2026-10-06T12:00:00Z", used: 12, minutes: 43200, reset: "2026-11-04T12:00:00Z"),
+            quota("2026-10-25T12:00:00Z", used: 30, minutes: 43200, reset: "2026-11-04T12:00:00Z"),
+            // A weekly record twenty days back is outside its own lookback, as before.
+            quota("2026-10-06T13:00:00Z", used: 50, minutes: 10080, reset: "2026-10-10T12:00:00Z", slot: "secondary"),
+            // The five-hour window is never the limit.
+            quota("2026-10-26T10:00:00Z", used: 70, minutes: 300, reset: "2026-10-26T15:00:00Z")
+        ]
+        try write(lines, to: directory)
+        let result = try await CodexLocalUsageReader(home: directory).readHistory(now: date("2026-10-26T20:00:00Z"), calendar: calendar)
+        #expect(result.quotaHistory.map(\.at) == ["2026-10-06T12:00:00Z", "2026-10-25T12:00:00Z"].map(date))
+        #expect(result.quotaHistory.map(\.remaining) == [88, 70] && result.quotaHistory.allSatisfy { $0.windowMinutes == 43_200 })
+        // A record with a weekly window beside a longer one keeps the weekly one, as the account's limit is chosen.
+        let both: [String: Any] = ["limit_id": "codex", "plan_type": "pro",
+                                   "primary": ["used_percent": 9.0, "window_minutes": 43200, "resets_at": date("2026-11-20T12:00:00Z").timeIntervalSince1970],
+                                   "secondary": ["used_percent": 23.0, "window_minutes": 10080, "resets_at": date("2026-10-30T12:00:00Z").timeIntervalSince1970]]
+        let other = try root()
+        defer { try? FileManager.default.removeItem(at: other) }
+        try write(try header() + [try record("event_msg", ["type": "token_count", "info": NSNull(), "rate_limits": both], at: "2026-10-26T12:00:00Z")], to: other)
+        let weekly = try await CodexLocalUsageReader(home: other).readHistory(now: date("2026-10-26T20:00:00Z"), calendar: calendar)
+        #expect(weekly.quotaHistory.map(\.remaining) == [77] && weekly.quotaHistory.first?.windowMinutes == 10_080)
+    }
+
     // Refs: US-25, AC-25.01; US-04, AC-04.02. Long sessions leave rollouts of tens of megabytes with multi-megabyte lines.
     @Test func aLargeRolloutIsScannedWithoutHoldingItInMemory() async throws {
         let directory = try root()

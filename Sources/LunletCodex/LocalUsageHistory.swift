@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
 // Refs: US-32, AC-32.01, AC-32.02, AC-32.03, AC-32.04, AC-32.07.
-// Refs: US-04, AC-04.11; US-25, AC-25.01.
+// Refs: US-04, AC-04.11, AC-04.19; US-25, AC-25.01.
 // Refs: US-18, AC-18.01, AC-18.02, AC-18.03.
 // Refs: US-04, AC-04.02, AC-04.03, AC-04.05, AC-04.08; US-12, AC-12.04.
 import Foundation
@@ -146,7 +146,8 @@ public actor CodexLocalUsageReader: LocalUsageReading {
         let today = calendar.startOfDay(for: now)
         let dates = ((1 - dayCount)...0).compactMap { calendar.date(byAdding: .day, value: $0, to: today) }
         let shownFrom = dates.first ?? today
-        // Quota readings older than the forecast's lookback are never used, so they are not kept (US-32).
+        // Quota readings older than the forecast's lookback are never used, so they are not kept (US-32). This is a
+        // weekly window's lookback; a reading of a longer window is kept for that window's own (`quotaLookback`).
         let quotaCutoff = now.addingTimeInterval(-WeeklyQuotaEstimator.inputHorizon())
         // The files are newest first, so a rollout left unread, and every one after it, limits coverage of the shown
         // days only when it was written within them.
@@ -361,11 +362,12 @@ public actor CodexLocalUsageReader: LocalUsageReading {
                 estimatedUSD: recorded.estimatedUSD, partial: sessionPartial,
                 pricedTokens: recorded.pricedTokens, unpricedTokens: recorded.unpricedTokens)
         }
-        // Quota readings use the forecast's own lookback, independent of the displayed day range: seven
-        // days of pace plus one day used only for the changed-week comparison (US-32).
-        let quotaStart = now.addingTimeInterval(-WeeklyQuotaEstimator.inputHorizon())
+        // Quota readings use the forecast's own lookback, independent of the displayed day range: one window
+        // of pace, seven days or as long as the reading's own window, plus one day used only for the changed-week
+        // comparison (US-32).
         let quotaHistory = Self.collapsed(Set(files.filter { $0.session != nil }.flatMap(\.quotaSamples))
-            .filter { $0.at >= quotaStart && $0.at <= now }, calendar: calendar)
+            .filter { $0.at >= now.addingTimeInterval(-Self.quotaLookback(minutes: $0.windowMinutes)) && $0.at <= now },
+                                          calendar: calendar)
         let days = dates.map { day in
             let limited = partial || limitedDays.contains(day)
             return LocalUsageDay(date: day, amount: dayAmounts[day]?.amount(globalPartial: limited)
@@ -376,12 +378,34 @@ public actor CodexLocalUsageReader: LocalUsageReading {
                                  quotaHistory: quotaHistory)
     }
 
-    /// Keeps the first and last reading of each run of identical readings per bucket, plan and local day.
-    /// Interior copies add no pace evidence, and each day keeps its last reading for the chart.
+    /// The longest limit window whose readings are kept: 45 days, which bounds what a rollout may ask to be held.
+    static let longestQuotaWindowMinutes = 64_800
+    /// How far back a reading of a window `minutes` long is still forecast input: that window and the guard's day.
+    static func quotaLookback(minutes: Int) -> TimeInterval {
+        WeeklyQuotaEstimator.inputHorizon(window: Double(minutes) * 60)
+    }
+    /// The window a recorded `rate_limits` object shows as the account's own limit, chosen as for an account read:
+    /// the weekly window when the record has one, otherwise its longest window of a day or more; a record with two
+    /// windows of that length is ambiguous and gives none. The five-hour window is never the limit.
+    static func limitWindow(in raw: [String: Any]) -> (window: [String: Any], minutes: Int)? {
+        let windows = [raw["primary"], raw["secondary"]].compactMap { $0 as? [String: Any] }.compactMap { value -> ([String: Any], Int)? in
+            guard let n = value["window_minutes"] as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID(),
+                  n.doubleValue.isFinite, n.doubleValue == n.doubleValue.rounded(),
+                  (1_440...Double(longestQuotaWindowMinutes)).contains(n.doubleValue) else { return nil }
+            return (value, Int(n.doubleValue))
+        }
+        let weekly = windows.filter { $0.1 == 10_080 }
+        guard let length = weekly.isEmpty ? windows.map(\.1).max() : 10_080 else { return nil }
+        let chosen = windows.filter { $0.1 == length }
+        return chosen.count == 1 ? (chosen[0].0, length) : nil
+    }
+
+    /// Keeps the first and last reading of each run of identical readings per bucket, plan, window length and local
+    /// day. Interior copies add no pace evidence, and each day keeps its last reading for the chart.
     static func collapsed(_ readings: Set<LocalQuotaObservation>, calendar: Calendar) -> [LocalQuotaObservation] {
-        struct Series: Hashable { let bucket: String; let plan: String? }
+        struct Series: Hashable { let bucket: String; let plan: String?; let minutes: Int }
         var kept: [LocalQuotaObservation] = []
-        for series in Dictionary(grouping: readings, by: { Series(bucket: $0.bucketID, plan: $0.plan) }).values {
+        for series in Dictionary(grouping: readings, by: { Series(bucket: $0.bucketID, plan: $0.plan, minutes: $0.windowMinutes) }).values {
             let ordered = series.sorted {
                 ($0.at, $0.remaining, $0.resetAt) < ($1.at, $1.remaining, $1.resetAt)
             }
@@ -532,20 +556,18 @@ private struct UsageFileParser: Sendable {
                let bucketID = raw["limit_id"] as? String, !bucketID.isEmpty,
                let timestamp = object["timestamp"] as? String,
                let date = RolloutTimestamps.shared.date(from: timestamp) {
-                let windows = [raw["primary"], raw["secondary"]].compactMap { $0 as? [String: Any] }
-                    .filter { value in
-                        guard let n = value["window_minutes"] as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID() else { return false }
-                        return n.doubleValue == 10_080
-                    }
-                if windows.count == 1, let used = windows[0]["used_percent"] as? NSNumber,
-                   let reset = windows[0]["resets_at"] as? NSNumber,
+                if let limit = CodexLocalUsageReader.limitWindow(in: raw), let used = limit.window["used_percent"] as? NSNumber,
+                   let reset = limit.window["resets_at"] as? NSNumber,
                    CFGetTypeID(used) != CFBooleanGetTypeID(), CFGetTypeID(reset) != CFBooleanGetTypeID(),
                    used.doubleValue.isFinite, (0...100).contains(used.doubleValue),
                    reset.doubleValue.isFinite {
-                    let resetAt = Date(timeIntervalSince1970: reset.doubleValue)
-                    if date >= value.quotaCutoff, resetAt > date, resetAt.timeIntervalSince(date) <= 7 * 86_400 {
+                    let resetAt = Date(timeIntervalSince1970: reset.doubleValue), length = Double(limit.minutes) * 60
+                    // The cutoff is a weekly window's lookback; a longer window's reaches back by the difference.
+                    let cutoff = value.quotaCutoff.addingTimeInterval(-max(0, length - WeeklyQuotaEstimator.week))
+                    if date >= cutoff, resetAt > date, resetAt.timeIntervalSince(date) <= length {
                         value.quotaSamples.append(.init(at: date, resetAt: resetAt, remaining: 100 - used.doubleValue,
-                                                        bucketID: bucketID, plan: raw["plan_type"] as? String))
+                                                        bucketID: bucketID, plan: raw["plan_type"] as? String,
+                                                        windowMinutes: limit.minutes))
                     }
                 }
             }

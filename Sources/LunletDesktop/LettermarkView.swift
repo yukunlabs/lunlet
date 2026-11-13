@@ -7,12 +7,14 @@ import AppKit
 import LunletCore
 import QuartzCore
 
-/// One selected agent's weekly remaining allowance for the entry. Nil is unknown, never zero (AC-17.07).
+/// One selected agent's remaining allowance for the entry. Nil is unknown, never zero (AC-17.07).
 struct AgentAllowance: Equatable {
     let provider: SessionProvider
     let remaining: Double?
-    init(provider: SessionProvider, remaining: Double?) {
-        self.provider = provider; self.remaining = AllowancePalette.normalized(remaining)
+    /// The word for the window's length in the entry's description: weekly, or monthly for a 30-day limit.
+    let window: String
+    init(provider: SessionProvider, remaining: Double?, window: String = "weekly") {
+        self.provider = provider; self.remaining = AllowancePalette.normalized(remaining); self.window = window
     }
 }
 
@@ -320,8 +322,8 @@ struct AgentAllowance: Equatable {
     static func allowanceDescription(_ allowances: [AgentAllowance]) -> String {
         allowances.map { allowance in
             allowance.remaining.map {
-                allowance.provider.displayName + " \($0.formatted(.number.precision(.fractionLength(0...1))))% weekly allowance left"
-            } ?? allowance.provider.displayName + " weekly allowance unavailable"
+                allowance.provider.displayName + " \($0.formatted(.number.precision(.fractionLength(0...1))))% \(allowance.window) allowance left"
+            } ?? allowance.provider.displayName + " \(allowance.window) allowance unavailable"
         }.joined(separator: " · ")
     }
     private func updateHelp() {

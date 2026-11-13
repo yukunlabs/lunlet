@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
-// Refs: US-41, AC-41.01, AC-41.02, AC-41.03, AC-41.04, AC-41.05; US-04, AC-04.01, AC-04.05, AC-04.15; US-25, AC-25.01.
+// Refs: US-41, AC-41.01, AC-41.02, AC-41.03, AC-41.04, AC-41.05; US-04, AC-04.01, AC-04.05, AC-04.15, AC-04.19; US-25, AC-25.01.
 // Refs: US-19, AC-19.01.
 import AppKit
 import Combine
@@ -11,35 +11,30 @@ import SwiftUI
 
 /// One officially reported allowance window at one reading (AC-41.03): never a forecast, never a window past its reset.
 struct AllowanceReading: Equatable, Sendable {
-    enum Span: String, Codable, Sendable {
-        case weekly, fiveHour
-        var title: String { self == .weekly ? "weekly allowance" : "5-hour window" }
-    }
     let provider: SessionProvider
-    let span: Span
+    /// How long the window lasts, which names it: a weekly or monthly allowance, or the 5-hour window.
+    let span: AllowanceSpan
     let remainingPercent: Double
     let resetsAt: Date
     let observedAt: Date
-    /// One window of one agent; the rule and the notification identifiers key on it.
-    var key: String { provider.rawValue + "." + span.rawValue }
+    /// One window of one agent; the rule and the notification identifiers key on it, so a window of another length
+    /// is another window and starts fresh.
+    var key: String { provider.rawValue + "." + span.key }
+    /// "weekly allowance", "monthly allowance", "5-hour window".
+    var title: String { span == .fiveHour ? "5-hour window" : span.adjective + " allowance" }
 
-    /// Codex's windows by their reported duration (AC-04.07, AC-04.15), from the account's own bucket as the card shows them.
+    /// Codex's windows by their reported duration (AC-04.07, AC-04.15), from the account's own bucket as the panel
+    /// shows them: its limit, weekly or as long as the account reports it, and its five-hour window.
     static func codex(_ snapshot: AccountLimitsSnapshot, now: Date) -> [AllowanceReading] {
-        var readings: [AllowanceReading] = []
-        if let weekly = AccountUsagePresentation.weekly(in: snapshot), let remaining = weekly.remainingPercent,
-           let reset = weekly.resetsAt, reset > now {
-            readings.append(.init(provider: .codex, span: .weekly, remainingPercent: remaining, resetsAt: reset, observedAt: snapshot.observedAt))
+        [AccountUsagePresentation.limit(in: snapshot), AccountUsagePresentation.fiveHour(in: snapshot)].compactMap { window in
+            guard let window, let remaining = window.remainingPercent, let reset = window.resetsAt, reset > now else { return nil }
+            return .init(provider: .codex, span: window.span, remainingPercent: remaining, resetsAt: reset, observedAt: snapshot.observedAt)
         }
-        if let window = AccountUsagePresentation.fiveHour(in: snapshot), let remaining = window.remainingPercent,
-           let reset = window.resetsAt, reset > now {
-            readings.append(.init(provider: .codex, span: .fiveHour, remainingPercent: remaining, resetsAt: reset, observedAt: snapshot.observedAt))
-        }
-        return readings
     }
     /// Claude's weekly window while the status line is connected and the window applies now (AC-33.09).
     static func claude(_ limits: ClaudePlanLimits?, connected: Bool, now: Date) -> [AllowanceReading] {
         guard connected, let week = ClaudeLimitsText.current(limits?.sevenDay, now: now) else { return [] }
-        return [.init(provider: .claude, span: .weekly, remainingPercent: min(100, max(0, 100 - week.usedPercent)),
+        return [.init(provider: .claude, span: .week, remainingPercent: min(100, max(0, 100 - week.usedPercent)),
                       resetsAt: week.resetsAt, observedAt: week.at)]
     }
 }
@@ -56,7 +51,7 @@ enum AllowanceNotice: Equatable, Sendable {
     }
     private var kind: String { if case .low = self { "low" } else { "reset" } }
     var title: String {
-        let window = reading.provider.displayName + " " + reading.span.title
+        let window = reading.provider.displayName + " " + reading.title
         switch self {
         case .low: return window + ": " + Self.left(reading.remainingPercent)
         case .reset: return window + " has reset"

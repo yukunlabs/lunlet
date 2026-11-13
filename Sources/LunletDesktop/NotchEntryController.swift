@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: 0BSD
 // Refs: US-02, AC-02.03, AC-02.05; US-17, AC-17.01, AC-17.02, AC-17.03, AC-17.04, AC-17.08.
 // Refs: US-16, AC-16.02, AC-16.03; US-21, AC-21.01, AC-21.03; US-17, AC-17.05, AC-17.07.
-// Refs: US-04, AC-04.03, AC-04.07, AC-04.10, AC-04.13.
+// Refs: US-04, AC-04.03, AC-04.07, AC-04.10, AC-04.13, AC-04.19.
 // Refs: US-03, AC-03.04, AC-03.07, AC-03.08, AC-03.10, AC-03.11; US-12, AC-12.04, AC-12.05.
 // Refs: US-13, AC-13.02, AC-13.03, AC-13.07.
 import AppKit
@@ -16,6 +16,9 @@ import LunletCore
     private var usageObservation: AnyCancellable?
     private var claudeObservation: AnyCancellable?
     private var codexRemaining: Double?
+    /// The word for the Codex limit's length, which the entry's description names: weekly unless the account's own
+    /// limit is another window.
+    private var codexWindow = AllowanceSpan.week.adjective
     private var claudeLimits: ClaudePlanLimits?
     private var claudeConnected = false
     /// Re-evaluates the Claude strand once at its weekly reset, so an expired reading turns unknown without polling.
@@ -64,7 +67,10 @@ import LunletCore
                 case .loading: snapshot = usage?.displayedSnapshot
                 default: snapshot = nil
                 }
-                self?.codexRemaining = snapshot.flatMap(AccountUsagePresentation.weekly)?.remainingPercent
+                // The account's own limit: its weekly window, or the longer one of a plan without a weekly window.
+                let limit = snapshot.flatMap(AccountUsagePresentation.limit)
+                self?.codexRemaining = limit?.remainingPercent
+                self?.codexWindow = (limit?.span ?? .week).adjective
                 self?.updateAllowances()
             }
         }
@@ -77,13 +83,14 @@ import LunletCore
         }
     }
 
-    /// Each selected agent's weekly remaining, in selection order. Claude Code reports percent used, so its strand
-    /// shows the complement of a connected, unexpired seven-day reading; the agents are never combined.
-    static func allowances(providers: [SessionProvider], codex: Double?, claude: ClaudePlanLimits?, claudeConnected: Bool,
-                           now: Date) -> [AgentAllowance] {
+    /// Each selected agent's remaining allowance, in selection order: Codex's own limit, weekly unless the account
+    /// reports another window, which `codexWindow` names. Claude Code reports percent used, so its strand shows the
+    /// complement of a connected, unexpired seven-day reading; the agents are never combined.
+    static func allowances(providers: [SessionProvider], codex: Double?, codexWindow: String = AllowanceSpan.week.adjective,
+                           claude: ClaudePlanLimits?, claudeConnected: Bool, now: Date) -> [AgentAllowance] {
         (providers.isEmpty ? [.codex] : providers).map { provider in
             switch provider {
-            case .codex: return .init(provider: .codex, remaining: codex)
+            case .codex: return .init(provider: .codex, remaining: codex, window: codexWindow)
             case .claude:
                 let week = claudeConnected ? ClaudeLimitsText.current(claude?.sevenDay, now: now) : nil
                 return .init(provider: .claude, remaining: week.map { 100 - $0.usedPercent })
@@ -93,8 +100,8 @@ import LunletCore
     private func updateAllowances() {
         guard !closed else { return }
         let now = Date(), providers = preferred.sessionProviders
-        mark.setAllowances(Self.allowances(providers: providers, codex: codexRemaining, claude: claudeLimits,
-                                           claudeConnected: claudeConnected, now: now))
+        mark.setAllowances(Self.allowances(providers: providers, codex: codexRemaining, codexWindow: codexWindow,
+                                           claude: claudeLimits, claudeConnected: claudeConnected, now: now))
         let reset = providers.contains(.claude) && claudeConnected
             ? ClaudeLimitsText.current(claudeLimits?.sevenDay, now: now)?.resetsAt : nil
         guard reset != resetDeadline?.at else { return }

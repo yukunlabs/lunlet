@@ -288,6 +288,19 @@ struct VineEntryTests {
         #expect(abs(secondLamp - 0.56) < 0.001)
     }
 
+    // Refs: US-04, AC-04.13, AC-04.19. The strand shows the account's own limit; its words name the window it is.
+    @Test @MainActor func aMonthlyCodexLimitFillsTheStrandAndIsNamedMonthly() {
+        let now = Date(timeIntervalSince1970: 1_793_390_400)
+        let monthly = NotchEntryController.allowances(providers: [.codex], codex: 88, codexWindow: "monthly", claude: nil,
+                                                      claudeConnected: false, now: now)
+        #expect(monthly == [.init(provider: .codex, remaining: 88, window: "monthly")])
+        #expect(LettermarkView.allowanceDescription(monthly) == "Codex 88% monthly allowance left")
+        // Without a window the words stay as they were.
+        let unknown = NotchEntryController.allowances(providers: [.codex], codex: nil, claude: nil, claudeConnected: false, now: now)
+        #expect(LettermarkView.allowanceDescription(unknown) == "Codex weekly allowance unavailable")
+        #expect(LettermarkView.allowanceDescription([.init(provider: .codex, remaining: 72)]) == "Codex 72% weekly allowance left")
+    }
+
     // Refs: US-04, AC-04.13, AC-04.03; US-33, AC-33.09.
     @Test @MainActor func entryAllowancesFollowSelectionAndUseOnlyAConnectedUnexpiredClaudeWeek() {
         let now = Date(timeIntervalSince1970: 1_793_390_400)

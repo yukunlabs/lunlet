@@ -15,6 +15,13 @@ struct TrendChartTextTests {
     private func pace(_ forecast: QuotaPaceForecast, read: Bool = true, even: Double? = 58.3) -> QuotaPace {
         .init(forecast: forecast, latest: read ? reading : nil, evenPace: even)
     }
+    // Refs: US-32, AC-32.01; US-04, AC-04.19. The title names the window the account has.
+    @Test func theTitleNamesTheLimitsOwnWindow() {
+        #expect(TrendChartText.title(.codex) == "Week limit · Codex" && TrendChartText.title(.claude) == "Week limit · Claude Code")
+        #expect(TrendChartText.title(.codex, span: AllowanceSpan(minutes: 43_200)) == "Month limit · Codex")
+        #expect(TrendChartText.title(.codex, span: AllowanceSpan(minutes: 20_160)) == "14-day limit · Codex")
+    }
+
     private func day(_ date: Date) -> String { date.formatted(.dateTime.weekday(.abbreviated).hour().minute()) }
 
     @Test func theTitleNamesTheWindowAndTheAgentAndTheResetMoment() {

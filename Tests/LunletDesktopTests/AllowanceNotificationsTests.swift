@@ -51,7 +51,7 @@ private actor FixedReader: CodexAccountReading {
                                  resetNotices: true, now: now.addingTimeInterval(60))
         #expect(first.count == 1)
         guard case .low(let reading)? = first.first else { Issue.record("expected a low-allowance notice"); return }
-        #expect(reading.provider == .codex && reading.span == .weekly && reading.remainingPercent == 18)
+        #expect(reading.provider == .codex && reading.span == .week && reading.remainingPercent == 18)
         let again = rule.notices(for: try weekly(left: 9, reset: reset, at: now.addingTimeInterval(120)), warnBelow: 20,
                                  resetNotices: true, now: now.addingTimeInterval(120))
         #expect(again.isEmpty)
@@ -131,7 +131,7 @@ private actor FixedReader: CodexAccountReading {
         #expect(AllowanceReading.claude(claude(left: 5, resetIn: 3_600), connected: false, now: now).isEmpty)
         #expect(AllowanceReading.claude(claude(left: 5, resetIn: -60), connected: true, now: now).isEmpty)
         let live = AllowanceReading.claude(claude(left: 5, resetIn: 3_600, age: 120), connected: true, now: now)
-        #expect(live.count == 1 && live.first?.provider == .claude && live.first?.span == .weekly)
+        #expect(live.count == 1 && live.first?.provider == .claude && live.first?.span == .week)
         #expect(live.first?.remainingPercent == 5 && live.first?.observedAt == now.addingTimeInterval(-120))
     }
 
@@ -143,7 +143,7 @@ private actor FixedReader: CodexAccountReading {
             let readings = try AllowanceReading.codex(codex("""
             {"rateLimits":{"\(slot)":{"usedPercent":92,"windowDurationMins":300,"resetsAt":1800009000},"\(other)":{"usedPercent":40,"windowDurationMins":10080,"resetsAt":1800300000}}}
             """), now: now)
-            #expect(Set(readings.map(\.span)) == [.fiveHour, .weekly])
+            #expect(Set(readings.map(\.span)) == [.fiveHour, .week])
             let notices = rule.notices(for: readings, warnBelow: 20, resetNotices: true, now: now)
             #expect(notices.count == 1)
             #expect(notices.first?.title == "Codex 5-hour window: 8% left")
@@ -154,6 +154,28 @@ private actor FixedReader: CodexAccountReading {
         let claudeLow = both.notices(for: AllowanceReading.claude(claude(left: 10, resetIn: 86_400), connected: true, now: now),
                                      warnBelow: 20, resetNotices: false, now: now)
         #expect(claudeLow.count == 1 && claudeLow.first?.title == "Claude Code weekly allowance: 10% left")
+    }
+
+    // Refs: US-41, AC-41.03, AC-41.05; US-04, AC-04.19. An account whose limit is a 30-day window is warned about that
+    // window, in its own words and under its own identifier, so a changed window starts fresh.
+    @Test func aMonthlyCodexLimitWarnsInItsOwnWords() throws {
+        let reset = now.timeIntervalSince1970 + 12 * 86_400
+        func monthly(left: Double, at: Date) throws -> [AllowanceReading] {
+            try AllowanceReading.codex(codex("""
+            {"rateLimits":{"limitId":"codex","primary":{"usedPercent":\(100 - left),"windowDurationMins":43200,"resetsAt":\(Int(reset))},"secondary":null,"planType":"free"}}
+            """, observedAt: at), now: at)
+        }
+        let readings = try monthly(left: 18, at: now)
+        #expect(readings.count == 1 && readings.first?.span == AllowanceSpan(minutes: 43_200) && readings.first?.key == "codex.monthly")
+        var rule = AllowanceAlertRule()
+        let notices = rule.notices(for: readings, warnBelow: 20, resetNotices: true, now: now)
+        #expect(notices.map(\.title) == ["Codex monthly allowance: 18% left"])
+        #expect(notices.first?.identifier == "com.lunlet.allowance.codex.monthly.low")
+        #expect(notices.first?.body(now: now) == "Resets in 12d · " + ClaudeLimitsText.moment(Date(timeIntervalSince1970: reset), now: now))
+        // The same window below the level again stays silent (AC-41.03).
+        #expect(rule.notices(for: try monthly(left: 9, at: now.addingTimeInterval(60)), warnBelow: 20, resetNotices: true,
+                             now: now.addingTimeInterval(60)).isEmpty)
+        #expect(AllowanceNotice.provider(of: "com.lunlet.allowance.codex.monthly.low") == .codex)
     }
 
     @Test func noticesNameTheAgentAndWindowWithTheResetAndCarryNoAccountIdentity() throws {

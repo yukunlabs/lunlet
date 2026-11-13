@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
-// Refs: US-04, AC-04.01, AC-04.03, AC-04.07, AC-04.08, AC-04.09, AC-04.15; US-24, AC-24.02.
+// Refs: US-04, AC-04.01, AC-04.03, AC-04.07, AC-04.08, AC-04.09, AC-04.15, AC-04.19; US-24, AC-24.02.
 import AppKit
 import SwiftUI
 import Foundation
@@ -86,6 +86,77 @@ import Testing
         let unknownWeekly = try #require(AccountUsagePresentation.weekly(in: unknown))
         #expect(unknownWeekly.remainingPercent == nil)
         #expect(unknownWeekly.resetsAt == nil)
+    }
+
+    // Refs: US-04, AC-04.19. A window is named by how long it lasts, never by its position in the response.
+    @Test func aSpanNamesItsWindowByItsLength() {
+        let week = AllowanceSpan(minutes: 10_080)
+        #expect(week == .week && week.name == "Week" && week.adjective == "weekly" && week.key == "weekly")
+        for minutes in [40_320, 43_200, 44_640] {
+            let month = AllowanceSpan(minutes: minutes)
+            #expect(month.name == "Month" && month.adjective == "monthly" && month.key == "monthly", "\(minutes)")
+        }
+        let fortnight = AllowanceSpan(minutes: 20_160)
+        #expect(fortnight.name == "14-day" && fortnight.adjective == "14-day" && fortnight.key == "minutes20160")
+        #expect(AllowanceSpan(minutes: 1_440).name == "Day" && AllowanceSpan(minutes: 1_440).adjective == "daily")
+        #expect(AllowanceSpan.fiveHour.name == "5-hour" && AllowanceSpan.fiveHour.adjective == "5-hour" && AllowanceSpan.fiveHour.key == "fiveHour")
+        #expect(AllowanceSpan(minutes: 90).name == "90-minute")
+        #expect(AllowanceSpan(minutes: 43_200).seconds == 30 * 86_400)
+    }
+
+    // Refs: US-04, AC-04.19, AC-04.03. A plan without a weekly window: one 30-day window, nothing else.
+    @Test func theAccountsLimitIsItsWeeklyWindowOrElseItsLongestWindowOfADayOrMore() throws {
+        let monthly = try snapshot("""
+        {"rateLimits":{"limitId":"codex","primary":{"usedPercent":0,"windowDurationMins":43200,"resetsAt":1800864000},"secondary":null,"credits":{"hasCredits":true,"unlimited":false,"balance":"25000.0000000000"},"planType":"free"}}
+        """)
+        let limit = try #require(AccountUsagePresentation.limit(in: monthly))
+        #expect(limit.span == AllowanceSpan(minutes: 43_200) && limit.remainingPercent == 100)
+        #expect(limit.resetsAt == Date(timeIntervalSince1970: 1_800_864_000) && limit.bucketID == "codex")
+        // It is not a weekly window, and nothing pretends it is.
+        #expect(AccountUsagePresentation.weekly(in: monthly) == nil)
+        // A weekly window stays the limit beside a longer one, as it was before longer windows were read.
+        let both = try snapshot(#"{"rateLimits":{"primary":{"usedPercent":10,"windowDurationMins":43200},"secondary":{"usedPercent":23,"windowDurationMins":10080}}}"#)
+        #expect(AccountUsagePresentation.limit(in: both)?.span == .week && AccountUsagePresentation.limit(in: both)?.remainingPercent == 77)
+        // The five-hour window is never the limit, and a window shorter than a day is not one either.
+        for short in [300, 600, 1_439] {
+            let value = try snapshot(#"{"rateLimits":{"primary":{"usedPercent":25,"windowDurationMins":\#(short)}}}"#)
+            #expect(AccountUsagePresentation.limit(in: value) == nil, "\(short)")
+        }
+        // The longest of several: a day beside a fortnight.
+        let mixed = try snapshot(#"{"rateLimits":{"primary":{"usedPercent":25,"windowDurationMins":1440},"secondary":{"usedPercent":40,"windowDurationMins":20160}}}"#)
+        #expect(AccountUsagePresentation.limit(in: mixed)?.span.minutes == 20_160 && AccountUsagePresentation.limit(in: mixed)?.remainingPercent == 60)
+        // Among buckets, the default Codex bucket's; two equally long windows in one bucket are never chosen between.
+        let buckets = try snapshot(#"{"rateLimitsByLimitId":{"codex":{"limitId":"codex","primary":{"usedPercent":30,"windowDurationMins":43200}},"model-special":{"primary":{"usedPercent":80,"windowDurationMins":43200}}}}"#)
+        #expect(AccountUsagePresentation.limit(in: buckets)?.bucketID == "codex" && AccountUsagePresentation.limit(in: buckets)?.remainingPercent == 70)
+        let ambiguous = try snapshot(#"{"rateLimits":{"primary":{"usedPercent":25,"windowDurationMins":43200},"secondary":{"usedPercent":50,"windowDurationMins":43200}}}"#)
+        #expect(AccountUsagePresentation.limit(in: ambiguous) == nil)
+        #expect(AccountUsagePresentation.limit(in: try snapshot("{}")) == nil)
+    }
+
+    // Refs: US-04, AC-04.01. A weekday tells the day only within the coming week.
+    @Test func aMomentMoreThanSixDaysAwayIsWrittenWithItsMonthAndDay() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .current
+        let now = calendar.date(from: DateComponents(year: 2026, month: 11, day: 13, hour: 15, minute: 30))!
+        func at(days: Int, hour: Int = 20, minute: Int = 53) -> Date {
+            calendar.date(bySettingHour: hour, minute: minute, second: 0, of: calendar.date(byAdding: .day, value: days, to: now)!)!
+        }
+        func weekday(_ date: Date) -> String { date.formatted(.dateTime.weekday(.abbreviated).hour().minute()) }
+        func dated(_ date: Date) -> String { date.formatted(.dateTime.month(.abbreviated).day()) + " " + date.formatted(date: .omitted, time: .shortened) }
+        #expect(ClaudeLimitsText.moment(at(days: 0), now: now, calendar: calendar) == at(days: 0).formatted(date: .omitted, time: .shortened))
+        #expect(ClaudeLimitsText.moment(at(days: 1), now: now, calendar: calendar) == weekday(at(days: 1)))
+        #expect(ClaudeLimitsText.moment(at(days: 6), now: now, calendar: calendar) == weekday(at(days: 6)))
+        // The same weekday a week on would read as today's; a month on, a weekday says nothing.
+        #expect(ClaudeLimitsText.moment(at(days: 7), now: now, calendar: calendar) == dated(at(days: 7)))
+        #expect(ClaudeLimitsText.moment(at(days: 30), now: now, calendar: calendar) == dated(at(days: 30)))
+        // The month and day are written as this Mac writes dates; the weekday is gone.
+        #expect(dated(at(days: 30)) != weekday(at(days: 30)) && dated(at(days: 30)).contains("13"))
+        // An earlier moment follows the same rule.
+        #expect(ClaudeLimitsText.moment(at(days: -2), now: now, calendar: calendar) == weekday(at(days: -2)))
+        #expect(ClaudeLimitsText.moment(at(days: -9), now: now, calendar: calendar) == dated(at(days: -9)))
+        // The forecast's run-out times are written the same way.
+        #expect(QuotaForecastText.day(at(days: 3), now: now, calendar: calendar) == weekday(at(days: 3)))
+        #expect(QuotaForecastText.day(at(days: 12), now: now, calendar: calendar) == dated(at(days: 12)))
     }
 
     @Test func resetCountdownUsesHoursAndDoesNotPretendAnElapsedQuotaHasRenewed() {

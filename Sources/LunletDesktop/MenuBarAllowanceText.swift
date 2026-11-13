@@ -1,17 +1,17 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
-// Refs: US-21, AC-21.04, AC-21.05; US-04, AC-04.01, AC-04.03, AC-04.07, AC-04.15; US-33, AC-33.09.
+// Refs: US-21, AC-21.04, AC-21.05; US-04, AC-04.01, AC-04.03, AC-04.07, AC-04.15, AC-04.19; US-33, AC-33.09.
 import Foundation
 import LunletClaude
 import LunletCore
 
 /// The allowance text beside the lettering in menu-bar mode: display-only words that never route an action.
 enum MenuBarAllowanceText {
-    enum Span: Equatable, Sendable { case weekly, fiveHour }
-    /// One window an agent reports, in the terms the cards show it (AC-04.07, AC-04.15, AC-33.09).
+    /// One window an agent reports, in the terms the panel shows it (AC-04.07, AC-04.15, AC-33.09).
     struct Window: Equatable, Sendable {
         let agent: String
-        let span: Span
+        /// How long the window lasts; only the five-hour one is marked in the text.
+        let span: AllowanceSpan
         let remaining: Double?
         let resetsAt: Date?
     }
@@ -40,22 +40,22 @@ enum MenuBarAllowanceText {
         return text
     }
 
-    /// The windows each selected agent reports, in selection order, in the terms the cards show them: Codex's weekly and
-    /// five-hour windows (AC-04.07, AC-04.15) and Claude Code's connected, unexpired weekly reading (AC-33.09). A missing
-    /// read or a disconnected status line contributes nothing rather than a zero (AC-04.03).
+    /// The windows each selected agent reports, in selection order, in the terms the panel shows them: Codex's own
+    /// limit, weekly or as long as the account reports it, and its five-hour window (AC-04.07, AC-04.15), and Claude
+    /// Code's connected, unexpired weekly reading (AC-33.09). A missing read or a disconnected status line contributes
+    /// nothing rather than a zero (AC-04.03).
     static func windows(providers: [SessionProvider], codex: AccountLimitsSnapshot?, claude: ClaudePlanLimits?,
                         claudeConnected: Bool, now: Date) -> [Window] {
         providers.flatMap { provider -> [Window] in
             switch provider {
             case .codex:
                 guard let codex else { return [] }
-                return [(AccountUsagePresentation.weekly(in: codex), Span.weekly), (AccountUsagePresentation.fiveHour(in: codex), .fiveHour)]
-                    .compactMap { window, span in
-                        window.map { Window(agent: "Codex", span: span, remaining: $0.remainingPercent, resetsAt: $0.resetsAt) }
-                    }
+                return [AccountUsagePresentation.limit(in: codex), AccountUsagePresentation.fiveHour(in: codex)].compactMap { window in
+                    window.map { Window(agent: "Codex", span: $0.span, remaining: $0.remainingPercent, resetsAt: $0.resetsAt) }
+                }
             case .claude:
                 guard claudeConnected, let week = ClaudeLimitsText.current(claude?.sevenDay, now: now) else { return [] }
-                return [Window(agent: "Claude Code", span: .weekly, remaining: 100 - week.usedPercent, resetsAt: week.resetsAt)]
+                return [Window(agent: "Claude Code", span: .week, remaining: 100 - week.usedPercent, resetsAt: week.resetsAt)]
             }
         }
     }

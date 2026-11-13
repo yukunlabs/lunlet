@@ -1,15 +1,15 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
-// Refs: US-19, AC-19.04, AC-19.10; US-04, AC-04.01, AC-04.03, AC-04.10, AC-04.16; US-24, AC-24.02.
+// Refs: US-19, AC-19.04, AC-19.10; US-04, AC-04.01, AC-04.03, AC-04.10, AC-04.16, AC-04.19; US-24, AC-24.02.
 import Foundation
 import LunletCore
 
-/// What one agent's body says in the header: percent left of its weekly window, its plan, the reset and today's
+/// What one agent's body says in the header: percent left of its limit window, its plan, the reset and today's
 /// recorded tokens, or why the limit is unknown (AC-19.10).
 struct HeaderAgentLabel: Equatable {
     enum Warning: Equatable { case none, low, critical }
     var provider: SessionProvider
-    /// Percent left of the weekly window; nil while it is unknown, never zero for a missing value (AC-04.03).
+    /// Percent left of the limit window; nil while it is unknown, never zero for a missing value (AC-04.03).
     var remaining: Double?
     var plan: String?
     var resetsAt: Date?
@@ -17,6 +17,8 @@ struct HeaderAgentLabel: Equatable {
     var today: LocalUsageAmount?
     /// Sessions waiting for the developer, which the body's badge counts (AC-19.11).
     var waiting: Int
+    /// The window's own word, which starts the reset line: "Week", or "Month" for an account whose limit is monthly.
+    var window = AllowanceSpan.week.name
 
     /// "62%", "<1%" for a nearly spent window, a dash while unknown.
     var percent: String {
@@ -39,9 +41,9 @@ struct HeaderAgentLabel: Equatable {
     /// the limit is unknown the line says why instead.
     func reset(now: Date, moment: Bool) -> String {
         if let unknown { return unknown.text }
-        guard let resetsAt else { return "Week reset —" }
-        guard let countdown = AccountUsagePresentation.countdown(until: resetsAt, now: now) else { return "Week reset due" }
-        return "Week resets in " + countdown + (moment ? " · " + ClaudeLimitsText.moment(resetsAt, now: now) : "")
+        guard let resetsAt else { return window + " reset —" }
+        guard let countdown = AccountUsagePresentation.countdown(until: resetsAt, now: now) else { return window + " reset due" }
+        return window + " resets in " + countdown + (moment ? " · " + ClaudeLimitsText.moment(resetsAt, now: now) : "")
     }
     func spoken(now: Date) -> String {
         let limit = unknown.map(\.text) ?? percent + " left, " + reset(now: now, moment: true)
@@ -70,9 +72,22 @@ enum HeaderPresentation {
         }
     }
 
-    /// Codex: a read under way, a failed read, or a read that reports no seven-day window.
-    static func codexUnknown(state: AccountUsageModel.State, hasWeekly: Bool) -> Unknown? {
-        if hasWeekly { return nil }
+    /// Codex's body: its account's own limit window (AC-04.07), named by its length, or why there is none. Nothing is
+    /// borrowed from the five-hour window or from an earlier read (AC-04.03, AC-19.10).
+    static func codexLabel(snapshot: AccountLimitsSnapshot?, state: AccountUsageModel.State, today: LocalUsageAmount?,
+                           waiting: Int) -> HeaderAgentLabel {
+        let limit = snapshot.flatMap(AccountUsagePresentation.limit)
+        let remaining = limit?.remainingPercent
+        return HeaderAgentLabel(provider: .codex, remaining: remaining,
+                                plan: snapshot?.identity?.plan?.replacingOccurrences(of: "_", with: " ").capitalized,
+                                resetsAt: limit?.resetsAt,
+                                unknown: remaining == nil ? codexUnknown(state: state, hasLimit: false) ?? .unknown : nil,
+                                today: today, waiting: waiting, window: (limit?.span ?? .week).name)
+    }
+
+    /// Codex: a read under way, a failed read, or a read that reports no limit window of a day or more.
+    static func codexUnknown(state: AccountUsageModel.State, hasLimit: Bool) -> Unknown? {
+        if hasLimit { return nil }
         switch state {
         case .loading: return .reading
         case .unavailable: return .failed

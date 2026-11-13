@@ -70,9 +70,17 @@ enum ClaudeLimitsText {
             + "cache read \(categories.cacheRead) tokens"
     }
 
-    /// A time today, or an abbreviated weekday and time otherwise.
+    /// A time today; otherwise the day and the time (AC-04.01).
     static func moment(_ date: Date, now: Date, calendar: Calendar = .current) -> String {
         calendar.isDate(date, inSameDayAs: now) ? date.formatted(date: .omitted, time: .shortened)
-            : date.formatted(.dateTime.weekday(.abbreviated).hour().minute())
+            : day(date, now: now, calendar: calendar)
+    }
+
+    /// A day and a time: the abbreviated weekday within six days of now, either way; farther away a weekday no longer
+    /// tells the day, so the month and day stand in for it, as for the reset of a 30-day window (AC-04.01).
+    static func day(_ date: Date, now: Date, calendar: Calendar = .current) -> String {
+        let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: now), to: calendar.startOfDay(for: date)).day ?? 0
+        guard abs(days) > 6 else { return date.formatted(.dateTime.weekday(.abbreviated).hour().minute()) }
+        return date.formatted(.dateTime.month(.abbreviated).day()) + " " + date.formatted(date: .omitted, time: .shortened)
     }
 }

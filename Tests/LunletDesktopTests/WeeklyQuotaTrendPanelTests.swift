@@ -97,3 +97,49 @@ private struct TrendPanelHistory: LocalUsageReading {
     }
     await history.shutdown(); await account.shutdown()
 }
+
+/// A 30-day window in the chart, as the owner's free-plan account reports it: the title and the reset name the month,
+/// the even budget runs over thirty days and the axis is ticked in dates a week apart. The layout is measured without
+/// a window; set `LUNLET_TREND_RENDER_DIR` to also write the picture for review.
+// Refs: US-32, AC-32.01, AC-32.05; US-04, AC-04.01, AC-04.19.
+@Test @MainActor func aMonthlyWindowFitsTheChartAWeeklyOneFits() async throws {
+    _ = NSApplication.shared
+    let now = Date()
+    func input(span: AllowanceSpan, resetIn: TimeInterval, readings: [(Double, Double)]) -> WeeklyTrendInput {
+        let reset = now.addingTimeInterval(resetIn)
+        let points = readings.map { QuotaReading(at: now.addingTimeInterval($0.0 * 3600), remaining: $0.1, resetAt: reset) }
+        let pace = WeeklyQuotaEstimator.pace(readings: points, resetAt: reset, now: now, window: span.seconds)
+        return WeeklyTrendInput(span: span, title: TrendChartText.title(.codex, span: span),
+                                display: .init(points: points, resets: [], pace: pace), resetAt: reset, days: 5,
+                                summary: QuotaForecastText.header(pace, stale: false, now: now),
+                                summaryHelp: QuotaForecastText.help(pace, stale: false, resetAt: reset, span: span),
+                                estimate: TrendChartText.estimate(pace, stale: false, now: now),
+                                evenPace: TrendChartText.now(pace, now: now), unavailable: "Allowance unavailable")
+    }
+    let readings: [(Double, Double)] = [(-72, 86), (-48, 82), (-24, 79), (-1, 76)]
+    let month = input(span: AllowanceSpan(minutes: 43_200), resetIn: 18 * 86_400, readings: readings)
+    let week = input(span: .week, resetIn: 3 * 86_400, readings: readings)
+    #expect(month.title == "Month limit · Codex" && month.evenPace?.hasSuffix("even pace 60%") == true)
+    #expect(month.summaryHelp.contains("over the past 30 days") && week.summaryHelp.contains("over the past seven days"))
+    func host(_ input: WeeklyTrendInput) -> NSHostingView<some View> {
+        let view = NSHostingView(rootView: WeeklyTrendChart(input: input, now: now).padding(12).frame(width: 312)
+            .background(Color(white: 0.1)).environment(\.colorScheme, .dark))
+        view.frame = CGRect(x: 0, y: 0, width: 312, height: 320); view.layoutSubtreeIfNeeded()
+        return view
+    }
+    let monthly = host(month), weekly = host(week)
+    // The month's longer reset moment still shares the title's line: the chart is no taller than a week's.
+    #expect(monthly.fittingSize.height <= weekly.fittingSize.height + 0.5,
+            "month \(monthly.fittingSize.height), week \(weekly.fittingSize.height)")
+    if let directory = ProcessInfo.processInfo.environment["LUNLET_TREND_RENDER_DIR"] {
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        for (name, view) in [("trend-month", monthly as NSView), ("trend-week", weekly as NSView)] {
+            view.frame = CGRect(origin: .zero, size: CGSize(width: 312, height: view.fittingSize.height)); view.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(30)); view.layoutSubtreeIfNeeded()
+            let bitmap = try #require(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+            view.cacheDisplay(in: view.bounds, to: bitmap)
+            try #require(bitmap.representation(using: .png, properties: [:]))
+                .write(to: URL(fileURLWithPath: directory).appendingPathComponent(name + ".png"))
+        }
+    }
+}

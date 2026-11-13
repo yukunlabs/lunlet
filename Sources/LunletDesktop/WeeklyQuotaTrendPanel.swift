@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: 0BSD
 // Refs: US-32, AC-32.01, AC-32.02, AC-32.03, AC-32.04, AC-32.05, AC-32.06, AC-32.07, AC-32.08, AC-32.09.
 // Refs: US-33, AC-33.09, AC-33.10; US-16, AC-16.03.
-// Refs: US-04, AC-04.08; US-24, AC-24.01, AC-24.02.
+// Refs: US-04, AC-04.08, AC-04.19; US-24, AC-24.01, AC-24.02.
 import Charts
 import SwiftUI
 import LunletCore
@@ -112,8 +112,10 @@ enum QuotaObservedSegments {
     }
 }
 
-/// One agent's weekly window as the trend chart draws it, in remaining terms for every agent (AC-33.09).
+/// One agent's limit window as the trend chart draws it, in remaining terms for every agent (AC-33.09).
 struct WeeklyTrendInput {
+    /// How long the window lasts: the even budget, the estimate's lookback and the axis follow it.
+    var span = AllowanceSpan.week
     let title: String
     let display: QuotaTrendDisplay
     let resetAt: Date?
@@ -138,14 +140,17 @@ struct WeeklyQuotaTrendPanel: View {
     var body: some View {
         TimelineView(.periodic(from: .now, by: 60)) { context in
             let trend = account.weeklyTrend
+            // The account's own limit window: a week unless the account reports another (AC-04.07).
+            let span = trend.span ?? .week
             // Points and resets follow the selected range; the pace uses every comparable reading.
             let start = QuotaChartTimeline.start(now: context.date, days: history.historyDays) ?? context.date
             let display = trend.display(local: history.snapshot?.quotaHistory ?? [], now: context.date, since: start)
             let stale = account.latestReadFailed
             WeeklyTrendChart(input: .init(
-                title: TrendChartText.title(.codex), display: display, resetAt: trend.resetAt, days: history.historyDays,
+                span: span,
+                title: TrendChartText.title(.codex, span: span), display: display, resetAt: trend.resetAt, days: history.historyDays,
                 summary: QuotaForecastText.header(display.pace, stale: stale, now: context.date),
-                summaryHelp: QuotaForecastText.help(display.pace, stale: stale, resetAt: trend.resetAt),
+                summaryHelp: QuotaForecastText.help(display.pace, stale: stale, resetAt: trend.resetAt, span: span),
                 estimate: TrendChartText.estimate(display.pace, stale: stale, now: context.date),
                 evenPace: TrendChartText.now(display.pace, now: context.date),
                 unavailable: account.state == .unavailable ? "Allowance unavailable · Refresh to try again" : "Allowance unavailable"),
@@ -218,8 +223,8 @@ struct WeeklyTrendChart: View {
                 VStack(alignment: .leading, spacing: PanelStyle.Space.hairline) {
                     if let even = input.evenPace {
                         Text(even).lineLimit(1)
-                            .help("Even pace is what an even budget across this weekly window would show at the latest "
-                                + "reading's time. It is not a forecast.")
+                            .help("Even pace is what an even budget across this \(input.span.adjective) window would show at the "
+                                + "latest reading's time. It is not a forecast.")
                     }
                     // The forecast in words, once; without one, the reason there is none (AC-32.09).
                     Text(input.estimate).lineLimit(2).fixedSize(horizontal: false, vertical: true).help(input.summaryHelp)
@@ -236,7 +241,7 @@ struct WeeklyTrendChart: View {
         }
         .help("The chart shows the selected days of recorded readings, then the estimate through the next reset at the "
             + "right edge. The faint straight line is an even budget across the current window. The estimate starts at the "
-            + "latest reading; its shaded range uses every comparable reading from the past seven days, whatever range is "
+            + "latest reading; its shaded range uses every comparable reading from the past \(QuotaForecastText.lookback(input.span)), whatever range is "
             + "displayed, and assumes no additional reset. It is recalculated when a reading arrives. Dashed vertical lines "
             + "mark detected resets; hover one for its time, which can be approximate.")
     }
@@ -275,13 +280,14 @@ struct WeeklyTrendChart: View {
             estimate.map { QuotaEstimateGeometry.lines($0, from: latest, reset: reset, visibleFrom: windowStart) }
         }
         let band = lines.map(QuotaEstimateGeometry.band) ?? []
-        let idealStart = max(windowStart, reset.addingTimeInterval(-WeeklyQuotaEstimator.week))
-        let ideal = WeeklyQuotaEstimator.idealRemaining(at: idealStart, resetAt: reset)
+        let idealStart = max(windowStart, reset.addingTimeInterval(-input.span.seconds))
+        let ideal = WeeklyQuotaEstimator.idealRemaining(at: idealStart, resetAt: reset, window: input.span.seconds)
         let segments = QuotaObservedSegments.split(points)
         let shown = resets.filter { $0.at >= windowStart && $0.at < reset }
-        // The "Reset" label at the right edge needs room: weekday labels within two days of it, or within about a seventh
-        // of the span, are left out.
+        // The "Reset" label at the right edge needs room: day labels within two days of it, or within about a seventh
+        // of the span, are left out. A long window's ticks are days apart and carry dates instead of weekdays.
         let clearance = max(48 * 3600, reset.timeIntervalSince(windowStart) * 0.15)
+        let stride = QuotaChartTimeline.tickStride(start: windowStart, reset: reset)
         let ticks = QuotaChartTimeline.dayTicks(start: windowStart, reset: reset).filter { reset.timeIntervalSince($0) > clearance }
         return Chart {
             ForEach(Array(band.enumerated()), id: \.offset) { _, point in
@@ -353,11 +359,11 @@ struct WeeklyTrendChart: View {
             }
         }
         .chartXAxis {
-            // Weekday labels; when the span is long, colliding labels give way in order.
+            // Day labels; when the span is long, colliding labels give way in order.
             AxisMarks(values: ticks) { value in
                 if let date = value.as(Date.self) {
                     AxisValueLabel(collisionResolution: .greedy(minimumSpacing: 6)) {
-                        Text(date.formatted(.dateTime.weekday(.abbreviated))).font(Font.caption).foregroundStyle(.secondary)
+                        Text(QuotaChartTimeline.tickLabel(date, stride: stride)).font(Font.caption).foregroundStyle(.secondary)
                     }
                 }
             }
@@ -393,7 +399,7 @@ struct WeeklyTrendChart: View {
         .frame(height: chartHeight + 16)
         .accessibilityChartDescriptor(QuotaTrendDescriptor(points: points, band: band, central: lines?.central ?? [],
                                                            start: windowStart, reset: reset, summary: summary,
-                                                           title: input.title))
+                                                           title: input.title, window: input.span.adjective))
         .help(shown.isEmpty ? "Right edge: the next reset. No resets detected in the displayed days." :
             "Right edge: the next reset. Detected resets: " + shown.prefix(5).map {
                 $0.at.formatted(date: .abbreviated, time: .shortened) + ($0.approximate ? " (approx.)" : "")
@@ -474,13 +480,15 @@ private struct QuotaTrendDescriptor: AXChartDescriptorRepresentable {
     let reset: Date
     let summary: String
     let title: String
+    /// "weekly" or "monthly": the window whose allowance the vertical axis measures.
+    let window: String
     func makeChartDescriptor() -> AXChartDescriptor {
         let origin = start.timeIntervalSince1970
         let x = AXNumericDataAxisDescriptor(title: "Time", range: origin...max(origin + 1, reset.timeIntervalSince1970),
                                             gridlinePositions: []) { value in
             Date(timeIntervalSince1970: value).formatted(date: .abbreviated, time: .shortened)
         }
-        let y = AXNumericDataAxisDescriptor(title: "Remaining weekly allowance", range: 0...100, gridlinePositions: [0, 50, 100]) {
+        let y = AXNumericDataAxisDescriptor(title: "Remaining \(window) allowance", range: 0...100, gridlinePositions: [0, 50, 100]) {
             $0.formatted(.number.precision(.fractionLength(0))) + " percent"
         }
         func series(_ name: String, _ values: [(Date, Double)]) -> AXDataSeriesDescriptor {

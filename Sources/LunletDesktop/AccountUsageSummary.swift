@@ -7,7 +7,7 @@ import SwiftUI
 import LunletCore
 
 /// The top of the Codex page under the header, one card: the account line, then the figures with the five-hour
-/// window, Credits, reset entitlements and today's recorded usage (AC-04.17). The weekly allowance itself is in the header.
+/// window, Credits, reset entitlements and today's recorded usage (AC-04.17). The account's own limit, weekly or longer, is in the header.
 struct AccountUsageSummary: View {
     @ObservedObject var model: AccountUsageModel
     @ObservedObject var history: LocalUsageModel
@@ -49,7 +49,7 @@ struct AccountUsageSummary: View {
     }
 
     private var help: [String: String] {
-        ["5-hour window": "Codex's five-hour window, reported beside the weekly one. The header, the vine and the forecast stay weekly.",
+        ["5-hour window": "Codex's five-hour window, reported beside the account's longer limit. The header, the vine and the forecast show that longer limit.",
          "Credits": "Reported credit balance; no currency is inferred.",
          "Reset credits": resetHelp,
          "Today": "Recorded on this Mac from local Codex records. Cost is an estimate at published API list prices, not a bill."]

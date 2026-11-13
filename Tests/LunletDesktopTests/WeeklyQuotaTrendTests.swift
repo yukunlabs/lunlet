@@ -69,6 +69,84 @@ struct WeeklyQuotaTrendTests {
         """.utf8)
         return try AccountLimitsDecoder.decode(limits, observedAt: start.addingTimeInterval(hours * 3600), accountData: account)
     }
+    /// A plan without a weekly window: plan free, one 30-day window.
+    private func monthly(hours: Double, remaining: Double, resetOffset: Double = 20 * 86_400) throws -> AccountLimitsSnapshot {
+        let reset = Int(start.timeIntervalSince1970 + resetOffset)
+        let limits = Data("""
+        {"rateLimits":{"limitId":"codex","primary":{"usedPercent":\(100 - remaining),"windowDurationMins":43200,"resetsAt":\(reset)},"secondary":null,"planType":"free"}}
+        """.utf8)
+        let account = Data(#"{"account":{"type":"chatgpt","email":"owner@example.invalid","planType":"free"}}"#.utf8)
+        return try AccountLimitsDecoder.decode(limits, observedAt: start.addingTimeInterval(hours * 3600), accountData: account)
+    }
+    // Refs: US-32, AC-32.01, AC-32.02, AC-32.05; US-04, AC-04.19. The trend follows the account's own limit window
+    // and measures the even budget and the pace over that window's length, not over seven days.
+    @Test func aMonthlyWindowIsRecordedAndPacedOverItsOwnLength() throws {
+        var trend = WeeklyQuotaTrend()
+        // Two days of readings, ten days into a 30-day window: 2 points of use a day.
+        for (hours, remaining) in [(0.0, 80.0), (12, 79), (24, 78), (36, 77), (48, 76)] {
+            trend.record(try monthly(hours: hours, remaining: remaining))
+        }
+        #expect(trend.readings.count == 5 && trend.span == AllowanceSpan(minutes: 43_200))
+        #expect(trend.resetAt == start.addingTimeInterval(20 * 86_400))
+        let now = start.addingTimeInterval(48 * 3600 + 60)
+        let display = trend.display(local: [], now: now)
+        let pace = try #require(display.pace)
+        // Eighteen of thirty days are left at the latest reading: the even budget is 60%, not a share of a week.
+        #expect(abs(try #require(pace.evenPace) - 60) < 0.01)
+        let estimate = try #require(pace.estimate)
+        // 2 points a day for the 18 days left: about 40% at reset.
+        #expect(abs(estimate.central - 40) < 1.5 && estimate.runOut == nil)
+        // The chart still shows the selected days of readings.
+        #expect(display.points.first?.at == start && display.points.last?.remaining == 76)
+    }
+    // Refs: US-32, AC-32.03. A window of another length is another window: nothing of the old one is evidence.
+    @Test func aChangedWindowLengthStartsTheTrendAfresh() throws {
+        var trend = WeeklyQuotaTrend()
+        trend.record(try sample(hours: 0, remaining: 80))
+        trend.record(try sample(hours: 1, remaining: 78))
+        #expect(trend.readings.count == 2 && trend.span == .week)
+        trend.record(try monthly(hours: 2, remaining: 100, resetOffset: 30 * 86_400))
+        #expect(trend.readings.map(\.remaining) == [100] && trend.span == AllowanceSpan(minutes: 43_200))
+        #expect(trend.resetAt == start.addingTimeInterval(30 * 86_400))
+        // A read that reports no limit window at all adds nothing and, for the same account, takes nothing away.
+        let none = try AccountLimitsDecoder.decode(Data(#"{"rateLimits":{"primary":{"usedPercent":10,"windowDurationMins":300}}}"#.utf8),
+                                                   observedAt: start.addingTimeInterval(3 * 3600),
+                                                   accountData: Data(#"{"account":{"type":"chatgpt","email":"owner@example.invalid","planType":"free"}}"#.utf8))
+        trend.record(none)
+        #expect(trend.readings.count == 1)
+    }
+    // Refs: US-32, AC-32.02, AC-32.03. Local records count only when they are of the same window length.
+    @Test func localRecordsOfAnotherWindowLengthAreNotEvidence() throws {
+        var trend = WeeklyQuotaTrend()
+        trend.record(try monthly(hours: 48, remaining: 76))
+        let reset = start.addingTimeInterval(20 * 86_400)
+        let sameLength = (0..<4).map {
+            LocalQuotaObservation(at: start.addingTimeInterval(Double($0) * 12 * 3600), resetAt: reset, remaining: 80 - Double($0),
+                                  bucketID: "codex", plan: "free", windowMinutes: 43_200)
+        }
+        let weekly = LocalQuotaObservation(at: start.addingTimeInterval(6 * 3600), resetAt: reset, remaining: 10,
+                                           bucketID: "codex", plan: "free")
+        #expect(weekly.windowMinutes == 10_080)
+        let now = start.addingTimeInterval(48 * 3600 + 60)
+        let display = trend.display(local: sameLength + [weekly], now: now)
+        #expect(display.points.map(\.remaining).contains(80) && !display.points.map(\.remaining).contains(10))
+        #expect(try #require(display.pace).estimate != nil)
+    }
+    // Refs: US-32, AC-32.01. A month cannot label every day; its ticks are spaced so the labels stay readable.
+    @Test func dayTicksSpreadOutOverALongWindow() {
+        let calendar = Calendar.current
+        let from = calendar.startOfDay(for: start)
+        let week = QuotaChartTimeline.dayTicks(start: from, reset: from.addingTimeInterval(7 * 86_400 + 3600), calendar: calendar)
+        #expect(week.count == 8 && QuotaChartTimeline.tickStride(start: from, reset: from.addingTimeInterval(7 * 86_400 + 3600), calendar: calendar) == 1)
+        let reset = from.addingTimeInterval(35 * 86_400 + 3600)
+        let month = QuotaChartTimeline.dayTicks(start: from, reset: reset, calendar: calendar)
+        let stride = QuotaChartTimeline.tickStride(start: from, reset: reset, calendar: calendar)
+        #expect(stride == 7 && month.count == 6 && month.first == from)
+        #expect(zip(month, month.dropFirst()).allSatisfy { calendar.dateComponents([.day], from: $0, to: $1).day == 7 })
+        // Daily ticks are named by weekday; spaced ones by their date.
+        #expect(QuotaChartTimeline.tickLabel(from, stride: 1) == from.formatted(.dateTime.weekday(.abbreviated)))
+        #expect(QuotaChartTimeline.tickLabel(from, stride: 7) == from.formatted(.dateTime.month(.abbreviated).day()))
+    }
     @Test func smallResetTimeDriftKeepsOneWindowButALaterResetStartsANewOne() throws {
         // AC-32.01, AC-32.03: reported reset drift within tolerance is the same window.
         var trend = WeeklyQuotaTrend()
