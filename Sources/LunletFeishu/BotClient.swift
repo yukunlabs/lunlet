@@ -4,6 +4,7 @@
 // Refs: US-14, AC-14.01, AC-14.02, AC-14.03, AC-14.06.
 // Refs: US-01, AC-01.02, AC-01.04, AC-01.05; US-06, AC-06.01, AC-06.05.
 // Refs: US-10, AC-10.01, AC-10.03, AC-10.04; US-12, AC-12.02, AC-12.04.
+// Refs: US-05, AC-05.09; US-11, AC-11.01.
 import Foundation
 import LunletCore
 
@@ -11,6 +12,22 @@ public enum FeishuBotFailure: Error, Equatable, Sendable {
     case disconnected, invalidRequest, invalidResponse, authenticationRejected
     case permissionDenied, rateLimited, unavailable, deliveryUncertain
     case providerRejected(Int)
+}
+
+extension FeishuBotFailure {
+    /// Provider codes that describe a busy or failing service, not this app's standing.
+    static let transientProviderCodes: Set<Int> = [1, 1_000_040_343]
+
+    /// The provider's verdict on this app's credentials or permissions: trying again cannot change it, so it
+    /// waits for the owner (Check authorization or a new enrollment). Faults of the network, of one answer or of
+    /// one frame are not verdicts.
+    var isVerdict: Bool {
+        switch self {
+        case .authenticationRejected, .permissionDenied: true
+        case .providerRejected(let code): !Self.transientProviderCodes.contains(code)
+        case .disconnected, .invalidRequest, .invalidResponse, .rateLimited, .unavailable, .deliveryUncertain: false
+        }
+    }
 }
 
 /// One immutable card and provider deduplication identity. It grants no local access.

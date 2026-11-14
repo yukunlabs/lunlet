@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
-// Refs: US-20, AC-20.04, AC-20.05, AC-20.06; US-12, AC-12.02.
+// Refs: US-20, AC-20.04, AC-20.05, AC-20.06; US-12, AC-12.02; US-36, AC-36.02; US-11, AC-11.01.
 import Foundation
 import LunletCore
 
@@ -72,6 +72,7 @@ private final class OwnedChannelSocket: ChannelSocket, @unchecked Sendable {
     private let task: URLSessionWebSocketTask
     private let lock = NSLock()
     private var pending: CheckedContinuation<URLSessionWebSocketTask.Message, any Error>?
+    private var pings: [PingWaiter] = []
     private var closed = false
     init(task: URLSessionWebSocketTask) { self.task = task }
     /// A pending receive is resumed by the socket's next message, by cancellation or by `close`, whichever comes
@@ -112,10 +113,53 @@ private final class OwnedChannelSocket: ChannelSocket, @unchecked Sendable {
         do { try await task.send(.string(text)) }
         catch { throw Task.isCancelled ? BotChannelFailure.canceled : BotChannelFailure.unavailable }
     }
+    /// A WebSocket ping, resumed by its pong, by an error, by cancellation or by `close`, whichever comes first;
+    /// like a pending receive, it never relies on the system task to call back after a cancel.
+    func ping() async throws {
+        let waiter = PingWaiter()
+        guard !Task.isCancelled else { throw BotChannelFailure.canceled }
+        let registered = lock.withLock { () -> Bool in
+            guard !closed else { return false }
+            pings.append(waiter)
+            return true
+        }
+        guard registered else { throw BotChannelFailure.canceled }
+        defer { lock.withLock { pings.removeAll { $0 === waiter } } }
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+                guard waiter.arm(continuation) else { return }
+                task.sendPing { error in waiter.finish(error == nil ? .success(()) : .failure(BotChannelFailure.unavailable)) }
+            }
+        } onCancel: { waiter.finish(.failure(BotChannelFailure.canceled)) }
+    }
     func close() {
-        lock.lock(); closed = true; lock.unlock()
+        lock.lock(); closed = true; let waiting = pings; pings.removeAll(); lock.unlock()
         task.cancel(with: .goingAway, reason: nil)
         finish(.failure(BotChannelFailure.canceled))
+        for waiter in waiting { waiter.finish(.failure(BotChannelFailure.canceled)) }
     }
     deinit { task.cancel(with: .goingAway, reason: nil) }
+}
+
+/// One ping's waiter: resumed exactly once, by whichever of its endings comes first.
+private final class PingWaiter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Void, any Error>?
+    private var result: Result<Void, any Error>?
+    /// Stores the continuation unless the ping already ended, in which case it is resumed at once.
+    func arm(_ continuation: CheckedContinuation<Void, any Error>) -> Bool {
+        lock.lock()
+        if let result { lock.unlock(); continuation.resume(with: result); return false }
+        self.continuation = continuation
+        lock.unlock()
+        return true
+    }
+    func finish(_ result: Result<Void, any Error>) {
+        lock.lock()
+        guard self.result == nil else { lock.unlock(); return }
+        self.result = result
+        let pending = continuation; continuation = nil
+        lock.unlock()
+        pending?.resume(with: result)
+    }
 }

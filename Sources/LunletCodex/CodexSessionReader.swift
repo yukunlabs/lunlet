@@ -4,7 +4,7 @@
 // Refs: US-02, AC-02.08.
 // Refs: US-15, AC-15.02.
 // Refs: US-02, AC-02.01, AC-02.02, AC-02.05; US-03, AC-03.01; US-11, AC-11.06; US-13, AC-13.01, AC-13.04.
-// Refs: US-06, AC-06.02, AC-06.03, AC-06.05.
+// Refs: US-06, AC-06.02, AC-06.03, AC-06.05; US-25, AC-25.01.
 import Darwin
 import Foundation
 import CryptoKit
@@ -52,9 +52,12 @@ struct CodexSessionReader {
     /// and the completion record names no final message of its own.
     private var latestReply: String?
     private var recovering = false
-    private let maximumLine = 2_097_152
-    private let maximumRead = 4_194_304
-    init(file: CodexRolloutFile) { self.file = file }
+    private let maximumLine: Int
+    private let maximumRead: Int
+    /// The bounds are parameters so tests can cross them with small records.
+    init(file: CodexRolloutFile, maximumLine: Int = 2_097_152, maximumRead: Int = 4_194_304) {
+        self.file = file; self.maximumLine = maximumLine; self.maximumRead = maximumRead
+    }
 
     mutating func read() throws -> CodexSessionRead {
         try Task.checkCancellation()
@@ -78,11 +81,17 @@ struct CodexSessionReader {
         var budget = maximumRead
         while budget > 0, offset < size {
             try Task.checkCancellation()
-            let count = min(65_536, budget, Int(size - offset))
-            let chunk = try handle.read(upToCount: count) ?? Data()
-            guard !chunk.isEmpty else { break }
-            offset += UInt64(chunk.count); budget -= chunk.count
-            try consume(chunk)
+            // Foundation returns each chunk and each decoded record autoreleased. The monitor reads every open
+            // rollout in one job, so without a pool per chunk all of them stay allocated until it ends (AC-25.01).
+            let more = try autoreleasepool { () throws -> Bool in
+                let count = min(65_536, budget, Int(size - offset))
+                let chunk = try handle.read(upToCount: count) ?? Data()
+                guard !chunk.isEmpty else { return false }
+                offset += UInt64(chunk.count); budget -= chunk.count
+                try consume(chunk)
+                return true
+            }
+            if !more { break }
         }
         guard let content else { throw CodexSessionReadFailure.invalidIdentity }
         let needsCatchup = offset < size
@@ -127,7 +136,10 @@ struct CodexSessionReader {
             let end = chunk[cursor...].firstIndex(of: 10) ?? chunk.endIndex
             if !droppingLine {
                 if pending.count + end - cursor > maximumLine {
-                    pending.removeAll(keepingCapacity: true); droppingLine = true; unconfirm()
+                    var head = Data(pending.prefix(RolloutRecordPrefix.length))
+                    head.append(chunk[cursor..<min(end, cursor + RolloutRecordPrefix.length - head.count)])
+                    pending.removeAll(keepingCapacity: true); droppingLine = true
+                    dropped(RolloutRecordPrefix(head))
                 } else { pending.append(chunk[cursor..<end]) }
             }
             if end < chunk.endIndex {
@@ -135,6 +147,25 @@ struct CodexSessionReader {
                 pending.removeAll(keepingCapacity: true); droppingLine = false
             }
             cursor = end < chunk.endIndex ? end + 1 : end
+        }
+    }
+    /// A record too large to decode, judged by what its first bytes show. Tool outputs, images and compaction records
+    /// are the ones that grow this large, and they change no state; a record that may have changed it leaves the
+    /// state unconfirmed (AC-02.05).
+    private mutating func dropped(_ record: RolloutRecordPrefix) {
+        switch (record.type, record.payloadType) {
+        case ("event_msg"?, "agent_message"?):
+            // It may have been the final message, so an earlier one never stands in for it.
+            latestReply = nil
+        case ("event_msg"?, let kind?):
+            if ["task_started", "task_complete", "turn_aborted"].contains(kind) { unconfirm() }
+        case ("response_item"?, "message"?):
+            unconfirm()
+            // An unread request is still the latest one, so the request before it is no longer shown as such (AC-06.02).
+            if record.payloadRole == "user" { content?.localPreview = nil }
+        case (nil, _), ("event_msg"?, nil), ("response_item"?, nil): unconfirm()
+        // Other response items and other record types are ones this reader passes over when it can decode them.
+        default: break
         }
     }
     /// A dropped or unreadable line may have been the final message, so an earlier one never stands in for it.

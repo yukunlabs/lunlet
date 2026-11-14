@@ -29,33 +29,18 @@ private struct HueSpectrum: View {
     @Binding var selection: Color
     @FocusState private var focused: Bool
     @ViewState private var editing = HueEditingState()
-    private let thumbSize: CGFloat = 16
     private var rgb: NSColor { NSColor(selection).usingColorSpace(.sRGB) ?? .systemPurple }
     private var hue: Double { editing.hue }
-    private var spectrum: [Color] {
-        (0...12).map { Color(hue: Double($0) / 12, saturation: 0.72, brightness: 0.94) }
-    }
 
     var body: some View {
         GeometryReader { geometry in
-            let travel = max(1, geometry.size.width - thumbSize)
-            ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(LinearGradient(colors: spectrum, startPoint: .leading, endPoint: .trailing))
-                    .overlay(Capsule().strokeBorder(.black.opacity(0.08), lineWidth: 0.5))
-                    .frame(height: 8).padding(.horizontal, thumbSize / 2)
-                Circle().fill(selection)
-                    .overlay(Circle().strokeBorder(.white, lineWidth: 2))
-                    .shadow(color: .black.opacity(0.22), radius: 1.5, y: 0.5)
-                    .frame(width: thumbSize, height: thumbSize)
-                    .overlay(Circle().strokeBorder(.primary.opacity(focused ? 0.25 : 0), lineWidth: 0.5))
-                    .offset(x: travel * hue)
-            }
-            .frame(height: geometry.size.height).contentShape(Rectangle())
-            .gesture(DragGesture(minimumDistance: 0).onChanged { value in
-                focused = true
-                setHue(Double((value.location.x - thumbSize / 2) / travel))
-            })
+            let travel = max(1, geometry.size.width - HueTrack.thumbSize)
+            HueTrack(hue: hue, selection: selection, focused: focused)
+                .frame(height: geometry.size.height).contentShape(Rectangle())
+                .gesture(DragGesture(minimumDistance: 0).onChanged { value in
+                    focused = true
+                    setHue(Double((value.location.x - HueTrack.thumbSize / 2) / travel))
+                })
         }
         .focusable().focusEffectDisabled().focused($focused)
         .onAppear { editing.synchronize(rgb) }
@@ -82,6 +67,37 @@ private struct HueSpectrum: View {
 
     private func setHue(_ value: Double) {
         selection = Color(nsColor: editing.choose(value, from: rgb))
+    }
+}
+
+/// The spectrum and its thumb as drawn for one hue; keyboard focus is an input so the drawing can be checked.
+struct HueTrack: View {
+    static let thumbSize: CGFloat = 16
+    let hue: Double
+    let selection: Color
+    let focused: Bool
+    private var spectrum: [Color] {
+        (0...12).map { Color(hue: Double($0) / 12, saturation: 0.72, brightness: 0.94) }
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            let travel = max(1, geometry.size.width - Self.thumbSize)
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(LinearGradient(colors: spectrum, startPoint: .leading, endPoint: .trailing))
+                    .overlay(Capsule().strokeBorder(.black.opacity(0.08), lineWidth: 0.5))
+                    // The system focus color around the spectrum, as on the panel's segmented controls (AC-16.01).
+                    .overlay { if focused { Capsule().stroke(Color(nsColor: .keyboardFocusIndicatorColor), lineWidth: 3).padding(-1.5) } }
+                    .frame(height: 8).padding(.horizontal, Self.thumbSize / 2)
+                Circle().fill(selection)
+                    .overlay(Circle().strokeBorder(.white, lineWidth: 2))
+                    .shadow(color: .black.opacity(0.22), radius: 1.5, y: 0.5)
+                    .frame(width: Self.thumbSize, height: Self.thumbSize)
+                    .offset(x: travel * hue)
+            }
+            .frame(height: geometry.size.height)
+        }
     }
 }
 

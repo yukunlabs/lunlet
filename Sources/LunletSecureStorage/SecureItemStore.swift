@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
 // Refs: US-12, AC-12.02.
-// Refs: US-14, AC-14.01, AC-14.02, AC-14.03, AC-14.06.
+// Refs: US-14, AC-14.01, AC-14.02, AC-14.03, AC-14.06, AC-14.07.
 // Refs: US-01, AC-01.02, AC-01.04, AC-01.05.
 // Refs: US-20, AC-20.04, AC-20.06 (shared process interaction policy).
 import Foundation
@@ -47,9 +47,14 @@ package struct SecureItemStore: Sendable {
         let keychain = keychain, signingIdentity = signingIdentity
         return try await KeychainExecutor.run {
             let operation = DiagnosticOperation()
+            // A build without a certificate (the unsigned preview) has no Keychain access by design: its credentials
+            // live in the credential file. That is recorded as unavailable, never as a failure in the error log.
+            guard signingIdentity() else {
+                DiagnosticLog.record(event, component: .keychain, outcome: .unavailable, operation: operation)
+                throw EnrollmentIdentityFailure.certificateRequired
+            }
             DiagnosticLog.record(event, component: .keychain, outcome: .started, operation: operation)
             do {
-                guard signingIdentity() else { throw EnrollmentIdentityFailure.certificateRequired }
                 let result = try KeychainExecutor.withInteraction(allowed: interactionAllowed, keychain: keychain) {
                     try body(access)
                 }

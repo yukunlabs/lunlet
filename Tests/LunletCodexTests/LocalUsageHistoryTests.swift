@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
 // Refs: US-32, AC-32.01, AC-32.02, AC-32.03, AC-32.07.
-// Refs: US-04, AC-04.11; US-02, AC-02.08.
+// Refs: US-04, AC-04.11; US-02, AC-02.08; US-25, AC-25.01.
 // Refs: US-18, AC-18.01, AC-18.02, AC-18.03.
 // Refs: US-04, AC-04.02, AC-04.03, AC-04.05, AC-04.08; US-12, AC-12.04.
 import Foundation
@@ -52,6 +52,180 @@ import LunletCore
         #expect(result.quotaHistory.count == 1)
         #expect(result.quotaHistory.first?.remaining == 77)
         #expect(result.quotaHistory.first?.resetAt == date("2026-10-30T12:00:00Z"))
+    }
+
+    // Refs: US-32, AC-32.02; US-04, AC-04.19. A plan without a weekly window records a longer one; its readings are
+    // kept for that window's own lookback and say how long their window is.
+    @Test func quotaHistoryKeepsALongerWindowForItsOwnLookback() async throws {
+        let directory = try root()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        func quota(_ at: String, used: Double, minutes: Int, reset: String, slot: String = "primary") throws -> String {
+            let window: [String: Any] = ["used_percent": used, "window_minutes": minutes, "resets_at": date(reset).timeIntervalSince1970]
+            let rate: [String: Any] = ["limit_id": "codex", "plan_type": "free", slot: window]
+            return try record("event_msg", ["type": "token_count", "info": NSNull(), "rate_limits": rate], at: at)
+        }
+        let lines = try header() + [
+            // Thirty-five days back: outside a 30-day window's lookback of 31 days.
+            quota("2026-09-21T12:00:00Z", used: 5, minutes: 43200, reset: "2026-10-20T12:00:00Z"),
+            // Twenty days back: far outside a week's lookback, inside a month's.
+            quota("2026-10-06T12:00:00Z", used: 12, minutes: 43200, reset: "2026-11-04T12:00:00Z"),
+            quota("2026-10-25T12:00:00Z", used: 30, minutes: 43200, reset: "2026-11-04T12:00:00Z"),
+            // A weekly record twenty days back is outside its own lookback, as before.
+            quota("2026-10-06T13:00:00Z", used: 50, minutes: 10080, reset: "2026-10-10T12:00:00Z", slot: "secondary"),
+            // The five-hour window is never the limit.
+            quota("2026-10-26T10:00:00Z", used: 70, minutes: 300, reset: "2026-10-26T15:00:00Z")
+        ]
+        try write(lines, to: directory)
+        let result = try await CodexLocalUsageReader(home: directory).readHistory(now: date("2026-10-26T20:00:00Z"), calendar: calendar)
+        #expect(result.quotaHistory.map(\.at) == ["2026-10-06T12:00:00Z", "2026-10-25T12:00:00Z"].map(date))
+        #expect(result.quotaHistory.map(\.remaining) == [88, 70] && result.quotaHistory.allSatisfy { $0.windowMinutes == 43_200 })
+        // A record with a weekly window beside a longer one keeps the weekly one, as the account's limit is chosen.
+        let both: [String: Any] = ["limit_id": "codex", "plan_type": "pro",
+                                   "primary": ["used_percent": 9.0, "window_minutes": 43200, "resets_at": date("2026-11-20T12:00:00Z").timeIntervalSince1970],
+                                   "secondary": ["used_percent": 23.0, "window_minutes": 10080, "resets_at": date("2026-10-30T12:00:00Z").timeIntervalSince1970]]
+        let other = try root()
+        defer { try? FileManager.default.removeItem(at: other) }
+        try write(try header() + [try record("event_msg", ["type": "token_count", "info": NSNull(), "rate_limits": both], at: "2026-10-26T12:00:00Z")], to: other)
+        let weekly = try await CodexLocalUsageReader(home: other).readHistory(now: date("2026-10-26T20:00:00Z"), calendar: calendar)
+        #expect(weekly.quotaHistory.map(\.remaining) == [77] && weekly.quotaHistory.first?.windowMinutes == 10_080)
+    }
+
+    // Refs: US-25, AC-25.01; US-04, AC-04.02. Long sessions leave rollouts of tens of megabytes with multi-megabyte lines.
+    @Test func aLargeRolloutIsScannedWithoutHoldingItInMemory() async throws {
+        let directory = try root()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try write(try header() + [try sample(usage(100, 20))], to: directory)
+        // 48 MiB of one-megabyte tool outputs follow the one usage sample.
+        let megabytes = 48
+        do {
+            let output = Data((try record("response_item", ["type": "function_call_output", "output": String(repeating: "x", count: 1_048_576)]) + "\n").utf8)
+            let handle = try FileHandle(forWritingTo: directory.appendingPathComponent("sessions/a.jsonl")); defer { try? handle.close() }
+            try handle.seekToEnd()
+            for _ in 0..<megabytes { try handle.write(contentsOf: output) }
+        }
+        // Holding the input costs about twice the file (its chunks and its decoded records); a draining scan
+        // stays near one line. The bound sits between.
+        let bound = UInt64(megabytes) * 1_048_576
+        var tokens: Int64?
+        let growth = try await FootprintSampler.leastGrowth(under: bound) {
+            tokens = try await CodexLocalUsageReader(home: directory).readHistory(now: date("2026-10-26T20:00:00Z"), calendar: calendar).sessions[session]?.tokens
+        }
+        #expect(tokens == 120)
+        #expect(growth < bound, "the scan grew the footprint by \(growth / 1_048_576) MiB")
+    }
+
+    // Refs: US-04, AC-04.03; US-25, AC-25.02. `now` is taken before the scan, so a record a running session writes
+    // while the scan runs is recorded usage, not a gap in coverage. Only a record dated beyond the scan's own end,
+    // which a moved clock produces, is left out and marks its session.
+    @Test func aRecordWrittenDuringTheScanCountsAndOnlyOneDatedBeyondItIsPartial() async throws {
+        let now = date("2026-10-26T20:00:00Z")
+        for (stamp, counted) in [("2026-10-26T20:00:00.200Z", true), ("2026-10-26T21:00:00Z", false)] {
+            let directory = try root()
+            defer { try? FileManager.default.removeItem(at: directory) }
+            try write(try header() + [sample(usage(100, 10)), sample(usage(200, 20), last: usage(100, 10), at: stamp)], to: directory)
+            // The scan is measured as taking one second.
+            let clock = SteppingClock(step: .seconds(1))
+            let reader = CodexLocalUsageReader(home: directory, limits: .init(), clock: { clock.next() })
+            let result = try await reader.readHistory(now: now, calendar: calendar)
+            #expect(result.sessions[session]?.tokens == (counted ? 220 : 110))
+            #expect(result.days.last?.amount.tokens == (counted ? 220 : 110))
+            #expect(result.partial == !counted && result.sessions[session]?.partial == !counted)
+        }
+    }
+
+    private func setModified(_ value: String, _ root: URL, name: String) throws {
+        try FileManager.default.setAttributes([.modificationDate: date(value)], ofItemAtPath: root.appendingPathComponent(name).path)
+    }
+    private let earlier = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
+    /// A second session's rollout whose records all carry one timestamp.
+    private func rollout(_ id: UUID, at: String, _ lines: [String] = []) throws -> [String] {
+        [try record("session_meta", ["id": id.uuidString], at: at), try record("turn_context", ["model": "gpt-6.1-sol"], at: at),
+         try sample(usage(50, 5), at: at)] + lines
+    }
+
+    // Refs: US-04, AC-04.02, AC-04.03. The records that outgrow the line bound are tool outputs and images, which
+    // carry no usage; one that is, or may be, an accounting record still marks coverage.
+    @Test func anOversizedRecordThatCarriesNoUsageDoesNotMarkHistoryPartial() async throws {
+        let filler = String(repeating: "x", count: 3000)
+        // Codex writes the timestamp, the record type, then the payload with its own type first.
+        func line(_ type: String, _ payload: String) -> String {
+            #"{"timestamp":"2026-10-26T12:30:00Z","type":""# + type + #"","payload":{"type":""# + payload + #"","output":""# + filler + #""}}"#
+        }
+        func read(_ oversized: String) async throws -> LocalUsageHistory {
+            let directory = try root()
+            defer { try? FileManager.default.removeItem(at: directory) }
+            try write(try header() + [sample(usage(100, 10)), oversized,
+                                      sample(usage(200, 20), last: usage(100, 10), at: "2026-10-26T13:00:00Z")], to: directory)
+            return try await CodexLocalUsageReader(home: directory, limits: .init(maxLineBytes: 2048))
+                .readHistory(now: date("2026-10-26T20:00:00Z"), calendar: calendar)
+        }
+        for harmless in [line("response_item", "function_call_output"), line("event_msg", "exec_command_end"), line("compacted", "summary")] {
+            let result = try await read(harmless)
+            #expect(!result.partial && result.sessions[session]?.partial == false)
+            #expect(result.sessions[session]?.tokens == 220 && result.days.last?.amount.partial == false)
+        }
+        // Another writer's key order leaves the type beyond the kept prefix, so the record cannot be ruled out.
+        let unordered = #"{"payload":{"output":""# + filler + #"","type":"function_call_output"},"timestamp":"2026-10-26T12:30:00Z","type":"response_item"}"#
+        for possible in [line("event_msg", "token_count"), line("turn_context", "x"), line("session_meta", "x"), unordered] {
+            #expect(try await read(possible).partial)
+        }
+    }
+
+    // Refs: US-04, AC-04.02, AC-04.03, AC-04.11. Damage marks its own session and the days its rollout spans; a
+    // rollout last written before the shown days cannot hold their usage.
+    @Test func damageInARolloutMarksItsSessionAndOnlyTheShownDaysItSpans() async throws {
+        let directory = try root()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let now = date("2026-10-26T20:00:00Z")
+        try write(try header() + [sample(usage(100, 10))], to: directory)
+        try write(try rollout(earlier, at: "2026-09-20T12:00:00Z", ["{broken"]), to: directory, name: "sessions/old.jsonl")
+        try setModified("2026-09-20T13:00:00Z", directory, name: "sessions/old.jsonl")
+        let reader = CodexLocalUsageReader(home: directory)
+        let result = try await reader.readHistory(now: now, calendar: calendar)
+        #expect(!result.partial && result.days.allSatisfy { !$0.amount.partial })
+        #expect(result.sessions[earlier]?.partial == true && result.sessions[session]?.partial == false)
+        #expect(result.days.last?.amount.tokens == 110)
+        // The same damage in a rollout written yesterday marks yesterday, not today or the days before it.
+        let recent = UUID(uuidString: "00000000-0000-0000-0000-000000000003")!
+        try write(try rollout(recent, at: "2026-10-25T12:00:00Z", ["{broken"]), to: directory, name: "sessions/recent.jsonl")
+        try setModified("2026-10-25T13:00:00Z", directory, name: "sessions/recent.jsonl")
+        let marked = try await reader.readHistory(now: now, calendar: calendar)
+        #expect(marked.partial && marked.days.map(\.amount.partial) == [false, false, false, true, false])
+        #expect(marked.sessions[recent]?.partial == true && marked.sessions[session]?.partial == false)
+    }
+
+    // Refs: US-04, AC-04.08; US-25, AC-25.01. A bounded scan reads the newest rollouts first; what it leaves unread
+    // limits coverage only when it was written within the shown days.
+    @Test func unreadRolloutsOlderThanTheShownDaysDoNotMarkHistoryPartial() async throws {
+        let directory = try root()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let now = date("2026-10-26T20:00:00Z")
+        try write(try header() + [sample(usage(100, 10))], to: directory)
+        let size = try #require(try FileManager.default.attributesOfItem(atPath: directory.appendingPathComponent("sessions/a.jsonl").path)[.size] as? Int)
+        try write(try rollout(earlier, at: "2026-09-20T12:00:00Z"), to: directory, name: "sessions/old.jsonl")
+        try setModified("2026-09-20T13:00:00Z", directory, name: "sessions/old.jsonl")
+        // The byte budget admits the current rollout and the byte that observes its end, then stops inside the older one.
+        let limits = LocalUsageReadLimits(maxBytes: size + 1)
+        let result = try await CodexLocalUsageReader(home: directory, limits: limits).readHistory(now: now, calendar: calendar)
+        #expect(!result.partial && result.days.last?.amount.tokens == 110 && result.days.last?.amount.partial == false)
+        #expect(result.sessions[earlier] == nil && result.sessions[session]?.partial == false)
+        try setModified("2026-10-25T12:00:00Z", directory, name: "sessions/old.jsonl")
+        #expect(try await CodexLocalUsageReader(home: directory, limits: limits).readHistory(now: now, calendar: calendar).partial)
+    }
+
+    // Refs: US-32, AC-32.02; US-04, AC-04.03. Quota readings older than the forecast's lookback are never used, so
+    // they are not kept and do not use up the sample bound.
+    @Test func quotaReadingsOlderThanTheForecastLookbackDoNotUseTheSampleBound() async throws {
+        let directory = try root()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        func quota(_ at: String) throws -> String {
+            let window: [String: Any] = ["used_percent": 20.0, "window_minutes": 10080, "resets_at": date(at).timeIntervalSince1970 + 3 * 86_400]
+            return try record("event_msg", ["type": "token_count", "info": NSNull(), "rate_limits": ["limit_id": "codex", "secondary": window]], at: at)
+        }
+        try write(try header() + (1...4).map { try quota("2026-09-0\($0)T12:00:00Z") } + [sample(usage(100, 10))], to: directory)
+        let result = try await CodexLocalUsageReader(home: directory, limits: .init(maxSamples: 3))
+            .readHistory(now: date("2026-10-26T20:00:00Z"), calendar: calendar)
+        #expect(!result.partial && result.sessions[session]?.tokens == 110 && result.quotaHistory.isEmpty)
     }
 
     @Test func quotaLookbackIgnoresTheDisplayedRangeAndCollapsesIdenticalRuns() async throws {
@@ -420,6 +594,31 @@ import LunletCore
         #expect(linked.sessions.isEmpty)
     }
 
+    // Refs: US-04, AC-04.08, AC-04.11; US-25, AC-25.01. The file bound keeps the most recently written rollouts,
+    // wherever the directory lists them.
+    @Test func theFileBoundKeepsTheNewestRolloutsWhateverTheDirectoryOrder() async throws {
+        let ids = (1...3).map { UUID(uuidString: "00000000-0000-0000-0000-00000000001\($0)")! }
+        let now = date("2026-10-26T20:00:00Z")
+        for newest in ids.indices {
+            let directory = try root()
+            defer { try? FileManager.default.removeItem(at: directory) }
+            for (index, id) in ids.enumerated() {
+                let at = index == newest ? "2026-10-26T12:00:00Z" : "2026-09-20T12:00:00Z"
+                try write(try rollout(id, at: at), to: directory, name: "sessions/\(index).jsonl")
+                try setModified(at, directory, name: "sessions/\(index).jsonl")
+            }
+            let reader = CodexLocalUsageReader(home: directory, limits: .init(maxFiles: 1))
+            let result = try await reader.readHistory(now: now, calendar: calendar)
+            #expect(Array(result.sessions.keys) == [ids[newest]] && result.days.last?.amount.tokens == 55)
+            // The rollouts left out were last written before the shown days, so those days are complete.
+            #expect(!result.partial)
+            // One left out that was written within the shown days limits them.
+            let other = (newest + 1) % ids.count
+            try setModified("2026-10-25T12:00:00Z", directory, name: "sessions/\(other).jsonl")
+            #expect(try await reader.readHistory(now: now, calendar: calendar).partial)
+        }
+    }
+
     @Test func completeFinalLineWithoutNewlineRemainsReadable() async throws {
         let directory = try root()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -552,4 +751,77 @@ import LunletCore
         }
     }
 
+}
+
+/// A clock that advances by a fixed step each time it is read.
+final class SteppingClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = ContinuousClock.now
+    private let step: Duration
+    init(step: Duration) { self.step = step }
+    func next() -> ContinuousClock.Instant {
+        lock.lock(); defer { lock.unlock() }
+        value += step
+        return value
+    }
+}
+
+/// Samples this process's physical footprint on its own thread, so a scan that holds its input in memory is
+/// seen while it runs; the growth is over the footprint at creation.
+final class FootprintSampler: @unchecked Sendable {
+    private let lock = NSLock()
+    private let baseline: UInt64
+    private var peak: UInt64
+    private var running = true
+    init() {
+        baseline = Self.footprint(); peak = baseline
+        Thread.detachNewThread { [self] in
+            while true {
+                let value = Self.footprint()
+                lock.lock(); peak = max(peak, value); let more = running; lock.unlock()
+                if !more { return }
+                usleep(500)
+            }
+        }
+    }
+    /// Stops sampling and returns the largest growth seen, in bytes.
+    func stop() -> UInt64 {
+        lock.lock(); defer { lock.unlock() }
+        running = false
+        return peak - baseline
+    }
+    private static func footprint() -> UInt64 {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count) }
+        }
+        return result == KERN_SUCCESS ? info.phys_footprint : 0
+    }
+}
+
+extension FootprintSampler {
+    /// The least growth over up to `attempts` runs of `body`, stopping at the first run under `bound`. Tests run in
+    /// parallel in one process, so one run's reading can include what another test allocated meanwhile; a scan that
+    /// holds its input exceeds the bound on every run.
+    static func leastGrowth(under bound: UInt64, attempts: Int = 3, _ body: () async throws -> Void) async rethrows -> UInt64 {
+        var least = UInt64.max
+        for _ in 0..<attempts {
+            let sampler = FootprintSampler()
+            try await body()
+            least = min(least, sampler.stop())
+            if least < bound { break }
+        }
+        return least
+    }
+    static func leastGrowth(under bound: UInt64, attempts: Int = 3, _ body: () throws -> Void) rethrows -> UInt64 {
+        var least = UInt64.max
+        for _ in 0..<attempts {
+            let sampler = FootprintSampler()
+            try body()
+            least = min(least, sampler.stop())
+            if least < bound { break }
+        }
+        return least
+    }
 }

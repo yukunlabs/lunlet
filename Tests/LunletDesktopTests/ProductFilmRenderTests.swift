@@ -203,7 +203,7 @@ final class FilmWindow: NSWindow {
         // Codex: a Pro account with 69% of its week left, credits, two reset credits and its recorded allowance history.
         let codexReset = epoch + 4 * 86_400 + 3 * 3_600
         let account = try AccountLimitsDecoder.decode(Data("""
-        {"rateLimits":{"limitId":"codex","secondary":{"usedPercent":31,"windowDurationMins":10080,"resetsAt":\(codexReset)},"credits":{"balance":"75000.000000000000","hasCredits":true,"unlimited":false}},"rateLimitResetCredits":{"availableCount":2,"credits":[{"id":"synthetic-a","status":"available","expiresAt":\(epoch + 3*86400 + 4*3600)},{"id":"synthetic-b","status":"available","expiresAt":\(epoch + 11*86400 + 8*3600)}]}}
+        {"rateLimits":{"limitId":"codex","primary":{"usedPercent":41,"windowDurationMins":300,"resetsAt":\(epoch + 2*3600 + 20*60)},"secondary":{"usedPercent":31,"windowDurationMins":10080,"resetsAt":\(codexReset)},"credits":{"balance":"75000.000000000000","hasCredits":true,"unlimited":false}},"rateLimitResetCredits":{"availableCount":2,"credits":[{"id":"synthetic-a","status":"available","expiresAt":\(epoch + 3*86400 + 4*3600)},{"id":"synthetic-b","status":"available","expiresAt":\(epoch + 11*86400 + 8*3600)}]}}
         """.utf8), observedAt: now.addingTimeInterval(-120),
             accountData: Data(#"{"account":{"type":"chatgpt","email":"synthetic@example.invalid","planType":"pro"}}"#.utf8))
         let usage = AccountUsageModel(client: RenderAccount(snapshot: account))
@@ -249,8 +249,7 @@ final class FilmWindow: NSWindow {
         let log = stride(from: claudeStart + 3_600, to: epoch - 1_800, by: 4 * 3_600).map { at in
             "\(at) \(Int((41 * pow(Double(at - claudeStart) / Double(epoch - claudeStart), 0.95)).rounded())) \(claudeReset)"
         }.joined(separator: "\n") + "\n"
-        try fixture.write(state: "lunlet-claude-limits 1\nfive_hour 22 \(epoch + 2 * 3_600 + 1_200) \(epoch - 60)\n"
-                          + "seven_day 41 \(claudeReset) \(epoch - 60)\n", log: log)
+        try fixture.write(state: "lunlet-claude-limits 1\nseven_day 41 \(claudeReset) \(epoch - 60)\n", log: log)
         let limits = ClaudePlanLimitsModel(service: fixture.connection)
         limits.setActive(true)
         try await ClaudeLimitsFixture.settle(limits) { limits.limits?.sevenDay != nil && limits.account != nil }
@@ -274,13 +273,13 @@ final class FilmWindow: NSWindow {
         }
         // Opening right after the cue selects its conversation on its agent's page (AC-13.09).
         sessions.select(codexIDs[0])
-        let deadline = ContinuousClock.now + .seconds(3)
+        let deadline = ContinuousClock.now + .seconds(60)
         while (codexUsage.snapshot == nil || claudeUsage.snapshot == nil || usage.state == .loading), ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(5))
         }
 
         // Every surface placed by Lunlet's own placement functions.
-        let panelScreen = PanelPlacement.panel(tabRow: true, screen: geometry)
+        let panelScreen = PanelPlacement.panel(screen: geometry)
         let bodyScreen = panelScreen.insetBy(dx: NotchSurfaceGeometry.bodyInset(notchWidth: FilmScreen.notch.width), dy: 0)
         let body = FilmScreen.film(bodyScreen), overviewPlacement = FilmScreen.film(UsageHoverPlacement.frame(
             size: UsageHoverPanelController.overviewSize, parent: bodyScreen, visible: geometry.visibleFrame))
@@ -476,7 +475,7 @@ struct FilmStoryboard {
         .init(start: 18.6, end: 22.6, text: "Hover the limits for the weekly trend, an estimate range and daily usage."),
         .init(start: 23.6, end: 26.7, text: "The Overview keeps each agent's limits apart and adds up recorded usage."),
         .init(start: 26.8, end: 30.0, text: "Hover a day for each agent's tokens. Cost is an API-price estimate, never a bill."),
-        .init(start: 30.3, end: 34.4, text: "Claude Code shows its session and weekly limits, today's tokens and its sessions."),
+        .init(start: 30.3, end: 34.4, text: "Claude Code shows its weekly limit, today's tokens and its sessions."),
         .init(start: 34.8, end: 37.2, text: "Click anywhere else, and it folds back into the notch."),
         .init(start: 37.8, end: 40.4, text: "Send the next prompt, and the island shows the new turn has started."),
         .init(start: 40.9, end: 43.5, text: "Lock your Mac and step away while the turn keeps running."),

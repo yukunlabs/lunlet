@@ -3,7 +3,7 @@
 // Refs: US-02, AC-02.02, AC-02.03, AC-02.05; US-03, AC-03.01, AC-03.03, AC-03.04.
 // Refs: US-13, AC-13.01, AC-13.02, AC-13.03, AC-13.04, AC-13.05, AC-13.06; US-12, AC-12.04.
 // Refs: US-11, AC-11.03; US-13, AC-13.07, AC-13.09.
-// Refs: US-15, AC-15.01, AC-15.02, AC-15.03, AC-15.04.
+// Refs: US-15, AC-15.01, AC-15.02, AC-15.03, AC-15.04; US-25, AC-25.01.
 import Combine
 import Foundation
 import Testing
@@ -20,6 +20,7 @@ import LunletCore
     var now: TimeInterval = 0
     var available = false
 }
+@MainActor private final class ReadCounter { var reads = 0 }
 
 /// The waiting count that the menu-bar and notch entries actually present.
 @MainActor private func waiting(_ model: SessionListModel) -> Int? { model.compactStatus.waiting }
@@ -60,6 +61,42 @@ import LunletCore
         #expect(statuses.map(\.running) == [nil, 0, 1, 0])
         #expect(availability == [false, true])
         withExtendedLifetime(observations) {}
+    }
+    // Refs: US-25, AC-25.01; US-13, AC-13.01, AC-13.06. A streaming session sends several records a second. The
+    // display is read before a cue not handed over before, and otherwise at most once a second; a record that
+    // changes nothing is not published again.
+    @Test func aStreamingSessionDoesNotAskTheDisplayOrPublishOnEveryRecord() {
+        let clock = CueEnvironment(), display = ReadCounter(), sink = CueSink()
+        let model = SessionListModel(displayAvailable: { display.reads += 1; return true }, elapsed: { clock.now }, presenter: sink)
+        defer { model.shutdown() }
+        let id = UUID(), connection = UUID()
+        func running(_ turn: String) -> SessionSnapshot {
+            .init(observation: .init(sessionID: id, connectionID: connection, liveness: .alive, phase: .running),
+                  project: "Synthetic", title: "Build", turnID: turn)
+        }
+        var published = 0
+        let observation = model.$sessions.dropFirst().sink { _ in published += 1 }
+        model.receive(running("one"), origin: .liveTransition)
+        #expect(display.reads == 1 && sink.visible.first?.turnID == "one" && published == 1)
+        for _ in 0..<50 { model.receive(running("one"), origin: .liveTransition) }
+        #expect(display.reads == 1 && published == 1)
+        // A new turn is a cue to act on: the display is read again before it is shown.
+        model.receive(running("two"), origin: .liveTransition)
+        #expect(display.reads == 2 && sink.visible.first?.turnID == "two" && published == 2)
+        // With nothing new to show the display is still read again, but not more than once a second.
+        clock.now = 1
+        model.receive(running("two"), origin: .liveTransition); model.receive(running("two"), origin: .liveTransition)
+        #expect(display.reads == 3 && published == 2)
+        observation.cancel()
+        // A display that became unavailable without a signal is found by that read, which hides what is shown.
+        let other = CueSink(), losing = SessionListModel(displayAvailable: { clock.available }, elapsed: { clock.now }, presenter: other)
+        defer { losing.shutdown() }
+        clock.available = true
+        losing.receive(running("three"), origin: .liveTransition)
+        #expect(other.visible.first?.turnID == "three")
+        clock.available = false; clock.now = 2.5
+        losing.receive(running("three"), origin: .liveTransition)
+        #expect(other.visible.isEmpty)
     }
     @Test func verifiedChildSessionsAreObservedButNotDisplayedOrAnnouncedAsConversations() {
         let sink = CueSink(), model = SessionListModel(displayAvailable: { true }, elapsed: { 0 }, presenter: sink)

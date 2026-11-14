@@ -4,6 +4,7 @@
 // Refs: US-09, AC-09.01, AC-09.02, AC-09.03; US-10, AC-10.01, AC-10.02, AC-10.03, AC-10.04.
 // Refs: US-11, AC-11.01, AC-11.02, AC-11.03, AC-11.05; US-12, AC-12.04.
 // Refs: US-06, AC-06.02.
+// Refs: US-14, AC-14.01.
 import Foundation
 import LunletCore
 
@@ -53,7 +54,7 @@ public actor FeishuReplyService {
     private var latest: [UUID: SessionSnapshot] = [:]
     private var connection: Connection?
     private var connectionID: UUID?
-    /// A connection that failed for a non-retryable reason waits for a new enrollment.
+    /// A connection the provider refused on the app's credentials or permissions waits for a new enrollment.
     private var blocked = false
     private var preparing = 0
     private var unbound: [UUID: ContinuousClock.Instant] = [:]
@@ -118,27 +119,63 @@ public actor FeishuReplyService {
     public func prepareReply(for snapshot: SessionSnapshot) async -> FeishuReplyCapability? {
         await flush()
         let session = snapshot.observation.sessionID
-        // Codex is the only agent with a validated original-CLI input path.
-        guard !closed, !blocked, replyWindow, owner?.isComplete == true, snapshot.provider == .codex,
-              snapshot.parentSessionID == nil, latest[session] == snapshot,
-              case .idle = snapshot.observation.phase, snapshot.observation.liveness == .alive else { return nil }
+        // Only a session with a verified original-CLI input path takes replies: Codex's queue, or Lunlet's channel
+        // helper running inside a Claude Code session (US-38).
+        // The newest observation must be this same turn. Its title, preview or activity time may change between
+        // two observations of one turn, also while the connection opens; those never decide a capability.
+        if let refusal = earlyRefusal(for: snapshot) { return refused(refusal) }
         preparing += 1
         startConnectionIfNeeded()
         var capability: FeishuReplyCapability?
-        if await waitForConnection(), !closed, replyWindow, latest[session] == snapshot {
-            // Opening the connection reconfigured access, which requires a fresh observation. This
-            // snapshot is still the newest local one, and dispatch rechecks the live binding.
-            await coordinator.observe(snapshot)
-            capability = await coordinator.prepareReply(for: snapshot)
-            if let issued = capability, latest[session] != snapshot {
+        // 10: the callback connection did not open, or the turn moved on while it did.
+        var refusal = 10
+        if await waitForConnection(), !closed, replyWindow, let current = latest[session], current.observesSameTurn(as: snapshot) {
+            // Opening the connection reconfigured access, which requires a fresh observation. The newest local
+            // observation is still this turn, and dispatch rechecks the live binding.
+            await coordinator.observe(current)
+            capability = await coordinator.prepareReply(for: current)
+            if capability == nil {
+                if let code = await coordinator.replyRefusal(for: current) { refusal = code }
+                else { refusal = await router.prepareRefusal(sessionID: session, form: .followup(field: FeishuReplyCapability.fieldName)) }
+            }
+            if let issued = capability, latest[session]?.observesSameTurn(as: snapshot) != true {
                 await coordinator.withdrawReply(issued)
                 if let newer = latest[session] { await coordinator.observe(newer) }
                 capability = nil
+                // 25: a newer observation of the session arrived while the control was issued.
+                refusal = 25
             }
         }
         preparing -= 1
-        if let capability { unbound[capability.token] = .now } else { await reevaluate() }
+        if let capability {
+            unbound[capability.token] = .now
+            DiagnosticLog.record(.replyControl, component: .feishu, outcome: .completed, operation: DiagnosticOperation())
+        } else {
+            await reevaluate()
+            return refused(refusal)
+        }
         return capability
+    }
+
+    /// The first check a snapshot fails before any connection is opened, as a number for the log: 1 closed, 2 the
+    /// provider refused this app, 3 the reply window is closed, 4 no verified owner, 5 the session has no input path,
+    /// 6 a child session, 7 not the newest observation's turn, 8 not idle, 9 not alive.
+    private func earlyRefusal(for snapshot: SessionSnapshot) -> Int? {
+        if closed { return 1 }
+        if blocked { return 2 }
+        if !replyWindow { return 3 }
+        if owner?.isComplete != true { return 4 }
+        if snapshot.inputPath == nil { return 5 }
+        if snapshot.parentSessionID != nil { return 6 }
+        if latest[snapshot.observation.sessionID]?.observesSameTurn(as: snapshot) != true { return 7 }
+        guard case .idle = snapshot.observation.phase else { return 8 }
+        return snapshot.observation.liveness == .alive ? nil : 9
+    }
+
+    /// Logs why a notice goes out without a reply box: a number, never the session or its content (AC-14.01).
+    private func refused(_ code: Int) -> FeishuReplyCapability? {
+        DiagnosticLog.record(.replyControl, component: .feishu, outcome: .unavailable, operation: DiagnosticOperation(), code: code)
+        return nil
     }
 
     /// Binds a sent card to its receipt; false means the card takes no replies. `card` renders that card in a
@@ -224,15 +261,15 @@ public actor FeishuReplyService {
         connectionID = nil
         let token = UUID(), runner = connect(), router = router
         let task = Task { [weak self] in
-            var failed = false
+            var verdict = false
             do {
                 try await runner.run(router: router,
                     onState: { [weak self] state in await self?.transport(state, token: token) },
                     onAction: { [weak self] action in Task { await self?.handle(action) } },
                     onRefusal: { [weak self] refusal in Task { await self?.report(refusal) } })
             } catch is CancellationError {
-            } catch { failed = true }
-            await self?.connectionEnded(token: token, failed: failed)
+            } catch { verdict = (error as? FeishuBotFailure)?.isVerdict ?? false }
+            await self?.connectionEnded(token: token, verdict: verdict)
         }
         connection = Connection(token: token, task: task)
     }
@@ -256,10 +293,12 @@ public actor FeishuReplyService {
         await configureCoordinator()
     }
 
-    private func connectionEnded(token: UUID, failed: Bool) async {
+    private func connectionEnded(token: UUID, verdict: Bool) async {
         guard connection?.token == token else { return }
         connection = nil
-        if failed { blocked = true }
+        // Only the provider's verdict on the app stops later cards from trying; a connection that gave up on a
+        // network fault or an unreadable answer is started again by the next finished turn (AC-05.09).
+        if verdict { blocked = true }
         if connectionID != nil { connectionID = nil; await configureCoordinator() }
     }
 

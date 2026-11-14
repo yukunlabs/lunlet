@@ -6,13 +6,22 @@ import Foundation
 import LunletClaude
 import LunletCore
 
-/// Claude windows in the same terms as Codex: percent left, reset times and the reading's
-/// age; the weekly forecast uses the shared Codex wording. Claude windows are never combined with Codex allowances.
+/// Claude's weekly window in the same terms as Codex: percent left, reset time and the reading's age; the forecast
+/// uses the shared Codex wording. Claude limits are never combined with Codex allowances.
 enum ClaudeLimitsText {
-    enum Window {
-        case session, week
-        var title: String { self == .session ? "Current session" : "This week" }
-    }
+    static let weekTitle = "This week"
+    /// The Limits card's help (AC-33.09, AC-33.11).
+    static let cardHelp = "Percent left and the reset time as Claude Code reported them through Lunlet's status line: official values, "
+        + "not estimates. The estimate beside them is drawn from those readings and is never a guarantee. Model-specific "
+        + "weekly limits are only in Claude Code's own /usage. Hover for the weekly trend and daily usage on this Mac."
+    /// What adding the status line changes and how it is undone (AC-33.08).
+    static let connectHelp = "Lunlet adds its status line to Claude Code's settings.json while Claude Code is "
+        + "selected, unless you undid it; an existing status line keeps running. A custom status line hides most of "
+        + "Claude Code's footer keyboard hints. Lunlet keeps only percent used and reset times and reads no credentials. "
+        + "Undo, or turning Claude Code off in Settings › Agents, restores the previous setting exactly."
+
+    /// What the weekly figure reads when there is no reading, on screen and for assistive tools alike (AC-24.02).
+    static func missing(connected: Bool) -> String { connected ? "Unknown" : "Not connected" }
 
     /// A window that applies now: nil when unknown or once its reset has passed.
     static func current(_ reading: LimitWindowReading?, now: Date) -> LimitWindowReading? {
@@ -37,8 +46,7 @@ enum ClaudeLimitsText {
 
     /// The reading's age, shown once it is more than a minute old.
     static func asOf(_ limits: ClaudePlanLimits?, now: Date, calendar: Calendar = .current) -> String? {
-        guard let at = [limits?.fiveHour?.at, limits?.sevenDay?.at].compactMap({ $0 }).max(),
-              now.timeIntervalSince(at) > 60 else { return nil }
+        guard let at = limits?.sevenDay?.at, now.timeIntervalSince(at) > 60 else { return nil }
         return "as of " + moment(at, now: now, calendar: calendar)
     }
 
@@ -62,9 +70,17 @@ enum ClaudeLimitsText {
             + "cache read \(categories.cacheRead) tokens"
     }
 
-    /// A time today, or an abbreviated weekday and time otherwise.
+    /// A time today; otherwise the day and the time (AC-04.01).
     static func moment(_ date: Date, now: Date, calendar: Calendar = .current) -> String {
         calendar.isDate(date, inSameDayAs: now) ? date.formatted(date: .omitted, time: .shortened)
-            : date.formatted(.dateTime.weekday(.abbreviated).hour().minute())
+            : day(date, now: now, calendar: calendar)
+    }
+
+    /// A day and a time: the abbreviated weekday within six days of now, either way; farther away a weekday no longer
+    /// tells the day, so the month and day stand in for it, as for the reset of a 30-day window (AC-04.01).
+    static func day(_ date: Date, now: Date, calendar: Calendar = .current) -> String {
+        let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: now), to: calendar.startOfDay(for: date)).day ?? 0
+        guard abs(days) > 6 else { return date.formatted(.dateTime.weekday(.abbreviated).hour().minute()) }
+        return date.formatted(.dateTime.month(.abbreviated).day()) + " " + date.formatted(date: .omitted, time: .shortened)
     }
 }

@@ -141,3 +141,23 @@ private let duration = CuePresentation.displayDuration
     #expect(panel.cues.first?.turnID == "new")
     #expect(panel.consumedCount == limit)
 }
+
+// AC-13.10: a waiting state cues once per entry from a live transition; a state already present at discovery, or a
+// replayed record, never cues (AC-13.04).
+@Test func aWaitingStateCuesOncePerEntryAndNeverFromABaselineOrAReplay() {
+    let presentation = CuePresentation()
+    presentation.setDisplayAvailable(true)
+    func waiting(_ entry: String) -> TaskCue {
+        TaskCue(sessionID: "s", connectionID: "c", turnID: "t", title: "lunlet", phase: .waiting(.approval), inputActivityID: entry)
+    }
+    presentation.receive(waiting("wait-1"), origin: .snapshot, now: 0)
+    #expect(presentation.cues.isEmpty)
+    presentation.receive(waiting("wait-1"), origin: .liveTransition, now: 1)
+    #expect(presentation.cues.isEmpty, "the entry seen at discovery is not a new one")
+    presentation.receive(waiting("wait-2"), origin: .liveTransition, now: 2)
+    #expect(presentation.cues == [waiting("wait-2")])
+    presentation.expire(now: 2 + CuePresentation.displayDuration)
+    #expect(presentation.cues.isEmpty)
+    presentation.receive(waiting("wait-2"), origin: .liveTransition, now: 10)
+    #expect(presentation.cues.isEmpty, "a replayed record does not cue again")
+}

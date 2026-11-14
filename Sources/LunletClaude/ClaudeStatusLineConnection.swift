@@ -34,6 +34,9 @@ public struct ClaudeStatusLineConnection: Sendable {
     public let location: ClaudeStatusLineLocation
     static let key = "statusLine"
     private static let maximumSettingsBytes = 4 * 1_048_576
+    /// Test seams standing in for another writer: run once the settings were read, and once they were replaced.
+    var afterRead: (@Sendable () -> Void)?
+    var afterWrite: (@Sendable () -> Void)?
 
     public init(home: ClaudeHome = .current(), location: ClaudeStatusLineLocation = .standard) {
         self.home = home; self.location = location
@@ -47,15 +50,28 @@ public struct ClaudeStatusLineConnection: Sendable {
         return .notConnected
     }
 
+    /// Each change is one read-modify-write run by the settings file's single editor, so it never overlaps the Stop
+    /// hook's and starts over when another writer changed the file underneath.
     public func connect() throws -> ClaudeStatusLineState {
+        try ClaudeSettingsEditor.edit(startingOverOn: ClaudeStatusLineFailure.settingsChanged) { try connectOnce() }
+    }
+    public func disconnect() throws -> ClaudeStatusLineState {
+        try ClaudeSettingsEditor.edit(startingOverOn: ClaudeStatusLineFailure.settingsChanged) { try disconnectOnce() }
+    }
+
+    private func connectOnce() throws -> ClaudeStatusLineState {
         let settings = try readSettings()
+        afterRead?()
         let document = try document(settings)
         let current = try document?.valueText(Self.key)
         if isLunlet(current) { try install(); return .connected }
         var previousCommand: String?, carried: [(String, String)] = []
         if let current {
             guard let value = Self.value(current) as? [String: Any], value["type"] as? String == "command",
-                  let command = value["command"] as? String, !command.isEmpty, command.utf8.count <= 65_536 else {
+                  let command = value["command"] as? String, !command.isEmpty, command.utf8.count <= 65_536,
+                  // A line that already runs Lunlet's script cannot be chained: the script would run it and it the
+                  // script, without end. It is not replaced.
+                  !command.contains(location.script.path) else {
                 throw ClaudeStatusLineFailure.unsupportedStatusLine
             }
             previousCommand = command
@@ -84,11 +100,13 @@ public struct ClaudeStatusLineConnection: Sendable {
             unlink(location.backup.path)
             throw error
         }
+        afterWrite?()
         return .connected
     }
 
-    public func disconnect() throws -> ClaudeStatusLineState {
+    private func disconnectOnce() throws -> ClaudeStatusLineState {
         let settings = try readSettings()
+        afterRead?()
         let document = try document(settings)
         let current = try document?.valueText(Self.key)
         let backup = readBackup()
@@ -108,6 +126,14 @@ public struct ClaudeStatusLineConnection: Sendable {
         }
         if let updated { try verify(updated, original: document.object, statusLine: backup?.previous) }
         try replace(settings, with: updated)
+        afterWrite?()
+        // Lunlet's script and its record of the previous line go only once the file is seen without Lunlet's line:
+        // another writer may have put an earlier copy back, and that copy would name a script that no longer exists
+        // while the owner's own line could no longer be restored.
+        let after: String?
+        do { after = try self.document(try readSettings())?.valueText(Self.key) }
+        catch { return .notConnected }  // Not readable back, so nothing shows the line is gone: the files stay.
+        if isLunlet(after) || after?.contains(location.script.path) == true { return try state() }
         removeLunletFiles(keepScript: false)
         return .notConnected
     }

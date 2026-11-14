@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
 // Refs: US-03, AC-03.01, AC-03.04, AC-03.05, AC-03.06, AC-03.07, AC-03.08, AC-03.09, AC-03.10, AC-03.11; US-04, AC-04.08.
-// Refs: US-12, AC-12.04, AC-12.05; US-13, AC-13.02; US-19, AC-19.05; US-24, AC-24.03.
+// Refs: US-12, AC-12.04, AC-12.05; US-13, AC-13.02; US-19, AC-19.05; US-24, AC-24.03; US-39, AC-39.05.
 import AppKit
 import OSLog
 import SwiftUI
@@ -26,17 +26,9 @@ extension EnvironmentValues {
     }
 }
 
-/// Content reports whether it shows a tab row below the notch band, so the panel keeps its page budget.
-struct CompanionPanelTabRow: PreferenceKey {
-    static let defaultValue = false
-    static func reduce(value: inout Bool, nextValue: () -> Bool) { value = value || nextValue() }
-}
-
 /// Header geometry the controller shares with its hosted content.
 @MainActor private final class CompanionPanelLayout: ObservableObject {
     @Published var band: NotchBand?
-    var tabRow = false
-    var tabRowChanged: (() -> Void)?
 }
 
 private struct CompanionPanelRoot: View {
@@ -45,12 +37,6 @@ private struct CompanionPanelRoot: View {
     let content: AnyView
     var body: some View {
         content.environment(\.companionPanelHost, host).environment(\.notchBand, layout.band)
-            .onPreferenceChange(CompanionPanelTabRow.self) { [layout] tabRow in
-                MainActor.assumeIsolated {
-                    guard layout.tabRow != tabRow else { return }
-                    layout.tabRow = tabRow; layout.tabRowChanged?()
-                }
-            }
     }
 }
 
@@ -74,6 +60,9 @@ extension NSScreen {
     private let layout = CompanionPanelLayout()
     private let screen: @MainActor () -> PanelScreen?
     private var preferredDisplay: NSNumber?
+    /// A screen rectangle to open beside as its bubble, the dog's head set by the pet entry; nil places the panel at
+    /// the notch or menu bar.
+    private var anchor: CGRect?
     private var content: (@MainActor () -> AnyView)?
     private var observations: [NotificationObservation] = []
     private var mouseMonitor: Any?
@@ -102,9 +91,12 @@ extension NSScreen {
         self.content = content
     }
     func show() { show(on: nil) }
-    func show(on display: NSScreen?) { present(on: display, pinned: true) }
-    private func present(on display: NSScreen?, pinned: Bool) {
+    func show(on display: NSScreen?) { show(on: display, near: nil) }
+    /// Opens as a bubble beside `anchor`, a screen rectangle such as the dog's head, instead of at the notch (AC-39.05).
+    func show(on display: NSScreen?, near anchor: CGRect?) { present(on: display, pinned: true, near: anchor) }
+    private func present(on display: NSScreen?, pinned: Bool, near anchor: CGRect? = nil) {
         guard !closed, let content else { return }
+        self.anchor = anchor
         if let display { preferredDisplay = display.displayNumber }
         guard let geometry = currentScreen else { return }
         hoverOpen?.cancel(); hoverOpen = nil
@@ -121,10 +113,6 @@ extension NSScreen {
             if observesSystemEvents { surface.hover = { [weak self] inside in self?.pointerChanged(inside) } }
             panel.contentView = surface; self.surface = surface
             window = panel
-            // A tab row appearing or disappearing while visible resizes the panel after SwiftUI's update.
-            layout.tabRowChanged = { [weak self] in
-                Task { @MainActor [weak self] in self?.fitTabRow() }
-            }
             if observesSystemEvents {
                 observations = [NotificationObservation(center: .default,
                                                         name: NSApplication.didChangeScreenParametersNotification) { [weak self] in
@@ -142,9 +130,7 @@ extension NSScreen {
             }
         }
         applyGeometry(geometry)
-        // Laying out reports the content's tab row; size the window for it before the expansion starts.
         surface?.layoutSubtreeIfNeeded()
-        if needsTabRowFit(geometry) { applyGeometry(geometry) }
         surface?.setExpanded(true, animated: motionAllowed())
         // This is a user-initiated open; task cues never use this key-window path.
         if pinned { window?.makeKeyAndOrderFront(nil) } else { window?.orderFrontRegardless() }
@@ -164,9 +150,17 @@ extension NSScreen {
             }
         }
     }
+    /// A visible bubble follows its anchor, as when the dog is dragged (AC-39.05); the notch panel ignores this.
+    func move(near anchor: CGRect) {
+        guard !closed, isVisible, self.anchor != nil, let geometry = currentScreen else { return }
+        self.anchor = anchor
+        applyGeometry(geometry)
+        surface?.setExpanded(presentationRequested, animated: false)
+    }
     func toggle() { toggle(on: nil) }
-    func toggle(on display: NSScreen?) {
-        if presentationRequested && isPinned { hide() } else if presentationRequested { pin() } else { show(on: display) }
+    func toggle(on display: NSScreen?) { toggle(on: display, near: nil) }
+    func toggle(on display: NSScreen?, near anchor: CGRect?) {
+        if presentationRequested && isPinned { hide() } else if presentationRequested { pin() } else { show(on: display, near: anchor) }
     }
     func pin() {
         guard isVisible, !closed else { return }
@@ -255,7 +249,7 @@ extension NSScreen {
         guard !closed else { return }
         closed = true; hide(animated: false); observations.removeAll()
         window?.close(); window?.contentView = nil; window = nil
-        surface?.hover = nil; surface = nil; layout.tabRowChanged = nil
+        surface?.hover = nil; surface = nil
         content = nil; beforeShow = nil; beforeHide = nil; visibilityChanged = nil
     }
     private var currentScreen: PanelScreen? {
@@ -264,24 +258,19 @@ extension NSScreen {
         }
         return screen()
     }
+    private func targetFrame(_ geometry: PanelScreen) -> CGRect {
+        anchor.map { PanelPlacement.panel(near: $0, screen: geometry) } ?? PanelPlacement.panel(screen: geometry)
+    }
     private func applyGeometry(_ geometry: PanelScreen) {
-        let frame = PanelPlacement.panel(tabRow: layout.tabRow, screen: geometry)
+        let frame = targetFrame(geometry)
         window?.setFrame(frame, display: true)
-        surface?.notchWidth = geometry.notch?.width
-        surface?.notchHeight = geometry.notch?.height ?? 0
-        surface?.notchCenterX = geometry.notch.map { $0.midX - frame.minX }
-        let band = PanelPlacement.band(panel: frame, screen: geometry)
+        let notch = anchor == nil ? geometry.notch : nil
+        surface?.notchWidth = notch?.width
+        surface?.notchHeight = notch?.height ?? 0
+        surface?.notchCenterX = notch.map { $0.midX - frame.minX }
+        surface?.tail = anchor.map { PanelPlacement.tail(panel: frame, anchor: $0) }
+        let band = anchor == nil ? PanelPlacement.band(panel: frame, screen: geometry) : nil
         if layout.band != band { layout.band = band }
-    }
-    /// Resizes a visible panel only when the tab row changed its height, leaving a running expansion alone.
-    private func fitTabRow() {
-        guard !closed, isVisible, let geometry = currentScreen, needsTabRowFit(geometry) else { return }
-        applyGeometry(geometry)
-        surface?.setExpanded(presentationRequested, animated: false)
-    }
-    private func needsTabRowFit(_ geometry: PanelScreen) -> Bool {
-        guard let window else { return false }
-        return abs(window.frame.height - PanelPlacement.panel(tabRow: layout.tabRow, screen: geometry).height) >= 1
     }
     private func reposition() {
         guard !closed, isVisible, let geometry = currentScreen else { return }

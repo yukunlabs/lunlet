@@ -5,6 +5,7 @@
 
 (() => {
   // Only owner-configured destinations become links; everything else stays hidden rather than pointing at a placeholder.
+  // The download link and its first-open steps are in the markup itself, written when the page is built.
   const config = window.LUNLET_SITE_CONFIG || {};
   for (const link of document.querySelectorAll("[data-link]")) {
     const destination = config[link.dataset.link];
@@ -13,10 +14,6 @@
       link.hidden = false;
       link.rel = "noopener noreferrer";
     }
-  }
-  if (config.releaseURL) {
-    document.querySelector("#release-status").textContent =
-      "The download is an unsigned preview: on first open, allow it in System Settings › Privacy & Security (Open Anyway); updates ask for nothing. Requirements, release notes and checksums are on GitHub. No new mobile conversations, SSH, remote-host discovery or general computer control.";
   }
 
   // One messenger at a time: the tabs swap the three phones and their note, with roving focus and arrow keys.

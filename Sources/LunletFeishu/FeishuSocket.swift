@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: 0BSD
 // Refs: US-14, AC-14.01, AC-14.02, AC-14.03, AC-14.06.
 // Refs: US-01, AC-01.02, AC-01.04; US-10, AC-10.01, AC-10.02, AC-10.04.
-// Refs: US-11, AC-11.01, AC-11.02; US-12, AC-12.02, AC-12.04; US-05, AC-05.09.
+// Refs: US-11, AC-11.01, AC-11.02; US-12, AC-12.02, AC-12.04; US-05, AC-05.09; US-38, AC-38.03.
 import Foundation
 import LunletCore
 
@@ -126,7 +126,16 @@ final class FeishuSocket: Sendable {
                                                                                    elapsedMilliseconds: milliseconds)))
                         continue
                     }
-                    let response = try result.responseJSON()
+                    // The toast names the agent whose turn the card was issued for.
+                    let answered: UUID?
+                    switch result {
+                    case .received(let action): answered = action.session.sessionID
+                    case .duplicate(let receipt): answered = receipt.sessionID
+                    default: answered = nil
+                    }
+                    var agent = SessionProvider.codex
+                    if let answered, let issued = await router.provider(forSession: answered) { agent = issued }
+                    let response = try result.responseJSON(agent: agent)
                     try await socket.send(.data(FrameAssembler.acknowledgment(for: event, responseJSON: response,
                                                                                elapsedMilliseconds: milliseconds)))
                     try checkActive()
@@ -261,8 +270,15 @@ private final class SocketHeartbeat: @unchecked Sendable {
     deinit { timer.cancel(); continuation.finish() }
     func expired() -> Bool { lock.withLock { lastPong.duration(to: .now) >= .seconds(settings.pingSeconds * 2) } }
     func pong(_ data: Data) throws {
-        guard data.count <= 65_536, let update = try? JSONDecoder().decode(FeishuConnectionSettings.self, from: data) else {
-            throw FeishuSocketFailure.invalidProtocol
+        guard data.count <= 65_536 else { throw FeishuSocketFailure.invalidProtocol }
+        guard let update = try? JSONDecoder().decode(FeishuConnectionSettings.self, from: data) else {
+            // A pong without settings, or with a payload that is not settings, still proves the connection is
+            // alive; the current settings stay. Settings that decode but are out of range are refused below.
+            try lock.withLock {
+                guard !stopped else { throw FeishuSocketFailure.closed }
+                lastPong = .now
+            }
+            return
         }
         try lock.withLock {
             guard !stopped else { throw FeishuSocketFailure.closed }

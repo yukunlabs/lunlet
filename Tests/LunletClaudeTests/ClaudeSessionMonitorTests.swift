@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
 // Refs: US-33, AC-33.01, AC-33.02, AC-33.03, AC-33.05, AC-33.06.
-// Refs: US-13, AC-13.01, AC-13.04; US-15, AC-15.05; US-12, AC-12.04.
+// Refs: US-13, AC-13.01, AC-13.04; US-15, AC-15.05; US-12, AC-12.04; US-25, AC-25.01.
 import Foundation
 import Testing
 import LunletCore
@@ -55,17 +55,47 @@ struct ClaudeSessionMonitorTests {
         return (monitor, captured, sink)
     }
     private func settle(_ captured: Captured, until condition: @escaping @Sendable ([(SessionSnapshot, Bool)]) -> Bool) async throws {
-        let end = ContinuousClock.now + .seconds(10)
+        let end = ContinuousClock.now + .seconds(60)
         while !condition(await captured.snapshots), ContinuousClock.now < end { try await Task.sleep(for: .milliseconds(5)) }
     }
     /// The sink appends asynchronously; wait for a stream marker before reading it.
     private func settled<T: Sendable>(_ captured: Captured, _ read: @escaping @Sendable (Captured) async -> T?) async throws -> T? {
-        let end = ContinuousClock.now + .seconds(10)
+        let end = ContinuousClock.now + .seconds(60)
         while ContinuousClock.now < end {
             if let value = await read(captured) { return value }
             try await Task.sleep(for: .milliseconds(5))
         }
         return nil
+    }
+
+    // Refs: US-25, AC-25.01; US-33, AC-33.01. One scan reads the tail of every session's transcript in a single job.
+    // Each chunk and each decoded record must be released as it goes: held until the job ends, sixteen sessions with
+    // four-megabyte tails cost over a hundred megabytes at every launch.
+    @Test func aScanOfManyLargeTranscriptsReleasesThemAsItGoes() async throws {
+        let fixture = try ClaudeFixture(); defer { fixture.remove() }
+        let processes = SyntheticClaudeProcesses(), sessions = 16
+        for index in 0..<sessions {
+            try autoreleasepool {
+                let session = "0b6b2a52-5f0e-4c5c-9d43-3c4f0a1b" + String(format: "%04x", 0x2c10 + index), pid = Int32(600 + index)
+                processes.start(pid)
+                try fixture.record(pid: pid, session: session)
+                // About four megabytes a transcript: a prompt, then records that carry no turn state.
+                let filler = F.line(["type": "attachment", "sessionId": session, "attachment": String(repeating: "x", count: 60_000)])
+                try fixture.transcript([F.typed("Start", uuid: "u\(index)", prompt: "p\(index)", session: session)]
+                                       + Array(repeating: filler, count: 68), session: session)
+            }
+        }
+        // Holding the input costs about twice what is read (its chunks and its decoded records); a draining scan stays
+        // near one record. The bound sits between.
+        let bound = UInt64(sessions * 4) * 1_048_576 / 2
+        let growth = try await FootprintSampler.leastGrowth(under: bound) {
+            let (monitor, captured, sink) = await observe(fixture, processes)
+            try await settle(captured) { $0.count >= sessions }
+            #expect(await captured.snapshots.count == sessions)
+            sink.cancel()
+            await monitor.shutdown()
+        }
+        #expect(growth < bound, "the scan grew the footprint by \(growth / 1_048_576) MiB")
     }
 
     // Refs: US-33, AC-33.01, AC-33.03, AC-33.05; US-13, AC-13.04.

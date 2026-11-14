@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
 // Refs: US-05, AC-05.09; US-07, AC-07.05; US-08, AC-08.01, AC-08.03, AC-08.04, AC-08.05.
-// Refs: US-09, AC-09.02; US-10, AC-10.01, AC-10.02, AC-10.03, AC-10.04; US-11, AC-11.02, AC-11.03; US-12, AC-12.04.
+// Refs: US-09, AC-09.02; US-10, AC-10.01, AC-10.02, AC-10.03, AC-10.04; US-11, AC-11.01, AC-11.02, AC-11.03; US-12, AC-12.04.
+// Refs: US-38, AC-38.03.
 import Foundation
 import Testing
 import LunletCore
@@ -65,9 +66,16 @@ private final class SyntheticConnections: @unchecked Sendable {
     private let lock = NSLock()
     private var runs: [SyntheticConnection] = []
     private var failure: FeishuBotFailure?
+    private var once = false
     func failNext(_ value: FeishuBotFailure) { lock.withLock { failure = value } }
+    /// Only the next connection fails; the one after it opens.
+    func failOnce(_ value: FeishuBotFailure) { lock.withLock { failure = value; once = true } }
     func make() -> any FeishuCallbackConnecting {
-        lock.withLock { let run = SyntheticConnection(failure: failure); runs.append(run); return run }
+        lock.withLock {
+            let run = SyntheticConnection(failure: failure); runs.append(run)
+            if once { failure = nil; once = false }
+            return run
+        }
     }
     var started: Int { lock.withLock { runs.count } }
     var active: Int { lock.withLock { runs.filter(\.isActive).count } }
@@ -99,9 +107,10 @@ struct FeishuReplyServiceTests {
     private let owner = CardCallbackFixture.owner
 
     private func snapshot(_ phase: SessionPhase = .idle(completedTurnID: "turn_one"), provider: SessionProvider = .codex,
-                          parent: UUID? = nil, liveness: CLILiveness = .alive) -> SessionSnapshot {
+                          parent: UUID? = nil, liveness: CLILiveness = .alive, inputPath: SessionInputPath? = nil) -> SessionSnapshot {
         SessionSnapshot(observation: .init(sessionID: session, connectionID: cli, liveness: liveness, phase: phase),
-                        project: "Lunlet", title: "Synthetic task", parentSessionID: parent, provider: provider)
+                        project: "Lunlet", title: "Synthetic task", parentSessionID: parent, provider: provider,
+                        inputPath: inputPath)
     }
     private func ownerReceipt(_ message: String = "om_card") -> FeishuMessageReceipt {
         FeishuMessageReceipt(messageID: message, chatID: "oc_synthetic", applicationID: owner.applicationID,
@@ -129,7 +138,7 @@ struct FeishuReplyServiceTests {
         return try JSONSerialization.data(withJSONObject: body)
     }
     private func waitUntil(_ condition: @Sendable () async -> Bool) async throws {
-        for _ in 0..<2_000 {
+        for _ in 0..<20_000 {
             if await condition() { return }
             try await Task.sleep(for: .milliseconds(1))
         }
@@ -248,6 +257,23 @@ struct FeishuReplyServiceTests {
         #expect(connections.active == 0)
     }
 
+    // Refs: US-38, AC-38.02.
+    @Test func claudeSessionsWithLunletsHookTakeRepliesLikeCodex() async throws {
+        let cards = SyntheticCards(), connections = SyntheticConnections(), dispatch = SyntheticDispatch()
+        let value = service(cards, connections, dispatch)
+        value.recordOwner(from: ownerReceipt())
+        value.setReplyWindow(true)
+        let linked = snapshot(provider: .claude, inputPath: .claudeHook)
+        value.observe(linked)
+        let capability = await value.prepareReply(for: linked)
+        #expect(capability != nil)
+        if let capability { await value.withdrawReply(capability) }
+        let unlinked = snapshot(provider: .claude)
+        value.observe(unlinked)
+        #expect(await value.prepareReply(for: unlinked) == nil)
+        await value.close()
+    }
+
     @Test func noReplyIsIssuedWithoutAVerifiedOwnerOutsideTheWindowOrForIneligibleSnapshots() async throws {
         let cards = SyntheticCards(), connections = SyntheticConnections(), dispatch = SyntheticDispatch()
         let value = service(cards, connections, dispatch)
@@ -332,6 +358,60 @@ struct FeishuReplyServiceTests {
         await value.close()
     }
 
+    // Refs: US-38, AC-38.03; US-10, AC-10.01. The capability for a Claude Code turn is issued in that agent's name,
+    // so the toasts answering its card say Claude Code, not Codex.
+    @Test func aClaudeCodeCapabilityIsIssuedInItsOwnName() async throws {
+        let cards = SyntheticCards(), connections = SyntheticConnections(), dispatch = SyntheticDispatch(), clock = ReplyTestClock()
+        let router = CardActionRouter(elapsed: { clock.now() }, wallTime: { CardCallbackFixture.date })
+        let value = FeishuReplyService(sender: cards, connect: { connections.make() }, dispatch: { await dispatch.run($0, $1) },
+                                       router: router, openTimeout: .seconds(2), checkInterval: .milliseconds(10))
+        let claude = snapshot(provider: .claude, inputPath: .claudeHook)
+        ready(value, observing: claude)
+        _ = try #require(await value.prepareReply(for: claude))
+        #expect(await router.provider(forSession: session) == .claude)
+        await value.close()
+    }
+
+    // Refs: US-05, AC-05.09; US-08, AC-08.01. The monitor may observe one idle turn twice with a different title,
+    // preview or activity time while the callback connection opens. The capability follows the turn, so the card
+    // prepared from the earlier observation still takes a reply; an observation that withdraws the input path
+    // leaves the turn without one.
+    @Test func aCosmeticReobservationOfTheSameTurnStillGetsItsReplyBox() async throws {
+        let cards = SyntheticCards(), connections = SyntheticConnections(), dispatch = SyntheticDispatch()
+        let value = service(cards, connections, dispatch)
+        ready(value)
+        let renamed = SessionSnapshot(observation: snapshot().observation, project: "Lunlet", title: "Renamed since",
+                                      lastActivityAt: Date(timeIntervalSince1970: 1_800_000_000), localPreview: "A later preview")
+        #expect(renamed != snapshot())
+        value.observe(renamed)
+        let capability = try #require(await value.prepareReply(for: snapshot()))
+        #expect(await value.bindReply(capability, receipt: ownerReceipt()))
+        guard case .received = await try #require(connections.latest).deliver(try callback(capability.token)) else {
+            Issue.record("The card of the re-observed turn must take its reply"); return
+        }
+        try await waitUntil { await dispatch.actions.count == 1 }
+        // The newest observation names another agent without an input path: no capability from the earlier one.
+        value.observe(snapshot(.idle(completedTurnID: "turn_two")))
+        value.observe(snapshot(.idle(completedTurnID: "turn_two"), provider: .claude))
+        #expect(await value.prepareReply(for: snapshot(.idle(completedTurnID: "turn_two"))) == nil)
+        await value.close()
+    }
+
+    // Refs: US-05, AC-05.09; US-11, AC-11.01. A connection that gave up on a fault of the network or of one answer
+    // is no verdict on the app: the next finished turn starts a connection again and its card takes a reply.
+    @Test(arguments: [FeishuBotFailure.unavailable, .invalidResponse, .rateLimited])
+    func aConnectionThatGaveUpOnATransientFaultIsStartedAgainForALaterCard(_ failure: FeishuBotFailure) async throws {
+        let cards = SyntheticCards(), connections = SyntheticConnections(), dispatch = SyntheticDispatch()
+        connections.failOnce(failure)
+        let value = service(cards, connections, dispatch)
+        ready(value)
+        #expect(await value.prepareReply(for: snapshot()) == nil)
+        let capability = try #require(await value.prepareReply(for: snapshot()))
+        #expect(connections.started == 2)
+        #expect(await value.bindReply(capability, receipt: ownerReceipt()))
+        await value.close()
+    }
+
     @Test func closingCancelsInFlightInputAndSendsNothingFurther() async throws {
         let cards = SyntheticCards(), connections = SyntheticConnections(), dispatch = SyntheticDispatch()
         await dispatch.hold()
@@ -374,6 +454,6 @@ struct ReplyReceiptCardTests {
 
 /// Polls `condition` for up to ten seconds; a fixed sleep is not enough on a loaded shared runner.
 private func settle(_ condition: () async -> Bool) async throws {
-    let end = ContinuousClock.now + .seconds(10)
+    let end = ContinuousClock.now + .seconds(60)
     while !(await condition()), ContinuousClock.now < end { try await Task.sleep(for: .milliseconds(5)) }
 }

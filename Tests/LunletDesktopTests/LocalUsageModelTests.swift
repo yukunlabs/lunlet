@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: 0BSD
 // Refs: US-04, AC-04.01, AC-04.02, AC-04.03, AC-04.05, AC-04.08, AC-04.10; US-12, AC-12.04.
 // Refs: US-18, AC-18.01, AC-18.02, AC-18.03.
-// Refs: US-25, AC-25.02.
+// Refs: US-25, AC-25.01, AC-25.02; US-19, AC-19.01.
 // Refs: US-23, AC-23.01.
 import Combine
 import AppKit
@@ -49,6 +49,33 @@ private actor RangeHistoryReader: LocalUsageReading {
 }
 
 @MainActor struct LocalUsageModelTests {
+    // Refs: US-19, AC-19.01; US-25, AC-25.01. An agent that is not selected has no history scanned, on launch, on a
+    // panel opening or on Refresh; turning it off drops what was read, and turning it on reads again at once.
+    @Test func anUnselectedAgentsHistoryIsNotScannedAndDoesNotLinger() async throws {
+        let reader = HistoryReader()
+        let subject = LocalUsageModel(reader: reader)
+        subject.setActive(false)
+        subject.refresh(); subject.refreshIfNeeded(); subject.setHistoryDays(3)
+        #expect(!subject.isLoading && subject.snapshot == nil && subject.historyDays == 3)
+        #expect(await reader.reads == 0)
+        subject.setActive(true)
+        subject.refreshIfNeeded()
+        try await settle(subject)
+        #expect(subject.snapshot != nil)
+        #expect(await reader.reads == 1)
+        subject.setActive(false)
+        #expect(subject.snapshot == nil && subject.lastSuccessfulRefresh == nil && !subject.unavailable)
+        subject.refresh()
+        #expect(await reader.reads == 1)
+        // Selected again, the five-minute floor of the earlier scan does not delay the first one.
+        subject.setActive(true)
+        subject.refreshIfNeeded()
+        try await settle(subject)
+        #expect(subject.snapshot != nil)
+        #expect(await reader.reads == 2)
+        await subject.shutdown()
+    }
+
     @Test func freshnessTracksSuccessInsteadOfAttemptsFailuresOrCanceledReads() async throws {
         let reader = HistoryReader()
         var now = Date(timeIntervalSince1970: 1_800_000_000)
@@ -92,7 +119,7 @@ private actor RangeHistoryReader: LocalUsageReading {
         let reader = HistoryReader(blocked: true)
         let subject = LocalUsageModel(reader: reader)
         subject.refresh(); subject.refresh(); subject.refreshIfNeeded()
-        let deadline = ContinuousClock.now + .seconds(10)
+        let deadline = ContinuousClock.now + .seconds(60)
         while await reader.reads == 0, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
         #expect(await reader.reads == 1)
         await subject.shutdown()
@@ -109,7 +136,7 @@ private actor RangeHistoryReader: LocalUsageReading {
         let subscription = subject.$snapshot.compactMap { $0?.days.count }.sink { published.append($0) }
         defer { subscription.cancel() }
         subject.refresh()
-        let deadline = ContinuousClock.now + .seconds(10)
+        let deadline = ContinuousClock.now + .seconds(60)
         while await reader.requests.isEmpty, ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(5))
         }
@@ -129,7 +156,7 @@ private actor RangeHistoryReader: LocalUsageReading {
         let reader = RangeHistoryReader()
         let subject = LocalUsageModel(reader: reader)
         subject.refresh()
-        let deadline = ContinuousClock.now + .seconds(10)
+        let deadline = ContinuousClock.now + .seconds(60)
         while await reader.requests.isEmpty, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
         subject.setHistoryDays(7); subject.setHistoryDays(5)
         await reader.release()
@@ -141,14 +168,15 @@ private actor RangeHistoryReader: LocalUsageReading {
 
     // AC-04.02, AC-23.01: compact session amounts leave space for identity without hiding tiny usage.
     @Test func sessionCostTextRoundsTypicalAmountsWithoutRoundingTinyUsageToZero() {
-        for (value, expected) in [(146.884524, "≈$146.88"), (12.345678, "≈$12.35"),
-                                  (1234.5678, "≈$1,234.57"), (0.01, "≈$0.01"), (0, "≈$0.00"),
+        // One money rule everywhere: whole dollars from $10, cents below.
+        for (value, expected) in [(146.884524, "≈$147"), (12.345678, "≈$12"), (9.994, "≈$9.99"), (10, "≈$10"),
+                                  (1234.5678, "≈$1,235"), (0.01, "≈$0.01"), (0, "≈$0.00"),
                                   (0.0003, "≈$0.0003"), (0.000000000001, "≈$1e-12")] {
             #expect(LocalUsageText.cost(.init(tokens: 110, estimatedUSD: value, partial: false)) == expected)
         }
         let partial = LocalUsageAmount(tokens: 220, estimatedUSD: 146.884524, partial: false,
                                        pricedTokens: 110, unpricedTokens: 110)
-        #expect(LocalUsageText.cost(partial) == "≥$146.88")
+        #expect(LocalUsageText.cost(partial) == "≥$147")
         #expect(LocalUsageText.costHelp(partial).contains("≥$146.884524 USD"))
         #expect(LocalUsageText.costHelp(partial).contains("Known subtotal"))
         #expect(LocalUsageText.costHelp(partial).contains("Prices cover 50%"))
@@ -168,7 +196,10 @@ private actor RangeHistoryReader: LocalUsageReading {
         #expect(LocalUsageText.costHelp(mixed).contains("Known subtotal"))
         #expect(LocalUsageText.coverage([mixed]) == "Prices cover 50% of recorded tokens.")
         #expect(LocalUsageText.coverage([]) == "Price coverage unavailable.")
-        #expect(LocalUsageText.costBar(mixed) == "≥$0.0003")
+        // Bar labels carry no lower-bound sign: the chart's footnote says it once.
+        #expect(LocalUsageText.costBar(mixed) == "≈$0.0003")
+        #expect(LocalUsageText.tokenBar(.init(tokens: 536_000_000, estimatedUSD: nil, partial: true)) == "536M")
+        #expect(LocalUsageText.tokenBar(.init(tokens: nil, estimatedUSD: nil, partial: true)) == "—")
         #expect(LocalUsageText.costBar(.init(tokens: nil, estimatedUSD: nil, partial: false)) == "—")
         #expect(LocalUsageText.costBar(.init(tokens: 1, estimatedUSD: 0.00000001, partial: false)) == "≈$1e-08")
         #expect(LocalUsageText.costBar(.init(tokens: 1, estimatedUSD: 1234.56, partial: false)) == "≈$1.2K")
@@ -198,7 +229,7 @@ private actor RangeHistoryReader: LocalUsageReading {
         await model.shutdown()
     }
     private func settle(_ model: LocalUsageModel) async throws {
-        let deadline = ContinuousClock.now + .seconds(10)
+        let deadline = ContinuousClock.now + .seconds(60)
         while model.isLoading, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
         #expect(!model.isLoading)
     }

@@ -6,6 +6,7 @@
 // Refs: US-33, AC-33.01, AC-33.02, AC-33.05, AC-33.06; US-19, AC-19.01, AC-19.03.
 // Refs: US-08, AC-08.01, AC-08.05.
 import Foundation
+import LunletClaude
 import LunletCodex
 import LunletCore
 
@@ -111,6 +112,17 @@ import LunletCore
     func codexSource(for sessionID: UUID) -> (any CodexSessionObserving)? {
         guard !closed, owners[sessionID] == .codex else { return nil }
         return entries[.codex]?.source as? any CodexSessionObserving
+    }
+    /// Opens or closes the Claude reply window: while the Mac is locked, Lunlet's hook holds each finished Claude
+    /// turn for one phone reply (US-38).
+    func setClaudeReplyWindow(_ open: Bool) {
+        guard !closed, let source = entries[.claude]?.source as? any ClaudeSessionObserving else { return }
+        Task { await source.setReplyWindow(open) }
+    }
+    /// The provider that owns this session and its source, for a reply's live-binding recheck.
+    func source(for sessionID: UUID) -> (provider: SessionProvider, source: any SessionObserving)? {
+        guard !closed, let provider = owners[sessionID], let entry = entries[provider] else { return nil }
+        return (provider, entry.source)
     }
 
     func refresh() {

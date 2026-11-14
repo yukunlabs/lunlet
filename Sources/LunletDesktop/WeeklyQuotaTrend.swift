@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
-// Refs: US-32, AC-32.01, AC-32.02, AC-32.03, AC-32.04, AC-32.05, AC-32.06, AC-32.07, AC-32.08; US-33, AC-33.09.
+// Refs: US-32, AC-32.01, AC-32.02, AC-32.03, AC-32.04, AC-32.05, AC-32.06, AC-32.07, AC-32.08; US-33, AC-33.09; US-04, AC-04.01, AC-04.19.
 import Foundation
 import LunletCore
 
@@ -47,16 +47,40 @@ private struct QuotaResetEvent {
     let after: QuotaReading
 }
 
+/// The chart's span: the selected number of local calendar days of observations, including today, then the forecast
+/// through the reported reset (AC-32.01, AC-18.02).
 enum QuotaChartTimeline {
     static func start(now: Date, days: Int, calendar: Calendar = .current) -> Date? {
         guard (1...7).contains(days) else { return nil }
         return calendar.date(byAdding: .day, value: 1 - days, to: calendar.startOfDay(for: now))
     }
-    static func dates(now: Date, reset: Date, days: Int, calendar: Calendar = .current) -> [Date] {
-        guard reset > now, let first = start(now: now, days: days, calendar: calendar) else { return [] }
-        let end = calendar.startOfDay(for: reset)
-        guard let count = calendar.dateComponents([.day], from: first, to: end).day, (0...15).contains(count) else { return [] }
-        return (0...count).compactMap { calendar.date(byAdding: .day, value: $0, to: first) }
+
+    /// How many days lie between two ticks: one while every day of the span can carry a label, as in a weekly
+    /// window; a longer span, such as a 30-day window's, is cut into about five steps.
+    static func tickStride(start: Date, reset: Date, calendar: Calendar = .current) -> Int {
+        let span = calendar.dateComponents([.day], from: calendar.startOfDay(for: start), to: reset).day ?? 0
+        return span <= 16 ? 1 : Int((Double(span) / 5).rounded(.up))
+    }
+
+    /// Local midnights from the span's start to before the reset, a stride apart, as day ticks; the reset itself is
+    /// labeled apart.
+    static func dayTicks(start: Date, reset: Date, calendar: Calendar = .current) -> [Date] {
+        let stride = tickStride(start: start, reset: reset, calendar: calendar)
+        var day = calendar.startOfDay(for: start)
+        if day < start { day = calendar.date(byAdding: .day, value: 1, to: day) ?? reset }
+        var ticks: [Date] = []
+        while day < reset, ticks.count < 16 {
+            ticks.append(day)
+            guard let next = calendar.date(byAdding: .day, value: stride, to: day) else { break }
+            day = next
+        }
+        return ticks
+    }
+
+    /// A tick's label: the weekday while every day is ticked, the month and day once ticks are days apart, where a
+    /// weekday would repeat without telling which.
+    static func tickLabel(_ date: Date, stride: Int) -> String {
+        stride <= 1 ? date.formatted(.dateTime.weekday(.abbreviated)) : date.formatted(.dateTime.month(.abbreviated).day())
     }
 }
 
@@ -67,35 +91,50 @@ struct WeeklyQuotaTrend: Equatable {
         let plan: String?
         let bucketID: String?
         let bucket: String
+        /// The window's length: a window of another length is another window, and nothing of the old one is evidence.
+        let minutes: Int
     }
     private var identity: Identity?
+    /// How long the identified window lasts: a week, or the longer window of an account without a weekly one. Nil
+    /// until a successful read identifies it.
+    var span: AllowanceSpan? { identity.map { AllowanceSpan(minutes: $0.minutes) } }
     /// The identified window's first reported reset, so repeated drift cannot move it unboundedly.
     private(set) var resetAt: Date?
     /// Successful reads of this account, bucket and plan across windows, within the estimator's input horizon.
     private(set) var readings: [QuotaReading] = []
 
     mutating func record(_ snapshot: AccountLimitsSnapshot) {
-        // Every weekly window must report a used percentage within range; spelled out in steps so the compiler
-        // type-checks it quickly on every supported toolchain.
+        // The account's own limit window: weekly, or as long as the account reports it (AC-04.07). Every window of
+        // that length must report a used percentage within range; spelled out in steps so the compiler type-checks it
+        // quickly on every supported toolchain.
+        let limit = AccountUsagePresentation.limit(in: snapshot)
         let windows = snapshot.buckets.flatMap { [$0.primary, $0.secondary] }.compactMap { $0 }
-        let weeklyWindows = windows.filter { $0.durationMinutes == 10_080 }
-        let weeklyPercentsValid = weeklyWindows.allSatisfy { window in
+        let limitWindows = windows.filter { $0.durationMinutes == limit?.span.minutes }
+        let limitPercentsValid = limitWindows.allSatisfy { window in
             guard let used = window.usedPercent else { return false }
             return used <= 100
         }
-        guard let email = snapshot.identity?.email, !email.isEmpty,
-              let weekly = AccountUsagePresentation.weekly(in: snapshot), weeklyPercentsValid,
-              let remaining = weekly.remainingPercent, remaining.isFinite, (0...100).contains(remaining),
-              let reset = weekly.resetsAt, reset > snapshot.observedAt,
-              reset.timeIntervalSince(snapshot.observedAt) <= 7 * 86_400 else {
+        // Without an account, or for another account, earlier readings are nobody's evidence (AC-32.03).
+        guard let email = snapshot.identity?.email, !email.isEmpty else {
             identity = nil; resetAt = nil; readings = []; return
         }
+        // The bound carries the estimator's tolerance: a fresh window can report its reset a few seconds more than
+        // one window ahead. A read whose limit window is missing or unusable adds no reading and, for the same
+        // account, takes none away (AC-32.07).
+        guard let limit, limitPercentsValid,
+              let remaining = limit.remainingPercent, remaining.isFinite, (0...100).contains(remaining),
+              let reset = limit.resetsAt, reset > snapshot.observedAt,
+              reset.timeIntervalSince(snapshot.observedAt) <= limit.span.seconds + WeeklyQuotaEstimator.resetTimeTolerance else {
+            if identity?.account != email { identity = nil; resetAt = nil; readings = [] }
+            return
+        }
         if let latest = readings.last, snapshot.observedAt <= latest.at { return }
-        let current = Identity(account: email, plan: snapshot.identity?.plan, bucketID: weekly.bucketID, bucket: weekly.bucketName)
+        let current = Identity(account: email, plan: snapshot.identity?.plan, bucketID: limit.bucketID, bucket: limit.bucketName,
+                               minutes: limit.span.minutes)
         if identity != current { identity = current; resetAt = nil; readings = [] }
         if resetAt.map({ abs(reset.timeIntervalSince($0)) > WeeklyQuotaEstimator.resetTimeTolerance }) ?? true { resetAt = reset }
         readings.append(.init(at: snapshot.observedAt, remaining: remaining, resetAt: reset))
-        let horizon = snapshot.observedAt.addingTimeInterval(-WeeklyQuotaEstimator.inputHorizon())
+        let horizon = snapshot.observedAt.addingTimeInterval(-WeeklyQuotaEstimator.inputHorizon(window: limit.span.seconds))
         readings.removeAll { $0.at < horizon }
         if readings.count > 2048 { readings.removeFirst(readings.count - 2048) }
     }
@@ -104,54 +143,84 @@ struct WeeklyQuotaTrend: Equatable {
     /// reading of the input horizon. Matching bucket, reset and plan is evidence, not account identity.
     func display(local: [LocalQuotaObservation], now: Date, since: Date = .distantPast) -> QuotaTrendDisplay {
         guard let identity, let resetAt, !readings.isEmpty else { return .init(points: [], resets: [], pace: nil) }
+        // A local record is comparable only when it is of the same bucket, plan and window length.
         let matching = identity.bucketID.map { bucket in
             local.filter {
-                $0.bucketID == bucket && ($0.plan == nil || identity.plan == nil || $0.plan?.lowercased() == identity.plan?.lowercased())
+                $0.bucketID == bucket && $0.windowMinutes == identity.minutes
+                    && ($0.plan == nil || identity.plan == nil || $0.plan?.lowercased() == identity.plan?.lowercased())
             }
         } ?? []
+        let window = Double(identity.minutes) * 60
         let comparable = WeeklyQuotaEstimator.consistentReadings(
-            readings + matching.map { QuotaReading(at: $0.at, remaining: $0.remaining, resetAt: $0.resetAt) }, now: now)
-        let pace = WeeklyQuotaEstimator.pace(readings: comparable, resetAt: resetAt, now: now)
-        let chart = Self.chart(comparable, resetAt: resetAt, now: now, since: since)
+            readings + matching.map { QuotaReading(at: $0.at, remaining: $0.remaining, resetAt: $0.resetAt) }, now: now, window: window)
+        let pace = WeeklyQuotaEstimator.pace(readings: comparable, resetAt: resetAt, now: now, window: window)
+        let chart = Self.chart(comparable, resetAt: resetAt, now: now, since: since, window: window)
         return .init(points: chart.points, resets: chart.resets, pace: pace)
     }
 
     /// Changes smaller than this, in percentage points, are invisible at the chart's scale and add no point; the pace
     /// still sees every reading.
     static let chartResolution = 1.0
+    /// Between two kept points at least this much time passes, unless use jumps by `chartJump` points sooner; hourly
+    /// one-point moves then draw as one smooth slope rather than a staircase.
+    static let chartCadence: TimeInterval = 4 * 3600
+    static let chartJump = 5.0
 
     /// The points and detected resets of comparable readings for one window, shared by every agent's chart. The
-    /// readings within the shown days are drawn at the chart's resolution, so a window observed on one or two days
-    /// still shows its course: a reading is kept when it moves a visible step from the last kept one, when the next
-    /// reading moves a visible step from it (so a slope starts where it started), and at each day's and window's
-    /// edges, so a flat stretch still draws from day to day and a detected reset keeps both sides (AC-32.01,
-    /// AC-33.09). Invisible drift between those points is left out.
-    static func chart(_ comparable: [QuotaReading], resetAt: Date, now: Date, since: Date,
+    /// readings within the shown days are drawn at the chart's cadence, so a window observed on one or two days still
+    /// shows its course: a reading is kept when it moved a visible step from the last kept one after `chartCadence`,
+    /// sooner when it jumped by `chartJump`, at the span's ends and on either side of a change of window, so a
+    /// detected reset keeps both sides (AC-32.01, AC-33.09). Readings held or drifting between kept points are not
+    /// drawn, so the line runs as a curve rather than a staircase; when two kept readings lie more than a day apart,
+    /// each intervening day's first and last reading bridge them, so a quiet stretch still draws from day to day and
+    /// a day without readings still breaks the line.
+    static func chart(_ comparable: [QuotaReading], resetAt: Date, now: Date, since: Date, window: TimeInterval = WeeklyQuotaEstimator.week,
                       calendar: Calendar = .current) -> (points: [QuotaReading], resets: [QuotaResetMarker]) {
-        // The chart shows at most seven days, never the guard's extra day, and no unidentified later window.
+        // The chart shows at most seven days of readings, whatever the window's length, never the guard's extra
+        // day, and no unidentified later window.
         let start = max(since, now.addingTimeInterval(-WeeklyQuotaEstimator.week))
+        // In time order, whatever order the account and local readings arrived in, so the span's ends are its ends.
         let shown = comparable.filter {
             $0.at >= start && $0.resetAt.timeIntervalSince(resetAt) <= WeeklyQuotaEstimator.resetTimeTolerance
-        }
-        let events = Self.resetEvents(shown)
-        func edge(_ a: QuotaReading?, _ b: QuotaReading?) -> Bool {
-            guard let a, let b else { return true }
-            return !calendar.isDate(a.at, inSameDayAs: b.at)
-                || abs(a.resetAt.timeIntervalSince(b.resetAt)) > WeeklyQuotaEstimator.resetTimeTolerance
+        }.sorted { $0.at < $1.at }
+        let events = Self.resetEvents(shown, window: window)
+        func sameWindow(_ a: QuotaReading, _ b: QuotaReading) -> Bool {
+            abs(a.resetAt.timeIntervalSince(b.resetAt)) <= WeeklyQuotaEstimator.resetTimeTolerance
         }
         var drawn: [QuotaReading] = []
         for (index, reading) in shown.enumerated() {
             let previous = index > 0 ? shown[index - 1] : nil, next = index + 1 < shown.count ? shown[index + 1] : nil
-            let step = drawn.last.map { abs($0.remaining - reading.remaining) >= Self.chartResolution } ?? true
-            let slopeStart = next.map { abs($0.remaining - reading.remaining) >= Self.chartResolution } ?? false
-            if step || slopeStart || edge(previous, reading) || edge(reading, next) { drawn.append(reading) }
+            let keep = drawn.last.map { last in
+                let moved = abs(last.remaining - reading.remaining)
+                return moved >= Self.chartJump
+                    || (moved >= Self.chartResolution && reading.at.timeIntervalSince(last.at) >= Self.chartCadence)
+            } ?? true
+            let windowEdge = previous.map { !sameWindow($0, reading) } ?? true || next.map { !sameWindow(reading, $0) } ?? true
+            if keep || windowEdge { drawn.append(reading) }
+        }
+        var bridged: [QuotaReading] = []
+        for (index, point) in drawn.enumerated() {
+            bridged.append(point)
+            guard index + 1 < drawn.count else { break }
+            let following = drawn[index + 1]
+            let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: point.at),
+                                               to: calendar.startOfDay(for: following.at)).day ?? 0
+            guard days > 1, sameWindow(point, following) else { continue }
+            let between = shown.filter { $0.at > point.at && $0.at < following.at }
+            for (day, readings) in Dictionary(grouping: between, by: { calendar.startOfDay(for: $0.at) }) {
+                let first = readings.min { $0.at < $1.at }, last = readings.max { $0.at < $1.at }
+                if !calendar.isDate(day, inSameDayAs: point.at), let first { bridged.append(first) }
+                if !calendar.isDate(day, inSameDayAs: following.at), let last, last.at != first?.at || calendar.isDate(day, inSameDayAs: point.at) {
+                    bridged.append(last)
+                }
+            }
         }
         var unique: [Date: QuotaReading] = [:]
-        for point in events.flatMap({ [$0.before, $0.after] }) + drawn { unique[point.at] = point }
+        for point in events.flatMap({ [$0.before, $0.after] }) + bridged { unique[point.at] = point }
         return (unique.values.sorted { $0.at < $1.at }, events.map(\.marker))
     }
 
-    private static func resetEvents(_ observations: [QuotaReading]) -> [QuotaResetEvent] {
+    private static func resetEvents(_ observations: [QuotaReading], window: TimeInterval) -> [QuotaResetEvent] {
         guard var previous = observations.first else { return [] }
         var events: [QuotaResetEvent] = []
         for next in observations.dropFirst() {
@@ -159,7 +228,7 @@ struct WeeklyQuotaTrend: Equatable {
             if abs(change) <= WeeklyQuotaEstimator.resetTimeTolerance { previous = next; continue }
             guard change > WeeklyQuotaEstimator.resetTimeTolerance else { continue }
             guard next.remaining > previous.remaining + 0.1 else { previous = next; continue }
-            let inferredStart = next.resetAt.addingTimeInterval(-7 * 86_400)
+            let inferredStart = next.resetAt.addingTimeInterval(-window)
             let scheduled = previous.resetAt >= previous.at && previous.resetAt <= next.at ? previous.resetAt : nil
             let inferred = inferredStart >= previous.at && inferredStart <= next.at ? inferredStart : nil
             events.append(.init(marker: .init(at: scheduled ?? inferred ?? next.at, approximate: scheduled == nil),
@@ -188,7 +257,8 @@ enum QuotaForecastText {
         case .estimate(let estimate):
             let body: String
             if let runOut = estimate.runOut {
-                body = "May run out ~" + day(runOut) + (estimate.earliestRunOut.map { " (earliest \(day($0)))" } ?? "")
+                body = "May run out ~" + day(runOut, now: now, calendar: calendar)
+                    + (estimate.earliestRunOut.map { " (earliest \(day($0, now: now, calendar: calendar)))" } ?? "")
             } else {
                 let low = Int(estimate.remainingAtReset.lowerBound.rounded()), high = Int(estimate.remainingAtReset.upperBound.rounded())
                 body = "Est. " + (low == high ? "\(low)" : "\(low)–\(high)") + "% at reset"
@@ -197,18 +267,14 @@ enum QuotaForecastText {
         }
     }
 
-    /// Even budget versus remaining at the latest reading; never labeled a forecast.
-    static func evenPace(_ pace: QuotaPace?, now: Date, calendar: Calendar = .current) -> String? {
-        guard let even = pace?.evenPace, let latest = pace?.latest else { return nil }
-        let remaining = Int(latest.remaining.rounded())
-        let reading = now.timeIntervalSince(latest.at) > 3600 ? "\(remaining)% at " + time(latest.at, now: now, calendar: calendar)
-            : "now \(remaining)%"
-        return "Even pace \(Int(even.rounded()))% · " + reading
+    /// The stretch of readings an estimate draws on, in words: one window's length.
+    static func lookback(_ span: AllowanceSpan) -> String {
+        span == .week ? "seven days" : "\(max(1, Int((span.seconds / 86_400).rounded()))) days"
     }
 
-    static func help(_ pace: QuotaPace?, stale: Bool, resetAt: Date?) -> String {
+    static func help(_ pace: QuotaPace?, stale: Bool, resetAt: Date?, span: AllowanceSpan = .week) -> String {
         let reset = resetAt.map { " Reset: " + $0.formatted(date: .abbreviated, time: .shortened) + "." } ?? ""
-        guard let pace else { return "No successful account read identifies the weekly window yet." }
+        guard let pace else { return "No successful account read identifies the \(span.adjective) window yet." }
         let reading = pace.latest.map { " Latest reading: " + $0.at.formatted(date: .abbreviated, time: .shortened) + "." } ?? ""
         let staleNote = stale ? " The latest account read failed; this uses earlier readings of the same window." : ""
         switch pace.forecast {
@@ -221,7 +287,7 @@ enum QuotaForecastText {
         case .estimate(let estimate):
             let low = estimate.remainingAtReset.lowerBound, high = estimate.remainingAtReset.upperBound
             var text = "Estimated remaining at reset: " + percent(low) + (low == high ? "" : "–" + percent(high))
-                + ", from the pace of this account's readings over the past seven days. Not a guarantee."
+                + ", from the pace of this account's readings over the past \(lookback(span)). Not a guarantee."
             if let runOut = estimate.runOut { text += " Central run-out: " + runOut.formatted(date: .abbreviated, time: .shortened) + "." }
             if let earliest = estimate.earliestRunOut {
                 text += " Earliest plausible run-out: " + earliest.formatted(date: .abbreviated, time: .shortened) + "."
@@ -232,9 +298,14 @@ enum QuotaForecastText {
     }
 
     static func time(_ date: Date, now: Date, calendar: Calendar = .current) -> String {
-        calendar.isDate(date, inSameDayAs: now) ? date.formatted(date: .omitted, time: .shortened) : day(date)
+        calendar.isDate(date, inSameDayAs: now) ? date.formatted(date: .omitted, time: .shortened)
+            : day(date, now: now, calendar: calendar)
     }
 
-    private static func day(_ date: Date) -> String { date.formatted(.dateTime.weekday(.abbreviated).hour().minute()) }
+    /// A day and a time, as the run-out times read on the chart's line too (AC-32.09): the weekday within six days,
+    /// the month and day farther away, in the limit rows' own wording (AC-04.01).
+    static func day(_ date: Date, now: Date, calendar: Calendar = .current) -> String {
+        ClaudeLimitsText.day(date, now: now, calendar: calendar)
+    }
     private static func percent(_ value: Double) -> String { value.formatted(.number.precision(.fractionLength(0))) + "%" }
 }

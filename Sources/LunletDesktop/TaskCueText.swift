@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
-// Refs: US-13, AC-13.01, AC-13.06, AC-13.07, AC-13.08; US-03, AC-03.11.
+// Refs: US-13, AC-13.01, AC-13.06, AC-13.07, AC-13.08, AC-13.10; US-03, AC-03.11.
 import AppKit
 import SwiftUI
 import LunletCore
@@ -34,8 +34,15 @@ import LunletCore
     let cue: TaskCue
     /// The project.
     var title: String { cue.title }
-    /// The bounded local prompt preview, or the task fallback when none exists.
-    var context: String { cue.context ?? "Task " + String(cue.turnID.suffix(6)).uppercased() }
+    /// The bounded local prompt preview, or the task fallback when none exists; a Needs you cue names the kind first.
+    var context: String {
+        let preview = cue.context ?? "Task " + String(cue.turnID.suffix(6)).uppercased()
+        switch cue.phase {
+        case .waiting(.approval): return "Approval on Mac · " + preview
+        case .waiting(.question): return "Question · " + preview
+        default: return preview
+        }
+    }
     var status: String {
         switch cue.phase {
         case .started: "Started"
@@ -43,6 +50,7 @@ import LunletCore
         case .finished(.failed): "Failed"
         case .finished(.stopped): "Stopped"
         case .finished(.unknown): "Finished"
+        case .waiting: "Needs you"
         }
     }
     var symbol: String {
@@ -52,6 +60,8 @@ import LunletCore
         case .finished(.failed): "exclamationmark.triangle.fill"
         case .finished(.stopped): "stop.circle.fill"
         case .finished(.unknown): "flag.circle"
+        case .waiting(.approval): "hand.raised.fill"
+        case .waiting(.question): "text.bubble.fill"
         }
     }
     /// Applied only to the symbol; the status word always accompanies it.
@@ -62,6 +72,7 @@ import LunletCore
         case .finished(.failed): .red
         case .finished(.stopped): .orange
         case .finished(.unknown): .gray
+        case .waiting: .orange
         }
     }
     /// One VoiceOver element: status, project, then preview.

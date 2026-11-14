@@ -153,22 +153,23 @@ struct UpdateSettingsSection: View {
     private struct Controls: View {
         @ObservedObject var updater: AppUpdater
         var body: some View {
-            VStack(alignment: .leading, spacing: PanelStyle.Space.tight) {
-                Divider().padding(.bottom, PanelStyle.Space.tight)
-                HStack {
-                    Text("Automatically check for updates")
-                    Spacer()
+            // One module of two rows, in the settings groups' style.
+            SettingsGroup {
+                SettingsRow("Automatically check for updates", controlNamed: true) {
                     Toggle("Automatically check for updates", isOn: Binding(get: { updater.automaticallyChecks },
                                                                             set: { updater.setAutomaticallyChecks($0) }))
                         .labelsHidden().toggleStyle(.switch).controlSize(.small)
                 }
                 .help("Checks about once a day. Nothing is downloaded or installed until you choose Install.")
                 HStack(spacing: PanelStyle.Space.medium) {
-                    Button("Check for Updates…") { updater.checkForUpdates() }.disabled(!updater.canCheck).controlSize(.small)
+                    Button("Check for Updates…") { updater.checkForUpdates() }.disabled(!updater.canCheck)
+                        .buttonStyle(SettingsLinkButtonStyle())
+                    Spacer(minLength: 0)
                     if let version = updater.availableVersion {
-                        Text("Version \(version) is available").foregroundStyle(.secondary)
+                        Text("Version \(version) is available").font(PanelStyle.Text.secondary).foregroundStyle(.secondary)
                     }
                 }
+                .settingsCell()
             }
         }
     }

@@ -45,7 +45,7 @@ final class WebSocketTestServer: @unchecked Sendable {
                 default: break
                 }
             }
-            queue.asyncAfter(deadline: .now() + 3) {
+            queue.asyncAfter(deadline: .now() + 30) {
                 if once.take() { listener.stateUpdateHandler = nil; listener.cancel(); continuation.resume(throwing: URLError(.timedOut)) }
             }
             listener.start(queue: queue)

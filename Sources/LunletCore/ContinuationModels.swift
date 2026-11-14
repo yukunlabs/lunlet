@@ -117,6 +117,17 @@ public struct ActionReceipt: Equatable, Sendable {
     public var status: ActionStatus
 }
 
+public extension SessionSnapshot {
+    /// Whether `other` observes the same turn of the same live binding through the same verified input path:
+    /// the observation (session, connection, liveness and phase with its turn), the agent, the input path and
+    /// the parent all agree. Two such observations may still differ in title, preview, activity time or
+    /// navigation; a reply control follows the turn, never the presentation.
+    func observesSameTurn(as other: SessionSnapshot) -> Bool {
+        observation == other.observation && provider == other.provider && inputPath == other.inputPath
+            && parentSessionID == other.parentSessionID
+    }
+}
+
 public struct AuthorizedContinuation: Equatable, Sendable {
     public let receipt: ActionReceipt
     public let session: ObservedSession
@@ -153,8 +164,11 @@ public enum ContinuationRefusal: Equatable, Sendable {
     /// The session's live binding or state could not be verified.
     case unverified
 
-    /// The reason a control issued for `issued` cannot be used in the `current` observation.
-    public static func classify(issued: ObservedSession, current: ObservedSession?) -> Self {
+    /// The reason a control issued for `issued` cannot be used in the `current` observation. `submitted` is the
+    /// gate's own record that a reply for this exact turn was accepted (`ContinuationGate.hasSubmitted`); an
+    /// unchanged observation alone is no evidence of one, since a control is also retired when one scan could not
+    /// confirm the session.
+    public static func classify(issued: ObservedSession, current: ObservedSession?, submitted: Bool = false) -> Self {
         guard let current, current.sessionID == issued.sessionID else { return .unverified }
         if current.isEnded { return .sessionEnded }
         // A restored session has a fresh binding; cards for the old one stay invalid (AC-11.04).
@@ -165,7 +179,9 @@ public enum ContinuationRefusal: Equatable, Sendable {
         case .approval: return .awaitingApproval
         case .ended: return .sessionEnded
         case .unknown: return .unverified
-        case .idle, .question: return current == issued ? .alreadySent : .superseded
+        case .idle, .question:
+            guard current == issued else { return .superseded }
+            return submitted ? .alreadySent : .unverified
         }
     }
 }

@@ -204,7 +204,10 @@ private final class UsageHoverContentView: HoverTrackingView {
         super.init(frame: .zero)
         let hosting = NSHostingView(rootView: content.frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(PanelMaterial())
-            .clipShape(RoundedRectangle(cornerRadius: PanelStyle.Radius.surface, style: .continuous)))
+            .clipShape(RoundedRectangle(cornerRadius: PanelStyle.Radius.surface, style: .continuous))
+            .environment(\.colorScheme, .dark))
+        // The chart belongs to the panel and is dark with it.
+        hosting.appearance = PanelStyle.appearance
         hosting.frame = bounds
         hosting.autoresizingMask = [.width, .height]
         addSubview(hosting)

@@ -1,6 +1,6 @@
 # Contributing to Lunlet
 
-Lunlet is a macOS companion for existing local Codex and Claude Code work. The public source preview and its limitations are described in [README](README.md). Before proposing a change, read the [product requirements](docs/requirements.md), [feasibility evidence](docs/feasibility.md), and [repository conventions](AGENTS.md). Participation is governed by the [Code of Conduct](CODE_OF_CONDUCT.md) (Contributor Covenant 2.1).
+Lunlet is a macOS companion for existing local Codex and Claude Code work. The unsigned preview release and its limitations are described in [README](README.md). Before proposing a change, read the [product requirements](docs/requirements.md), [feasibility evidence](docs/feasibility.md), and [repository conventions](AGENTS.md). Participation is governed by the [Code of Conduct](CODE_OF_CONDUCT.md) (Contributor Covenant 2.1).
 
 ## Start with the user outcome
 

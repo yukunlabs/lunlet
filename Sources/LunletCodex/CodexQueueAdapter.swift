@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
 // Refs: US-08, AC-08.01, AC-08.02, AC-08.03, AC-08.04; US-09, AC-09.02, AC-09.03.
-// Refs: US-10, AC-10.01, AC-10.02, AC-10.03, AC-10.04; US-11, AC-11.03, AC-11.06.
+// Refs: US-10, AC-10.01, AC-10.02, AC-10.03, AC-10.04; US-11, AC-11.03, AC-11.06; US-12, AC-12.04.
 import Foundation
 import LunletCore
 
@@ -111,18 +111,25 @@ public struct CodexQueueAdapter: Sendable {
                                  reason: .init(reason), code: 3)
             return .refused(reason)
         }
+        // A caller cancelled meanwhile, as on quit or disconnect, would start the command only to stop it at once and
+        // leave its effect unknown. Nothing has been handed over yet, so the reply is plainly not sent.
+        guard !Task.isCancelled else {
+            DiagnosticLog.record(.sessionInput, component: .codex, outcome: .cancelled, operation: operation)
+            return .failed
+        }
         DiagnosticLog.record(.sessionInput, component: .codex, outcome: .started, operation: operation)
         switch await runner.run(process, timeout: queueTimeout) {
         case .exited(0):
             await progress.submitted()
             DiagnosticLog.record(.sessionInput, component: .codex, outcome: .submitted, operation: operation)
-        case .timedOut:
-            // The request may still have been queued: confirm from the record, never resubmit.
+        case .timedOut, .signaled:
+            // Stopped by Lunlet or ended by a signal from elsewhere, the command may already have queued the
+            // request: confirm from the record, never resubmit and never call it a failure (AC-10.03).
             DiagnosticLog.record(.sessionInput, component: .codex, outcome: .uncertain, operation: operation, reason: .timeout)
         case .exited(let status):
             DiagnosticLog.record(.sessionInput, component: .codex, outcome: .failed, operation: operation, code: Int(status))
             return .failed
-        case .signaled, .launchFailed:
+        case .launchFailed:
             DiagnosticLog.record(.sessionInput, component: .codex, outcome: .failed, operation: operation)
             return .failed
         }

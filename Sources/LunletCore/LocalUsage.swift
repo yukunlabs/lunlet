@@ -58,8 +58,12 @@ public struct LocalQuotaObservation: Equatable, Hashable, Sendable {
     public let remaining: Double
     public let bucketID: String
     public let plan: String?
-    public init(at: Date, resetAt: Date, remaining: Double, bucketID: String, plan: String?) {
+    /// How long the observed window lasts: seven days, or the longer window of a plan without a weekly one. Readings
+    /// of windows of different lengths are never comparable.
+    public let windowMinutes: Int
+    public init(at: Date, resetAt: Date, remaining: Double, bucketID: String, plan: String?, windowMinutes: Int = 10_080) {
         self.at = at; self.resetAt = resetAt; self.remaining = remaining; self.bucketID = bucketID; self.plan = plan
+        self.windowMinutes = windowMinutes
     }
 }
 

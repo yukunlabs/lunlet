@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
-// Refs: US-33, AC-33.01, AC-33.02, AC-33.03, AC-33.07.
+// Refs: US-33, AC-33.01, AC-33.02, AC-33.03, AC-33.07; US-38, AC-38.02.
 import Darwin
 import Foundation
 
@@ -17,7 +17,10 @@ struct ClaudeRegistryRecord: Equatable, Sendable {
     let status: String?
     let waitingFor: String?
     let statusUpdatedAt: Date?
+    /// How Claude Code runs the session, such as `interactive`; only an interactive session is held for a phone reply.
+    let kind: String?
     let file: URL
+    var isInteractive: Bool { kind == "interactive" }
 }
 
 struct ClaudeRegistryScan: Sendable {
@@ -92,11 +95,11 @@ struct ClaudeSessionRegistry: ClaudeRegistryReading {
               let rawSession = object["sessionId"] as? String, rawSession.utf8.count == 36,
               let sessionID = UUID(uuidString: rawSession) else { return nil }
         let cwd = (object["cwd"] as? String).flatMap { $0.hasPrefix("/") && $0.utf8.count <= 4_096 ? $0 : nil }
-        // `startedAt`, `kind` and `entrypoint` are also allowlisted but not needed for binding or state.
+        // `startedAt` and `entrypoint` are also allowlisted but not needed for binding or state.
         return .init(pid: pid, sessionID: sessionID, sessionName: rawSession.lowercased(), cwd: cwd,
                      processStart: (object["procStart"] as? String).flatMap(ClaudeProcessStart.date(from:)),
                      version: token(object["version"]), status: token(object["status"]), waitingFor: token(object["waitingFor"]),
-                     statusUpdatedAt: milliseconds(object["statusUpdatedAt"]), file: file)
+                     statusUpdatedAt: milliseconds(object["statusUpdatedAt"]), kind: token(object["kind"]), file: file)
     }
 
     enum Bounded { case data(Data), missing, unreadable }

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
 // Refs: US-20, AC-20.03, AC-20.04, AC-20.05, AC-20.06; US-12, AC-12.02; US-06, AC-06.01, AC-06.02, AC-06.05.
-// Refs: US-36, AC-36.02, AC-36.03, AC-36.04.
+// Refs: US-36, AC-36.02, AC-36.03, AC-36.04; US-11, AC-11.01.
 import Foundation
 import Testing
 import LunletCore
@@ -52,8 +52,11 @@ private final class SlackHTTPProtocol: URLProtocol, @unchecked Sendable {
 private final class ReceivedSlackReplies: @unchecked Sendable {
     private let lock = NSLock()
     private var replies: [BotReply] = []
+    private var events: [BotReplyEvent] = []
     func append(_ reply: BotReply) { lock.withLock { replies.append(reply) } }
+    func record(_ event: BotReplyEvent) { lock.withLock { events.append(event) } }
     var values: [BotReply] { lock.withLock { replies } }
+    var first: BotReplyEvent? { lock.withLock { events.first } }
 }
 
 private actor SlackSocketFixture: ChannelSocket {
@@ -62,7 +65,19 @@ private actor SlackSocketFixture: ChannelSocket {
     private var sent: [Data] = []
     private(set) var closed = false
     private(set) var receiveCount = 0
+    private(set) var pings = 0
+    /// A half-open connection: frames stop and pings are never answered.
+    private var silent = false
     init(_ frames: [Data]) { self.frames = frames }
+    func goSilent() { silent = true }
+    func ping() async throws {
+        pings += 1
+        while silent {
+            guard !closed else { throw BotChannelFailure.canceled }
+            do { try await Task.sleep(for: .milliseconds(1)) } catch { throw BotChannelFailure.canceled }
+        }
+        guard !closed else { throw BotChannelFailure.canceled }
+    }
     func receive() async throws -> Data {
         receiveCount += 1
         if closed { throw BotChannelFailure.canceled }
@@ -112,16 +127,19 @@ private actor SlackSocketFixture: ChannelSocket {
         return try JSONSerialization.data(withJSONObject: ["type": frameType, "envelope_id": envelope, "payload": payload])
     }
     private func client(_ replies: [Data], socket: SlackSocketFixture = .init([]),
-                        now: Date = Date(timeIntervalSince1970: 1001)) -> SlackBotClient {
+                        now: Date = Date(timeIntervalSince1970: 1001),
+                        probe: (every: Duration, within: Duration)? = nil) -> SlackBotClient {
         SlackHTTPProtocol.state.reset(replies)
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [SlackHTTPProtocol.self]
-        return SlackBotClient(credentials: .init(channel: .slack, botToken: "xoxb-synthetic", appToken: "xapp-synthetic"),
-                              http: ChannelHTTPClient(allowedHosts: ["slack.com"], configuration: configuration),
-                              socketFactory: { _ in socket }, now: { now })
+        let credentials = BotCredentials(channel: .slack, botToken: "xoxb-synthetic", appToken: "xapp-synthetic")
+        let http = ChannelHTTPClient(allowedHosts: ["slack.com"], configuration: configuration)
+        guard let probe else { return SlackBotClient(credentials: credentials, http: http, socketFactory: { _ in socket }, now: { now }) }
+        return SlackBotClient(credentials: credentials, http: http, socketFactory: { _ in socket }, now: { now },
+                              probeEvery: probe.every, probeWithin: probe.within)
     }
     private func waitForReceive(_ socket: SlackSocketFixture, count: Int = 2) async throws {
-        for _ in 0..<1000 {
+        for _ in 0..<20_000 {
             if await socket.receiveCount >= count { return }
             try await Task.sleep(for: .milliseconds(1))
         }
@@ -355,14 +373,52 @@ private actor SlackSocketFixture: ChannelSocket {
         ])
         let client = client([auth, bot, connection], socket: socket)
         let received = ReceivedSlackReplies()
-        let task = Task { try await client.receiveReplies(binding: binding) { if case .reply(let reply) = $0 { received.append(reply) } } }
+        let task = Task {
+            try await client.receiveReplies(binding: binding) { event in
+                received.record(event)
+                if case .reply(let reply) = event { received.append(reply) }
+            }
+        }
         try await waitForReceive(socket, count: 6)
+        // Slack's hello for this app is the accepted connection, reported before any reply.
+        #expect(received.first == .listening)
         #expect(received.values == [BotReply(messageID: "1000.200000", repliedTo: "1000.100000", text: "Run the tests",
                                               sentAt: Date(timeIntervalSince1970: 1000.2))])
         #expect(await socket.acknowledgments() == ["r1", "r2", "r3", "r4"])
         task.cancel()
         _ = await task.result
         #expect(await socket.closed)
+    }
+
+    // Refs: US-36, AC-36.02; US-11, AC-11.01. A connection that a VPN or NAT change left half open delivers nothing
+    // and never ends on its own. The reply socket is pinged while it listens; a ping that goes unanswered ends the
+    // listener as a lost connection, so the reply service connects again instead of waiting out the notice.
+    @Test func aReplySocketThatStopsAnsweringPingsEndsAsUnavailable() async throws {
+        let socket = SlackSocketFixture([hello])
+        let client = client([auth, bot, connection], socket: socket, probe: (.milliseconds(20), .milliseconds(20)))
+        let task = Task { try await client.receiveReplies(binding: binding) { _ in } }
+        defer { task.cancel() }
+        try await waitForReceive(socket, count: 2)
+        // While pings are answered the listener stays up.
+        for _ in 0..<20_000 {
+            if await socket.pings >= 2 { break }
+            try await Task.sleep(for: .milliseconds(1))
+        }
+        let answered = await socket.pings, stillOpen = !(await socket.closed)
+        #expect(answered >= 2 && stillOpen)
+        await socket.goSilent()
+        let ended = Task { () -> BotChannelFailure? in
+            do { try await task.value; return nil } catch { return error as? BotChannelFailure }
+        }
+        let inTime = await BoundedWait.settle(Task { _ = await ended.value }, limit: .seconds(3))
+        #expect(inTime, "A silent socket must not keep the listener waiting")
+        if inTime {
+            let failure = await ended.value
+            #expect(failure == .unavailable)
+        }
+        let closed = await socket.closed
+        #expect(closed)
+        await client.close()
     }
 
     // A notice is rewritten through chat.update on the bot's own message in the saved direct message.

@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
-// Refs: US-20, AC-20.03, AC-20.04, AC-20.06; US-12, AC-12.02.
+// Refs: US-20, AC-20.03, AC-20.04, AC-20.06; US-12, AC-12.02; US-36, AC-36.02; US-11, AC-11.01.
 import Foundation
 import LunletCore
 
@@ -92,5 +92,13 @@ public protocol ChannelBotClient: Sendable {
 public protocol ChannelSocket: Sendable {
     func receive() async throws -> Data
     func send(_ data: Data) async throws
+    /// Returns once the peer answered a ping; throws when the connection is lost, closed or the wait is cancelled.
+    /// A connection left half open never answers, so callers bound the wait.
+    func ping() async throws
     func close() async
+}
+
+public extension ChannelSocket {
+    /// A transport without a ping of its own is taken to be alive.
+    func ping() async throws {}
 }

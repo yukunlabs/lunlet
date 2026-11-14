@@ -1,6 +1,13 @@
 # Security policy
 
-Lunlet runs on your Mac, stores messaging credentials in the macOS Keychain, and forwards a reply to a local Codex session only after its own checks. A flaw in any of those boundaries is a security issue.
+Lunlet runs on your Mac. Four boundaries matter:
+
+- Messaging credentials live in a file only your user account can read, sealed for this Mac and account, never in preferences, logs or exports.
+- A reply from your phone reaches a local Codex or Claude Code session only after Lunlet's own checks of sender, session and turn; execution approvals stay on the Mac.
+- While Claude Code is a selected agent, Lunlet adds a status line and a Stop hook to Claude Code's user settings and removes exactly those when Claude Code is turned off. It never reads Claude Code's sign-in credentials.
+- A release build checks one update feed over HTTPS and installs an update only when it is signed for the project's update key.
+
+A flaw in any of those boundaries is a security issue.
 
 ## Report a vulnerability
 
@@ -10,7 +17,7 @@ The maintainer aims to acknowledge a report within seven days and to publish a f
 
 ## Supported versions
 
-Lunlet is a source preview. Fixes land on the `main` branch; a signed release line will be stated here once releases exist.
+The supported line is 0.2.x, published on GitHub Releases as unsigned previews (signed ad hoc, not notarized). Fixes land on the `main` branch and ship in the next release. A signed, notarized release line will be stated here once it exists.
 
 ## Out of scope
 

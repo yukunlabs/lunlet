@@ -104,6 +104,17 @@ public final class ContinuationGate {
         controls.removeValue(forKey: controlID)
     }
 
+    /// Whether an issued control could still authorize its one action at `now`: the same checks `submit` makes
+    /// before it reserves the target, without reserving anything. A sender asks this when it binds a notice, so a
+    /// control that died while the notice was being sent is not shown as open.
+    public func isUsable(controlID: UUID, now: TimeInterval) -> Bool {
+        guard now.isFinite, now >= 0, accessIsReady, let record = controls[controlID], record.receiptID == nil,
+              now >= record.issuedAt, now < record.control.expiresAt,
+              sessions[record.session.sessionID] == record.session,
+              let target = target(for: record.session), !reservations.contains(target) else { return false }
+        return true
+    }
+
     /// Whether an action for this observation's exact target was already accepted.
     public func hasSubmitted(for session: ObservedSession) -> Bool {
         target(for: session).map(reservations.contains) ?? false

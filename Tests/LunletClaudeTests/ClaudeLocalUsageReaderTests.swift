@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
-// Refs: US-33, AC-33.04, AC-33.06, AC-33.07, AC-33.10; US-04, AC-04.02, AC-04.03; US-18, AC-18.01, AC-18.03.
+// Refs: US-33, AC-33.04, AC-33.06, AC-33.07, AC-33.10; US-04, AC-04.02, AC-04.03; US-18, AC-18.01, AC-18.03; US-25, AC-25.01.
 import Foundation
 import Testing
 import LunletCore
@@ -38,6 +38,30 @@ struct ClaudeLocalUsageReaderTests {
         // Refs: US-33, AC-33.10. Categories stay separate, so cache reads never hide in one total.
         let categories = LocalTokenBreakdown(input: 11, output: 59, cacheWrite: 120, cacheRead: 1_000)
         #expect(session.breakdown == categories && history.days[0].amount.breakdown == categories)
+    }
+
+    // Refs: US-25, AC-25.01; US-33, AC-33.04. Heavy users keep transcripts of hundreds of megabytes.
+    @Test func aLargeTranscriptIsScannedWithoutHoldingItInMemory() async throws {
+        let fixture = try ClaudeFixture(); defer { fixture.remove() }
+        let url = try fixture.transcript([F.assistant(stop: "end_turn", id: "msg_a", usage: F.usage(input: 10, write5m: 0, read: 0, output: 5))],
+                                         session: F.first)
+        // 48 MiB of one-megabyte tool results follow the one response that carries usage.
+        let megabytes = 48
+        do {
+            let result = Data((F.typed(String(repeating: "x", count: 1_048_576), uuid: "u1", prompt: "p1") + "\n").utf8)
+            let handle = try FileHandle(forWritingTo: url); defer { try? handle.close() }
+            try handle.seekToEnd()
+            for _ in 0..<megabytes { try handle.write(contentsOf: result) }
+        }
+        // Holding the input costs about twice the file (its chunks and its decoded records); a draining scan
+        // stays near one line. The bound sits between.
+        let bound = UInt64(megabytes) * 1_048_576
+        var tokens: Int64?
+        let growth = try await FootprintSampler.leastGrowth(under: bound) {
+            tokens = try await ClaudeLocalUsageReader(home: fixture.home).readHistory(now: now, calendar: calendar, days: 1).sessions[first]?.tokens
+        }
+        #expect(tokens == 15)
+        #expect(growth < bound, "the scan grew the footprint by \(growth / 1_048_576) MiB")
     }
 
     // Refs: US-33, AC-33.04; US-04, AC-04.02, AC-04.03.

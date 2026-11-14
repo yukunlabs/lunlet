@@ -4,7 +4,7 @@
 // Refs: US-07, AC-07.02, AC-07.03, AC-07.04; US-08, AC-08.01, AC-08.03.
 // Refs: US-09, AC-09.02; US-10, AC-10.01, AC-10.02, AC-10.03, AC-10.04.
 // Refs: US-11, AC-11.02, AC-11.03, AC-11.05; US-12, AC-12.01, AC-12.02, AC-12.03.
-// Refs: US-05, AC-05.08, AC-05.09.
+// Refs: US-05, AC-05.08, AC-05.09; US-38, AC-38.03.
 import Foundation
 import LunletCore
 
@@ -20,23 +20,31 @@ public struct FeishuCardRefusal: Equatable, Sendable, CustomStringConvertible {
 
 public enum CardActionResult: Sendable, CustomStringConvertible {
     case received(AuthorizedContinuation), duplicate(ActionReceipt), unavailable, invalidInput
+    /// An event that is not a card action, such as a read receipt for the notice: acknowledged, never answered.
+    case ignored
     /// The verified owner's bound card cannot be used; `report` is set the first time only.
     case refused(ContinuationRefusal, report: FeishuCardRefusal?)
     public var description: String { "Card action result (redacted)" }
 
-    public func responseJSON() throws -> Data {
+    /// The toast answering the tap. `agent` is the agent whose turn the card was issued for
+    /// (`CardActionRouter.provider(forSession:)`), so a Claude Code card is never answered in Codex's name.
+    public func responseJSON(agent: SessionProvider = .codex) throws -> Data {
         let type: String
         let text: String
+        let name = agent.displayName
         switch self {
+        case .ignored:
+            // Nothing was tapped, so there is no toast to show.
+            return Data("{}".utf8)
         case .received:
             type = "info"
-            text = "Received. Waiting for Codex confirmation."
+            text = "Received. Waiting for \(name) confirmation."
         case .duplicate(let receipt):
             type = receipt.status == .uncertain || receipt.status == .failed ? "warning" : "info"
             switch receipt.status {
-            case .received: text = "Already received. Waiting for Codex confirmation."
-            case .submitted: text = "Already submitted to Codex."
-            case .processing: text = "Codex is processing this action."
+            case .received: text = "Already received. Waiting for \(name) confirmation."
+            case .submitted: text = "Already submitted to \(name)."
+            case .processing: text = "\(name) is processing this action."
             case .failed: text = "The earlier submission failed. Check your Mac."
             case .uncertain: text = "Submission outcome is unknown. Check your Mac before trying again."
             }
@@ -61,6 +69,8 @@ public actor CardActionRouter {
         let form: CardForm
         /// The exact observation the control was issued for.
         let session: ObservedSession
+        /// The agent whose turn the card is for, for the wording of toasts only.
+        let provider: SessionProvider
         var receipt: FeishuMessageReceipt?
         /// Set once the control can no longer authorize anything; a delivered card keeps its
         /// reason for a while so a later tap receives an accurate answer (AC-05.09).
@@ -151,12 +161,28 @@ public actor CardActionRouter {
         return true
     }
 
-    public func prepare(sessionID: UUID, form: CardForm) -> ContinuationControl? {
+    /// The agent whose turn a card for this session was issued for; nil when no such card is known. A session
+    /// belongs to one agent, so every card issued for it agrees.
+    public func provider(forSession sessionID: UUID) -> SessionProvider? {
+        issued.values.first { $0.session.sessionID == sessionID }?.provider
+    }
+
+    /// `provider` is the agent whose turn the card is for; it only words the toasts and decides nothing.
+    public func prepare(sessionID: UUID, form: CardForm, provider: SessionProvider = .codex) -> ContinuationControl? {
         let time = elapsed()
         guard prune(at: time), connectionID != nil, let observation = observations[sessionID],
               form.matches(observation.phase), let control = gate.issueControl(for: sessionID, now: time) else { return nil }
-        issued[control.id] = Issued(control: control, form: form, session: observation)
+        issued[control.id] = Issued(control: control, form: form, session: observation, provider: provider)
         return control
+    }
+
+    /// Why `prepare` would issue no control right now, as a number for the log: 21 no callback connection, 22 the
+    /// session is not observed, 23 its phase takes no such form, 24 the gate refuses (access not ready, the session
+    /// not eligible, or its turn already answered).
+    public func prepareRefusal(sessionID: UUID, form: CardForm) -> Int {
+        guard connectionID != nil else { return 21 }
+        guard let observation = observations[sessionID] else { return 22 }
+        return form.matches(observation.phase) ? 24 : 23
     }
 
     /// Binds a delivered card to its authenticated send receipt and reports whether it can take
@@ -193,7 +219,14 @@ public actor CardActionRouter {
               owner.isComplete else { return rejected() }
         let callback: CardCallback
         do { callback = try CardCallback.decodeFromLongConnection(data, owner: owner, now: wallTime()) }
-        catch { return rejected((error as? CardCallbackFailure)?.diagnosticReason ?? .protocolViolation) }
+        catch {
+            let failure = error as? CardCallbackFailure
+            let stage = failure == .malformed ? CardCallback.malformedStage(data) : nil
+            // The provider also delivers other events on this connection, such as a read receipt when the chat is
+            // opened. They are no one's reply, so they are neither refused with a toast nor logged as rejected.
+            if stage == CardCallback.notACardAction { return .ignored }
+            return rejected(failure?.diagnosticReason ?? .protocolViolation, code: stage)
+        }
         // Only the verified owner, on the exact message and chat this control was delivered in,
         // learns anything about it.
         guard let record = issued[callback.controlID], let receipt = record.receipt,
@@ -231,9 +264,9 @@ public actor CardActionRouter {
 
     /// Unauthenticated, malformed, foreign or unbound submissions all answer the same
     /// unavailable toast; only a fixed reason is logged.
-    private func rejected(_ reason: DiagnosticReason? = nil) -> CardActionResult {
+    private func rejected(_ reason: DiagnosticReason? = nil, code: Int? = nil) -> CardActionResult {
         DiagnosticLog.record(.cardAction, component: .feishu, outcome: .rejected, operation: DiagnosticOperation(),
-                             reason: reason)
+                             reason: reason, code: code)
         return .unavailable
     }
 

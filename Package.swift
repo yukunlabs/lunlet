@@ -17,6 +17,7 @@ let package = Package(
     platforms: [.macOS(.v14)],
     products: [
         .executable(name: "Lunlet", targets: ["LunletApp"]),
+        .executable(name: "lunlet-hook", targets: ["LunletHookHelper"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-protobuf.git", exact: "1.39.0"),
@@ -31,7 +32,9 @@ let package = Package(
                                                      .product(name: "SwiftProtobuf", package: "swift-protobuf")],
                 exclude: ["Protocol"], linkerSettings: [.linkedLibrary("z")]),
         .target(name: "LunletCodex", dependencies: ["LunletCore"]),
-        .target(name: "LunletClaude", dependencies: ["LunletCore"]),
+        .target(name: "LunletHook"),
+        .executableTarget(name: "LunletHookHelper", dependencies: ["LunletHook"]),
+        .target(name: "LunletClaude", dependencies: ["LunletCore", "LunletHook"]),
         .target(name: "LunletMessaging", dependencies: ["LunletCore", "LunletSecureStorage"]),
         .target(name: "LunletDesktop", dependencies: ["LunletCore", "LunletSecureStorage", "LunletFeishu",
                                                       "LunletCodex", "LunletClaude", "LunletMessaging",
@@ -44,6 +47,7 @@ let package = Package(
                                                               .product(name: "SwiftProtobuf", package: "swift-protobuf")]),
         .testTarget(name: "LunletDesktopTests", dependencies: ["LunletDesktop"]),
         .testTarget(name: "LunletCodexTests", dependencies: ["LunletCodex"], resources: [.copy("Fixtures")]),
-        .testTarget(name: "LunletClaudeTests", dependencies: ["LunletClaude", "LunletCore"]),
+        .testTarget(name: "LunletClaudeTests", dependencies: ["LunletClaude", "LunletCore", "LunletHook"]),
+        .testTarget(name: "LunletHookTests", dependencies: ["LunletHook"]),
     ]
 )

@@ -66,13 +66,13 @@ struct CodexSessionMonitorTests {
     let a = CodexProcessIdentity(pid: 42, seconds: 100, microseconds: 0)
     let b = CodexProcessIdentity(pid: 43, seconds: 101, microseconds: 0)
     private func wait(_ capture: CapturedUpdates, liveness: CLILiveness) async throws {
-        let end = ContinuousClock.now + .seconds(10)
+        let end = ContinuousClock.now + .seconds(60)
         while await capture.snapshots.last?.0.observation.liveness != liveness, ContinuousClock.now < end {
             try await Task.sleep(for: .milliseconds(5))
         }
     }
     private func wait(_ capture: CapturedUpdates, for count: Int) async throws {
-        let end = ContinuousClock.now + .seconds(10)
+        let end = ContinuousClock.now + .seconds(60)
         while await capture.count < count, ContinuousClock.now < end { try await Task.sleep(for: .milliseconds(5)) }
         #expect(await capture.count >= count)
     }

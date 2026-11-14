@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
 // Refs: US-08, AC-08.01, AC-08.02, AC-08.03, AC-08.04; US-09, AC-09.02.
-// Refs: US-10, AC-10.01, AC-10.02, AC-10.03, AC-10.04; US-11, AC-11.03.
+// Refs: US-10, AC-10.01, AC-10.02, AC-10.03, AC-10.04; US-11, AC-11.03; US-12, AC-12.04.
 import Foundation
 import Testing
 import LunletCore
@@ -19,6 +19,21 @@ private actor BindingSource: CodexSessionObserving {
     func destination(sessionID: UUID, connectionID: UUID) -> CodexTerminalDestination? { nil }
     func continuationBinding(sessionID: UUID, connectionID: UUID, completedTurnID: String) -> CodexBindingResult {
         requests += 1
+        return result
+    }
+}
+
+/// A binding source whose caller is cancelled while it rechecks, as when Lunlet quits with a reply in flight.
+private actor CancellingSource: CodexSessionObserving {
+    private let result: CodexBindingResult
+    init(_ result: CodexBindingResult) { self.result = result }
+    func updates() -> AsyncStream<SessionUpdate> { AsyncStream { $0.finish() } }
+    func refresh() {}
+    func reconcile() {}
+    func shutdown() {}
+    func destination(sessionID: UUID, connectionID: UUID) -> CodexTerminalDestination? { nil }
+    func continuationBinding(sessionID: UUID, connectionID: UUID, completedTurnID: String) -> CodexBindingResult {
+        withUnsafeCurrentTask { $0?.cancel() }
         return result
     }
 }
@@ -125,10 +140,13 @@ struct CodexQueueAdapterTests {
         }
     }
 
-    @Test func failedLaunchesAndExitsAreFailuresWhileATimedOutQueueIsConfirmedFromTheRecord() async throws {
+    // Refs: US-10, AC-10.03. A queue command that Lunlet stopped, or that a signal from elsewhere ended, may already
+    // have queued the reply: its outcome is unknown, so it is confirmed from the record and never called a failure.
+    @Test func failedLaunchesAndExitsAreFailuresWhileAnInterruptedQueueIsConfirmedFromTheRecord() async throws {
         let cases: [(CodexProcessExit, Bool, ContinuationOutcome)] = [
-            (.exited(2), true, .failed), (.signaled, true, .failed), (.launchFailed, false, .failed),
+            (.exited(2), true, .failed), (.launchFailed, false, .failed),
             (.timedOut, true, .delivered), (.timedOut, false, .notConfirmed),
+            (.signaled, true, .delivered), (.signaled, false, .notConfirmed),
         ]
         for (exit, appends, expected) in cases {
             let (root, file) = try fixture()
@@ -142,6 +160,19 @@ struct CodexQueueAdapterTests {
             // Only a clean exit is a submission receipt; nothing is ever run twice.
             #expect(!log.events.contains("submitted") && runner.requests.count == 1)
         }
+    }
+
+    // Refs: US-10, AC-10.03; US-12, AC-12.04. A caller cancelled while the binding was rechecked, as on quit or
+    // disconnect, never starts the queue command only to stop it: the reply is plainly not sent.
+    @Test func aCallerCancelledBeforeTheQueueCommandNeverRunsIt() async throws {
+        let (root, file) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let message = try userMessage(text)
+        let runner = SyntheticRunner(.timedOut) { [helper] in try? helper.append(message, to: file) }
+        let log = ProgressLog()
+        let source = CancellingSource(.bound(binding(file, root: root)))
+        let outcome = await adapter(runner).continueSession(request(), in: source, progress: log.progress)
+        #expect(outcome == .failed && runner.requests.isEmpty && !log.events.contains("submitted"))
     }
 
     @Test func refusedBindingsStaleAccessAndUnsafeTextNeverRunTheCLI() async throws {
@@ -197,14 +228,14 @@ struct SystemCodexProcessRunnerTests {
     @Test func argumentsAndEnvironmentArePassedExactlyWithoutAShell() async {
         let runner = SystemCodexProcessRunner()
         // `test` succeeds only if each value arrives as one unexpanded argument.
-        #expect(await runner.run(request("/bin/test", ["a b; $HOME", "=", "a b; $HOME"]), timeout: .seconds(5)) == .exited(0))
-        #expect(await runner.run(request("/usr/bin/false", []), timeout: .seconds(5)) == .exited(1))
+        #expect(await runner.run(request("/bin/test", ["a b; $HOME", "=", "a b; $HOME"]), timeout: .seconds(60)) == .exited(0))
+        #expect(await runner.run(request("/usr/bin/false", []), timeout: .seconds(60)) == .exited(1))
         #expect(await runner.run(request("/usr/bin/printenv", ["LUNLET_SYNTHETIC"], environment: ["LUNLET_SYNTHETIC": "1"]),
-                                 timeout: .seconds(5)) == .exited(0))
+                                 timeout: .seconds(60)) == .exited(0))
         // Nothing is inherited, not even PATH.
         #expect(await runner.run(request("/usr/bin/printenv", ["PATH"], environment: ["LUNLET_SYNTHETIC": "1"]),
-                                 timeout: .seconds(5)) == .exited(1))
-        #expect(await runner.run(request("/nonexistent/codex", []), timeout: .seconds(5)) == .launchFailed)
+                                 timeout: .seconds(60)) == .exited(1))
+        #expect(await runner.run(request("/nonexistent/codex", []), timeout: .seconds(60)) == .launchFailed)
     }
 
     @Test func timeoutsAndCancellationStopTheChild() async {

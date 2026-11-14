@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
-// Refs: US-20, AC-20.03, AC-20.04, AC-20.05, AC-20.06; US-12, AC-12.02; US-33, AC-33.05.
+// Refs: US-20, AC-20.03, AC-20.04, AC-20.05, AC-20.06; US-12, AC-12.02; US-33, AC-33.05; US-11, AC-11.01.
 // Refs: US-06, AC-06.01, AC-06.02, AC-06.05; US-36, AC-36.01, AC-36.02, AC-36.03, AC-36.04.
 import Foundation
 import CoreFoundation
@@ -29,14 +29,20 @@ public actor SlackBotClient: ChannelReplyClient {
     private var pairingExpired = false
     private var listening = false
     private var replySocket: (any ChannelSocket)?
+    /// The reply socket is pinged this often, and a ping must be answered within this long.
+    private let probeEvery: Duration
+    private let probeWithin: Duration
 
     public init(credentials: BotCredentials) {
         self.credentials = credentials; http = ChannelHTTPClient(allowedHosts: ["slack.com"]); socketFactory = nil; now = Date.init
+        probeEvery = .seconds(30); probeWithin = .seconds(10)
     }
     init(credentials: BotCredentials, http: ChannelHTTPClient,
          socketFactory: (@Sendable (URL) async throws -> any ChannelSocket)? = nil,
-         now: @escaping @Sendable () -> Date = Date.init) {
+         now: @escaping @Sendable () -> Date = Date.init,
+         probeEvery: Duration = .seconds(30), probeWithin: Duration = .seconds(10)) {
         self.credentials = credentials; self.http = http; self.socketFactory = socketFactory; self.now = now
+        self.probeEvery = probeEvery; self.probeWithin = probeWithin
     }
 
     public func prepare() async throws -> BotIdentity {
@@ -267,6 +273,9 @@ public actor SlackBotClient: ChannelReplyClient {
             if let socketFactory { socket = try await socketFactory(endpoint) }
             else { socket = try await http.openSocket(endpoint) }
             replySocket = socket
+            // A connection left half open delivers nothing and never ends by itself, so the socket is pinged while
+            // it listens; an unanswered ping closes it, which ends the pending receive.
+            let probe = Self.probe(socket, every: probeEvery, within: probeWithin)
             do {
                 // Cancellation closes the socket, which ends a pending receive.
                 try await withTaskCancellationHandler {
@@ -274,10 +283,15 @@ public actor SlackBotClient: ChannelReplyClient {
                 } onCancel: {
                     Task { await self.closeReplySocket() }
                 }
+                probe.cancel()
                 attempt = 0
             } catch {
+                probe.cancel()
+                let lost = await probe.value
                 await socket.close(); replySocket = nil
                 if closed || Task.isCancelled { throw BotChannelFailure.canceled }
+                // The close that ended the receive was the probe's: a lost connection, not a cancelled listener.
+                if lost { throw BotChannelFailure.unavailable }
                 throw (error as? BotChannelFailure) ?? .unavailable
             }
             await socket.close(); replySocket = nil
@@ -292,6 +306,8 @@ public actor SlackBotClient: ChannelReplyClient {
               (hello["connection_info"] as? [String: Any])?["app_id"] as? String == identity.identity.applicationID else {
             throw BotChannelFailure.identityMismatch
         }
+        // Slack accepted this connection for this app; replies can arrive from here on.
+        await onEvent(.listening)
         while true {
             try ensureOpen()
             let frame = try Self.object(await socket.receive())
@@ -312,6 +328,25 @@ public actor SlackBotClient: ChannelReplyClient {
             seen.insert(envelope)
             guard let reply = ownerReply(frame, binding: binding, identity: identity) else { continue }
             await onEvent(.reply(reply))
+        }
+    }
+
+    /// Pings `socket` at `every` until cancelled; true once a ping went unanswered for `within`, after closing the
+    /// socket. Cancelling the probe also abandons a ping in flight, so ending a listener never waits on one.
+    private static func probe(_ socket: any ChannelSocket, every: Duration, within: Duration) -> Task<Bool, Never> {
+        Task {
+            while true {
+                do { try await Task.sleep(for: every) } catch { return false }
+                let ping = Task { (try? await socket.ping()) != nil }
+                let finished = await withTaskCancellationHandler {
+                    await BoundedWait.settle(ping, limit: within)
+                } onCancel: { ping.cancel() }
+                if Task.isCancelled { ping.cancel(); return false }
+                if finished, await ping.value { continue }
+                ping.cancel()
+                await socket.close()
+                return true
+            }
         }
     }
 

@@ -97,11 +97,11 @@ import Testing
         process.standardInput = input; process.standardOutput = output
         try process.run()
         let reset = Int(Date().timeIntervalSince1970) + 630  // 30 s of slack so a slow run still prints "10m"
-        input.fileHandleForWriting.write(Data(StatusLineSandbox.input(fiveHour: (7, reset)).utf8))
+        input.fileHandleForWriting.write(Data(StatusLineSandbox.input(sevenDay: (7, reset)).utf8))
         try input.fileHandleForWriting.close()
         let printed = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
         process.waitUntilExit()
-        #expect(process.terminationStatus == 0 && printed == "mine\n5h 7% · resets 10m\n")
+        #expect(process.terminationStatus == 0 && printed == "mine\n7d 7% · resets 10m\n")
         // A single-line file stays on one line.
         #expect(fixture.text?.contains("\n") == false)
         #expect(fixture.text?.hasPrefix(#"{"statusLine":{"type":"command", "command":"/bin/sh '"#) == true)
@@ -132,6 +132,17 @@ import Testing
                                                  location: fixture.connection.location)
         #expect(throws: ClaudeStatusLineFailure.claudeDirectoryMissing) { try missing.connect() }
         #expect(!FileManager.default.fileExists(atPath: fixture.box.root.appendingPathComponent("absent").path))
+    }
+
+    // Refs: US-33, AC-33.08. A status line that already runs Lunlet's script cannot be chained: the script would run
+    // that line and the line would run the script, without end. It is left as it is.
+    @Test func aLineThatAlreadyRunsLunletsScriptIsNeverChained() throws {
+        let fixture = try Fixture(settings: nil); defer { fixture.box.remove() }
+        let wrapped = #"{"statusLine":{"type":"command","command":"/bin/sh '"# + fixture.connection.location.script.path + #"' | tr a-z A-Z"}}"#
+        try Data(wrapped.utf8).write(to: fixture.settings)
+        #expect(try fixture.connection.state() == .notConnected)
+        #expect(throws: ClaudeStatusLineFailure.unsupportedStatusLine) { try fixture.connection.connect() }
+        #expect(fixture.text == wrapped && !fixture.backupExists)
     }
 
     // Refs: US-33, AC-33.08.

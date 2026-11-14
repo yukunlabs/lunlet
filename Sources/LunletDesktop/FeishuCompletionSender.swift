@@ -92,7 +92,7 @@ actor FeishuCompletionSender: CompletionNotificationSending {
     }
 
     nonisolated func observe(_ snapshot: SessionSnapshot) {
-        guard snapshot.provider == .codex, snapshot.parentSessionID == nil else { return }
+        guard snapshot.inputPath != nil, snapshot.parentSessionID == nil else { return }
         replies?.observe(snapshot)
     }
 

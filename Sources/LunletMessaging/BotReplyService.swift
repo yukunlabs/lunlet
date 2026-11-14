@@ -32,6 +32,8 @@ public actor BotReplyService {
     private let dispatch: BotReplyDispatch
     private let elapsed: @Sendable () -> TimeInterval
     private let checkInterval: Duration
+    /// The wait before the listener is started again after its nth consecutive failure.
+    private let retryDelay: @Sendable (Int) -> Duration
     private let gate = ContinuationGate()
     /// Observations and lock changes arrive in caller order through one stream, so a later snapshot never lands
     /// before an earlier one and a notice is prepared against the newest observation.
@@ -50,13 +52,15 @@ public actor BotReplyService {
     private var closed = false
 
     public init(client: any ChannelReplyClient, binding: BotBinding, dispatch: @escaping BotReplyDispatch,
-                elapsed: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
-                checkInterval: Duration = .seconds(30)) {
+                elapsed: @escaping @Sendable () -> TimeInterval = BotReplyService.windowClock,
+                checkInterval: Duration = .seconds(30),
+                retryDelay: @escaping @Sendable (Int) -> Duration = BotReplyService.listenerBackoff) {
         self.client = client
         self.binding = binding
         self.dispatch = dispatch
         self.elapsed = elapsed
         self.checkInterval = checkInterval
+        self.retryDelay = retryDelay
         gate.setAccess(.init(owner: FeishuOwner(applicationID: binding.botID, tenantID: binding.chatID, userID: binding.ownerID),
                              connected: true, awayMode: false, inputEnabled: true))
         let (stream, continuation) = AsyncStream.makeStream(of: Event.self)
@@ -73,6 +77,13 @@ public actor BotReplyService {
     }
 
     deinit { events.finish() }
+
+    /// The clock a notice's validity is measured on: monotonic and running while the Mac sleeps, like the Feishu
+    /// router's, so a notice sent before a night's sleep has expired by morning (AC-05.09). The system uptime
+    /// stops during sleep and would keep such a notice open.
+    public static let windowClock: @Sendable () -> TimeInterval = {
+        TimeInterval(clock_gettime_nsec_np(CLOCK_MONOTONIC_RAW)) / 1e9
+    }
 
     /// The paired bot, chat and owner from the enrollment are the only identity a reply can carry.
     private var owner: FeishuOwner { FeishuOwner(applicationID: binding.botID, tenantID: binding.chatID, userID: binding.ownerID) }
@@ -115,7 +126,10 @@ public actor BotReplyService {
     public func prepareReply(for snapshot: SessionSnapshot) async -> ContinuationControl? {
         await flush()
         let session = snapshot.observation.sessionID
-        guard !closed, replyWindow, snapshot.provider == .codex, snapshot.parentSessionID == nil, latest[session] == snapshot,
+        // The newest observation must be this same turn; its title, preview or activity time may have changed since
+        // the notice was prepared, and those never decide a control.
+        guard !closed, replyWindow, snapshot.inputPath != nil, snapshot.parentSessionID == nil,
+              latest[session]?.observesSameTurn(as: snapshot) == true,
               case .idle = snapshot.observation.phase, snapshot.observation.liveness == .alive else { return nil }
         return gate.issueControl(for: session, now: elapsed())
     }
@@ -126,8 +140,14 @@ public actor BotReplyService {
         guard !closed else { return }
         let session = snapshot.observation.sessionID
         for (id, notice) in notices where notice.sessionID == session && notice.state == .open { show(.closed(.superseded), on: id) }
-        notices[control.id] = Notice(messageID: receipt.messageID, sessionID: session, snapshot: snapshot,
-                                     issued: snapshot.observation, boundAt: elapsed(), state: .open)
+        let notice = Notice(messageID: receipt.messageID, sessionID: session, snapshot: snapshot,
+                            issued: snapshot.observation, boundAt: elapsed(), state: .open)
+        notices[control.id] = notice
+        // The control can die while the notice is being sent (the Mac was unlocked, the session moved on); the
+        // notice then says so at once instead of inviting a reply it would refuse (AC-36.03).
+        if !gate.isUsable(controlID: control.id, now: elapsed()) { show(.closed(refusal(for: notice)), on: control.id) }
+        // An earlier outage does not slow the replies to a new notice.
+        listenerFailures = 0
         startListenerIfNeeded()
         scheduleExpiryCheck()
     }
@@ -167,6 +187,8 @@ public actor BotReplyService {
 
     private func handle(_ event: BotReplyEvent) async {
         switch event {
+        // The provider accepted the connection, so the outage is over and a later loss backs off from the start.
+        case .listening: listenerFailures = 0
         case .reply(let reply): await handle(reply)
         case .replyRequested(let messageID, let callbackID): await requested(messageID, callbackID: callbackID)
         }
@@ -203,7 +225,9 @@ public actor BotReplyService {
             show(.received(reply.text), on: id)
             track { [weak self] in await self?.run(action, text: reply.text, notice: id) }
         case .duplicate:
-            return
+            // Another message for a turn that already took its reply: answered with the reason, never forwarded
+            // (AC-36.02). A provider's redelivery of the same message was dropped above by its ID.
+            await fallback("Not sent. " + ContinuationRefusal.alreadySent.explanation)
         case .rejected:
             let reason = refusal(for: notice)
             DiagnosticLog.record(.cardAction, component: .continuation, outcome: .rejected, operation: DiagnosticOperation(),
@@ -222,7 +246,8 @@ public actor BotReplyService {
         }
         guard replyWindow else { return .replyWindowClosed }
         guard elapsed() < notice.boundAt + ContinuationGate.controlLifetime else { return .expired }
-        return ContinuationRefusal.classify(issued: notice.issued, current: latest[notice.sessionID]?.observation)
+        return ContinuationRefusal.classify(issued: notice.issued, current: latest[notice.sessionID]?.observation,
+                                            submitted: gate.hasSubmitted(for: notice.issued))
     }
 
     private func run(_ action: AuthorizedContinuation, text: String, notice id: UUID) async {
@@ -307,8 +332,14 @@ public actor BotReplyService {
         return notices.values.contains { now < $0.boundAt + ContinuationGate.controlLifetime }
     }
 
+    /// Two seconds after the first failure, doubling to a minute: short enough to catch a reply after a network
+    /// change, long enough between attempts for a provider's connection rate limit.
+    public static let listenerBackoff: @Sendable (Int) -> Duration = { failures in
+        .seconds(min(60, 1 << min(max(failures, 1), 6)))
+    }
+
     private func startListenerIfNeeded() {
-        guard listener == nil, !closed, listenerFailures < 5, needsListener else { return }
+        guard listener == nil, !closed, needsListener else { return }
         let client = client, binding = binding
         listener = Task { [weak self] in
             var failed = false
@@ -329,8 +360,8 @@ public actor BotReplyService {
         listenerFailures = failed ? listenerFailures + 1 : 0
         guard !closed, needsListener else { return }
         if failed {
-            // A provider that keeps failing is left alone until a new notice is bound.
-            do { try await Task.sleep(for: .seconds(min(10, listenerFailures * 2))) } catch { return }
+            // A failing provider is tried again, ever more slowly, only while a notice can still take a reply.
+            do { try await Task.sleep(for: retryDelay(listenerFailures)) } catch { return }
             guard !closed, needsListener else { return }
         }
         startListenerIfNeeded()

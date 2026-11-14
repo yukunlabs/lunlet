@@ -1,12 +1,13 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
 // Refs: US-15, AC-15.06; US-13, AC-13.09.
+// Refs: US-41, AC-41.05.
 // Refs: US-13, AC-13.07.
 // Refs: US-02, AC-02.02, AC-02.03, AC-02.05; US-03, AC-03.01, AC-03.02, AC-03.03, AC-03.04.
 // Refs: US-13, AC-13.01, AC-13.02, AC-13.03, AC-13.04, AC-13.05, AC-13.06; US-12, AC-12.04.
 // Refs: US-11, AC-11.03.
 // Refs: US-15, AC-15.01, AC-15.02, AC-15.03, AC-15.04, AC-15.05.
-// Refs: US-33, AC-33.01, AC-33.02, AC-33.06; US-19, AC-19.03, AC-19.04.
+// Refs: US-33, AC-33.01, AC-33.02, AC-33.06; US-19, AC-19.03, AC-19.04; US-25, AC-25.01.
 import Foundation
 import Combine
 import CryptoKit
@@ -25,6 +26,9 @@ import LunletCore
     /// The conversation a recent cue named, published when the panel opens soon after so the panel shows it (AC-13.09).
     struct CueFocus: Equatable { let sessionID: UUID; let provider: SessionProvider; let sequence: Int }
     @Published private(set) var cueFocus: CueFocus?
+    /// The agent's page an activated allowance notification asked for (AC-41.05), shown like a cue's focus.
+    struct ProviderFocus: Equatable { let provider: SessionProvider; let sequence: Int }
+    @Published private(set) var providerFocus: ProviderFocus?
     /// A cue keeps its conversation for opening while visible and this long after it hides.
     nonisolated static let cueFocusGrace: TimeInterval = 15
     private var pendingFocus: (sessionID: UUID, provider: SessionProvider, until: TimeInterval)?
@@ -66,6 +70,14 @@ import LunletCore
         let token: String
     }
     private var cueActivity: [Binding: CueActivity] = [:]
+    private struct CueIdentity: Equatable { let turn: String; let phase: TaskCue.Phase; let input: String? }
+    /// The cue last handed to the presentation for each binding; the same one again is nothing new to show.
+    private var handedCues: [Binding: CueIdentity] = [:]
+    /// When the display was last read, and how long a record with nothing new to show may rely on that reading.
+    private var lastDisplayRead: TimeInterval?
+    private static let displayReadInterval: TimeInterval = 1
+    /// Each binding's entries into a waiting state, so a record read again is the same entry and a later wait is a new one (AC-13.10).
+    private var waitingEntries: [Binding: (count: Int, waiting: Bool)] = [:]
     private var shown: [TaskCue] = []
     private var expiry: Task<Void, Never>?
     private var displayMonitor: DisplayStateMonitor?
@@ -121,7 +133,7 @@ import LunletCore
 
     private func retainInHistory(_ snapshot: SessionSnapshot) {
         if let index = history.firstIndex(where: { $0.observation.sessionID == snapshot.observation.sessionID }) {
-            history[index] = snapshot
+            if history[index] != snapshot { history[index] = snapshot }
         } else { history.append(snapshot) }
     }
 
@@ -155,8 +167,16 @@ import LunletCore
         if snapshot.isEnded { retainEnded(snapshot, binding: binding); return }
         recordActivity(snapshot, origin: origin)
         store(snapshot)
-        refreshDisplayState()
-        guard let cue = cue(for: snapshot, binding: binding) else { return }
+        let cue = cue(for: snapshot, binding: binding)
+        let identity = cue.map { CueIdentity(turn: $0.turnID, phase: $0.phase, input: $0.inputActivityID) }
+        // A streaming session sends several records a second (US-25). The display is read before a cue not handed
+        // over before, so showing it never rests on an older reading, and otherwise at most once a second; display
+        // changes themselves arrive through the monitor.
+        let unhandled = identity != nil && handedCues[binding] != identity
+        let due = lastDisplayRead.map { elapsed() - $0 >= Self.displayReadInterval } ?? true
+        if unhandled || due { refreshDisplayState() }
+        guard let cue else { return }
+        handedCues[binding] = identity
         presentation.receive(cue, origin: origin, now: elapsed())
         refreshPresentation()
     }
@@ -207,7 +227,8 @@ import LunletCore
         let id = snapshot.observation.sessionID
         if history.contains(where: { $0.observation.sessionID == id }) { retainInHistory(snapshot) }
         if let index = sessions.firstIndex(where: { $0.observation.sessionID == id }) {
-            sessions[index] = snapshot
+            // A record that changes nothing is not published again, so the panel is not redrawn for it.
+            if sessions[index] != snapshot { sessions[index] = snapshot }
         } else { sessions.append(snapshot) }
         updateMonitoringAvailability()
     }
@@ -216,6 +237,7 @@ import LunletCore
     private func cue(for snapshot: SessionSnapshot, binding: Binding) -> TaskCue? {
         guard snapshot.parentSessionID == nil, snapshot.hasConfirmedActivity else { return nil }
         let observation = snapshot.observation
+        if let waiting = waitingCue(for: snapshot, binding: binding) { return waiting }
         let phase: TaskCue.Phase
         let turn: String
         if snapshot.inputPending, let input = snapshot.inputActivityID {
@@ -247,6 +269,32 @@ import LunletCore
         let title = labelsAgents ? snapshot.provider.shortName + " · " + notice.project : notice.project
         return .init(sessionID: observation.sessionID.uuidString, connectionID: observation.connectionID.uuidString,
                      turnID: turn, title: title, phase: phase, inputActivityID: inputKey,
+                     context: snapshot.localPreview ?? "Task " + token)
+    }
+
+    /// A Needs you cue when the session enters a question or approval wait; nil otherwise. The entry number keeps
+    /// one cue per entry (AC-13.10), and the presentation drops baselines and replays (AC-13.04).
+    private func waitingCue(for snapshot: SessionSnapshot, binding: Binding) -> TaskCue? {
+        let observation = snapshot.observation
+        let attention: TaskCue.Attention?
+        switch observation.phase {
+        case .question: attention = .question
+        case .approval: attention = .approval
+        default: attention = nil
+        }
+        var entries = waitingEntries[binding] ?? (count: 0, waiting: false)
+        guard let attention else {
+            entries.waiting = false; waitingEntries[binding] = entries
+            return nil
+        }
+        if !entries.waiting { entries.count += 1; entries.waiting = true }
+        waitingEntries[binding] = entries
+        let turn = snapshot.turnID.flatMap { $0.isEmpty ? nil : $0 } ?? "waiting"
+        let notice = SessionNotice.prepare(snapshot)
+        let title = labelsAgents ? snapshot.provider.shortName + " · " + notice.project : notice.project
+        let token = Self.cueToken(session: observation.sessionID, turn: turn, input: nil)
+        return .init(sessionID: observation.sessionID.uuidString, connectionID: observation.connectionID.uuidString,
+                     turnID: turn, title: title, phase: .waiting(attention), inputActivityID: "wait-\(entries.count)",
                      context: snapshot.localPreview ?? "Task " + token)
     }
 
@@ -285,6 +333,11 @@ import LunletCore
         cueFocus = CueFocus(sessionID: pending.sessionID, provider: pending.provider, sequence: focusSequence)
     }
 
+    func focus(provider: SessionProvider) {
+        guard !closed else { return }
+        focusSequence += 1
+        providerFocus = .init(provider: provider, sequence: focusSequence)
+    }
     func select(_ id: UUID) {
         if !closed, (sessions + history).contains(where: { $0.observation.sessionID == id }) {
             selectedID = id; navigationUnavailableFor = nil
@@ -324,6 +377,7 @@ import LunletCore
             for id in removed { lastActivity.removeValue(forKey: id) }
             ended = ended.filter { !removed.contains($0.session) }
             cueActivity = cueActivity.filter { !removed.contains($0.key.session) }
+            handedCues = handedCues.filter { !removed.contains($0.key.session) }
             if let selectedID, removed.contains(selectedID) { self.selectedID = nil }
         }
         connectedProviders.formIntersection(providers); partialProviders.formIntersection(providers)
@@ -352,6 +406,7 @@ import LunletCore
 
     func refreshDisplayState() {
         guard !closed else { return }
+        lastDisplayRead = elapsed()
         presentation.setDisplayAvailable(displayAvailable())
         refreshPresentation()
     }

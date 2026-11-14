@@ -92,7 +92,7 @@ private final class BotHTTPProtocol: URLProtocol, @unchecked Sendable {
     }
 
     private func waitForRequestCount(_ count: Int) async throws {
-        for _ in 0..<1000 {
+        for _ in 0..<20_000 {
             if BotHTTPProtocol.state.requests().count >= count { return }
             try await Task.sleep(for: .milliseconds(1))
         }

@@ -186,12 +186,17 @@ public actor TelegramBotClient: ChannelReplyClient {
         let bot = try await identity(for: binding)
         let webhook: Webhook = try await call("getWebhookInfo", body: [:])
         guard webhook.url.isEmpty else { throw BotChannelFailure.webhookInUse }
+        var announced = false
         while true {
             try ensureOpen()
-            var body: [String: Any] = ["limit": 100, "timeout": 25, "allowed_updates": ["message", "callback_query"]]
+            // Omitting allowed_updates, as pairing does, preserves the bot's existing global subscription setting;
+            // naming types here would replace it on Telegram's side for every later consumer of this bot.
+            var body: [String: Any] = ["limit": 100, "timeout": 25]
             if let lastUpdateID { body["offset"] = lastUpdateID + 1 }
             let updates: [Update] = try await call("getUpdates", body: body)
             guard updates.count <= 100 else { throw BotChannelFailure.invalidResponse }
+            // Telegram answered a poll for this bot; replies can arrive from here on.
+            if !announced { announced = true; await onEvent(.listening) }
             for update in updates {
                 guard update.updateID >= 0, update.updateID < Int64.max,
                       lastUpdateID.map({ update.updateID > $0 }) ?? true else { throw BotChannelFailure.invalidResponse }

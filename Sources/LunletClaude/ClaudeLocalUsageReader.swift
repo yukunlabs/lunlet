@@ -124,34 +124,40 @@ public actor ClaudeLocalUsageReader: LocalUsageReading {
         var position = lineEnd, line = Data(), dropping = false
         while byteBudget > 0, remaining > 0, ContinuousClock.now < deadline {
             try Task.checkCancellation()
-            let chunk = try handle.read(upToCount: min(65_536, byteBudget)) ?? Data()
-            if chunk.isEmpty {
-                // A trailing unterminated line may still be written; resume before it.
-                let checkpoint = parser
-                if dropping { parser.value.partial = true }
-                else if !line.isEmpty { remaining -= parser.consume(line) }
-                parser.value.complete = true
-                return (parser.value, Self.resumePoint(handle, stamp: file.stamp, offset: lineEnd, parser: checkpoint))
-            }
-            let chunkStart = position
-            position += UInt64(chunk.count); byteBudget -= chunk.count
-            var cursor = chunk.startIndex
-            while cursor < chunk.endIndex {
-                let end = chunk[cursor...].firstIndex(of: 10) ?? chunk.endIndex
-                if !dropping {
-                    // An oversized line is skipped and marks coverage partial; it never fails the read.
-                    if line.count + end - cursor > limits.maxLineBytes {
-                        dropping = true; line.removeAll(keepingCapacity: true); parser.value.partial = true
-                    } else { line.append(chunk[cursor..<end]) }
+            // Foundation returns each chunk and each decoded record autoreleased. Without a pool per chunk the
+            // whole scan's input stays allocated until this actor's job ends (AC-25.01).
+            let finished: (ParsedFile, Resume?)? = try autoreleasepool {
+                let chunk = try handle.read(upToCount: min(65_536, byteBudget)) ?? Data()
+                if chunk.isEmpty {
+                    // A trailing unterminated line may still be written; resume before it.
+                    let checkpoint = parser
+                    if dropping { parser.value.partial = true }
+                    else if !line.isEmpty { remaining -= parser.consume(line) }
+                    parser.value.complete = true
+                    return (parser.value, Self.resumePoint(handle, stamp: file.stamp, offset: lineEnd, parser: checkpoint))
                 }
-                if end < chunk.endIndex {
-                    if !dropping, !line.isEmpty { remaining -= parser.consume(line) }
-                    line.removeAll(keepingCapacity: true); dropping = false
-                    lineEnd = chunkStart + UInt64(end - chunk.startIndex + 1)
-                    if remaining <= 0 { parser.value.partial = true; return (parser.value, nil) }
+                let chunkStart = position
+                position += UInt64(chunk.count); byteBudget -= chunk.count
+                var cursor = chunk.startIndex
+                while cursor < chunk.endIndex {
+                    let end = chunk[cursor...].firstIndex(of: 10) ?? chunk.endIndex
+                    if !dropping {
+                        // An oversized line is skipped and marks coverage partial; it never fails the read.
+                        if line.count + end - cursor > limits.maxLineBytes {
+                            dropping = true; line.removeAll(keepingCapacity: true); parser.value.partial = true
+                        } else { line.append(chunk[cursor..<end]) }
+                    }
+                    if end < chunk.endIndex {
+                        if !dropping, !line.isEmpty { remaining -= parser.consume(line) }
+                        line.removeAll(keepingCapacity: true); dropping = false
+                        lineEnd = chunkStart + UInt64(end - chunk.startIndex + 1)
+                        if remaining <= 0 { parser.value.partial = true; return (parser.value, nil) }
+                    }
+                    cursor = end < chunk.endIndex ? end + 1 : end
                 }
-                cursor = end < chunk.endIndex ? end + 1 : end
+                return nil
             }
+            if let finished { return finished }
         }
         parser.value.partial = true
         return (parser.value, nil)

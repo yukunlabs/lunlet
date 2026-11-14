@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
-// Refs: US-04, AC-04.01, AC-04.03, AC-04.07, AC-04.08, AC-04.09.
+// Refs: US-04, AC-04.01, AC-04.03, AC-04.07, AC-04.08, AC-04.09, AC-04.15, AC-04.19; US-24, AC-24.02.
 import AppKit
 import SwiftUI
 import Foundation
@@ -26,6 +26,35 @@ import Testing
             #expect(weekly.remainingPercent == 77)
             #expect(weekly.resetsAt == Date(timeIntervalSince1970: 1_800_000_600))
         }
+    }
+
+    @Test func fiveHourWindowIsIdentifiedByDurationAndItsLineStaysUnknownWithoutIt() throws {
+        // AC-04.15: the five-hour window is found by its 300-minute duration in either position, never by position.
+        var window: AllowanceWindow?, last: AccountLimitsSnapshot?
+        for slot in ["primary", "secondary"] {
+            let other = slot == "primary" ? "secondary" : "primary"
+            let value = try snapshot("""
+            {"rateLimits":{"limitName":"Synthetic allowance","\(slot)":{"usedPercent":40,"windowDurationMins":300,"resetsAt":1800003600},"\(other)":{"usedPercent":23,"windowDurationMins":10080}}}
+            """)
+            window = try #require(AccountUsagePresentation.fiveHour(in: value)); last = value
+            #expect(window?.remainingPercent == 60)
+            #expect(window?.resetsAt == Date(timeIntervalSince1970: 1_800_003_600))
+            // The weekly window is untouched by the five-hour one (AC-04.07).
+            #expect(AccountUsagePresentation.weekly(in: value)?.remainingPercent == 77)
+        }
+        let weeklyOnly = try snapshot(#"{"rateLimits":{"primary":{"usedPercent":25,"windowDurationMins":10080}}}"#)
+        #expect(AccountUsagePresentation.fiveHour(in: weeklyOnly) == nil)
+        // The line reads percent left and the reset in the shared wording (AC-04.01).
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let line = try #require(AccountUsagePresentation.fiveHourLine(in: last, now: now))
+        #expect(line.left == "60% left" && line.reset == "Resets in 1h")
+        // A successful read that reports no five-hour window leaves the line out: the account has none.
+        #expect(AccountUsagePresentation.fiveHourLine(in: weeklyOnly, now: now) == nil)
+        // Without any successful read the line stays unknown, as the weekly line does (AC-04.03).
+        let unknown = try #require(AccountUsagePresentation.fiveHourLine(in: nil, now: now))
+        #expect(unknown.left == "—" && unknown.reset == "Reset —")
+        let due = try #require(AccountUsagePresentation.fiveHourLine(in: last, now: Date(timeIntervalSince1970: 1_800_003_601)))
+        #expect(due.reset == "Reset due")
     }
 
     @Test func absentOrAmbiguousWeeklyWindowsStayUnavailable() throws {
@@ -59,6 +88,77 @@ import Testing
         #expect(unknownWeekly.resetsAt == nil)
     }
 
+    // Refs: US-04, AC-04.19. A window is named by how long it lasts, never by its position in the response.
+    @Test func aSpanNamesItsWindowByItsLength() {
+        let week = AllowanceSpan(minutes: 10_080)
+        #expect(week == .week && week.name == "Week" && week.adjective == "weekly" && week.key == "weekly")
+        for minutes in [40_320, 43_200, 44_640] {
+            let month = AllowanceSpan(minutes: minutes)
+            #expect(month.name == "Month" && month.adjective == "monthly" && month.key == "monthly", "\(minutes)")
+        }
+        let fortnight = AllowanceSpan(minutes: 20_160)
+        #expect(fortnight.name == "14-day" && fortnight.adjective == "14-day" && fortnight.key == "minutes20160")
+        #expect(AllowanceSpan(minutes: 1_440).name == "Day" && AllowanceSpan(minutes: 1_440).adjective == "daily")
+        #expect(AllowanceSpan.fiveHour.name == "5-hour" && AllowanceSpan.fiveHour.adjective == "5-hour" && AllowanceSpan.fiveHour.key == "fiveHour")
+        #expect(AllowanceSpan(minutes: 90).name == "90-minute")
+        #expect(AllowanceSpan(minutes: 43_200).seconds == 30 * 86_400)
+    }
+
+    // Refs: US-04, AC-04.19, AC-04.03. A plan without a weekly window: one 30-day window, nothing else.
+    @Test func theAccountsLimitIsItsWeeklyWindowOrElseItsLongestWindowOfADayOrMore() throws {
+        let monthly = try snapshot("""
+        {"rateLimits":{"limitId":"codex","primary":{"usedPercent":0,"windowDurationMins":43200,"resetsAt":1800864000},"secondary":null,"credits":{"hasCredits":true,"unlimited":false,"balance":"25000.0000000000"},"planType":"free"}}
+        """)
+        let limit = try #require(AccountUsagePresentation.limit(in: monthly))
+        #expect(limit.span == AllowanceSpan(minutes: 43_200) && limit.remainingPercent == 100)
+        #expect(limit.resetsAt == Date(timeIntervalSince1970: 1_800_864_000) && limit.bucketID == "codex")
+        // It is not a weekly window, and nothing pretends it is.
+        #expect(AccountUsagePresentation.weekly(in: monthly) == nil)
+        // A weekly window stays the limit beside a longer one, as it was before longer windows were read.
+        let both = try snapshot(#"{"rateLimits":{"primary":{"usedPercent":10,"windowDurationMins":43200},"secondary":{"usedPercent":23,"windowDurationMins":10080}}}"#)
+        #expect(AccountUsagePresentation.limit(in: both)?.span == .week && AccountUsagePresentation.limit(in: both)?.remainingPercent == 77)
+        // The five-hour window is never the limit, and a window shorter than a day is not one either.
+        for short in [300, 600, 1_439] {
+            let value = try snapshot(#"{"rateLimits":{"primary":{"usedPercent":25,"windowDurationMins":\#(short)}}}"#)
+            #expect(AccountUsagePresentation.limit(in: value) == nil, "\(short)")
+        }
+        // The longest of several: a day beside a fortnight.
+        let mixed = try snapshot(#"{"rateLimits":{"primary":{"usedPercent":25,"windowDurationMins":1440},"secondary":{"usedPercent":40,"windowDurationMins":20160}}}"#)
+        #expect(AccountUsagePresentation.limit(in: mixed)?.span.minutes == 20_160 && AccountUsagePresentation.limit(in: mixed)?.remainingPercent == 60)
+        // Among buckets, the default Codex bucket's; two equally long windows in one bucket are never chosen between.
+        let buckets = try snapshot(#"{"rateLimitsByLimitId":{"codex":{"limitId":"codex","primary":{"usedPercent":30,"windowDurationMins":43200}},"model-special":{"primary":{"usedPercent":80,"windowDurationMins":43200}}}}"#)
+        #expect(AccountUsagePresentation.limit(in: buckets)?.bucketID == "codex" && AccountUsagePresentation.limit(in: buckets)?.remainingPercent == 70)
+        let ambiguous = try snapshot(#"{"rateLimits":{"primary":{"usedPercent":25,"windowDurationMins":43200},"secondary":{"usedPercent":50,"windowDurationMins":43200}}}"#)
+        #expect(AccountUsagePresentation.limit(in: ambiguous) == nil)
+        #expect(AccountUsagePresentation.limit(in: try snapshot("{}")) == nil)
+    }
+
+    // Refs: US-04, AC-04.01. A weekday tells the day only within the coming week.
+    @Test func aMomentMoreThanSixDaysAwayIsWrittenWithItsMonthAndDay() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .current
+        let now = calendar.date(from: DateComponents(year: 2026, month: 11, day: 13, hour: 15, minute: 30))!
+        func at(days: Int, hour: Int = 20, minute: Int = 53) -> Date {
+            calendar.date(bySettingHour: hour, minute: minute, second: 0, of: calendar.date(byAdding: .day, value: days, to: now)!)!
+        }
+        func weekday(_ date: Date) -> String { date.formatted(.dateTime.weekday(.abbreviated).hour().minute()) }
+        func dated(_ date: Date) -> String { date.formatted(.dateTime.month(.abbreviated).day()) + " " + date.formatted(date: .omitted, time: .shortened) }
+        #expect(ClaudeLimitsText.moment(at(days: 0), now: now, calendar: calendar) == at(days: 0).formatted(date: .omitted, time: .shortened))
+        #expect(ClaudeLimitsText.moment(at(days: 1), now: now, calendar: calendar) == weekday(at(days: 1)))
+        #expect(ClaudeLimitsText.moment(at(days: 6), now: now, calendar: calendar) == weekday(at(days: 6)))
+        // The same weekday a week on would read as today's; a month on, a weekday says nothing.
+        #expect(ClaudeLimitsText.moment(at(days: 7), now: now, calendar: calendar) == dated(at(days: 7)))
+        #expect(ClaudeLimitsText.moment(at(days: 30), now: now, calendar: calendar) == dated(at(days: 30)))
+        // The month and day are written as this Mac writes dates; the weekday is gone.
+        #expect(dated(at(days: 30)) != weekday(at(days: 30)) && dated(at(days: 30)).contains("13"))
+        // An earlier moment follows the same rule.
+        #expect(ClaudeLimitsText.moment(at(days: -2), now: now, calendar: calendar) == weekday(at(days: -2)))
+        #expect(ClaudeLimitsText.moment(at(days: -9), now: now, calendar: calendar) == dated(at(days: -9)))
+        // The forecast's run-out times are written the same way.
+        #expect(QuotaForecastText.day(at(days: 3), now: now, calendar: calendar) == weekday(at(days: 3)))
+        #expect(QuotaForecastText.day(at(days: 12), now: now, calendar: calendar) == dated(at(days: 12)))
+    }
+
     @Test func resetCountdownUsesHoursAndDoesNotPretendAnElapsedQuotaHasRenewed() {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         #expect(AccountUsagePresentation.countdown(until: now.addingTimeInterval(6 * 86400 + 17 * 3600 + 59), now: now) == "6d 17h")
@@ -77,6 +177,12 @@ import Testing
         #expect(AccountUsagePresentation.resetExpiryLabels(nil, now: now).isEmpty)
         let empty = try snapshot(#"{"rateLimitResetCredits":{"availableCount":0}}"#)
         #expect(AccountUsagePresentation.resetExpiryLabels(empty.earnedResets, now: now).isEmpty)
+        // Refs: US-24, AC-24.02. Assistive tools hear the count and the expiry the line shows, with unknown said as
+        // a word, never dropped behind the group's label.
+        #expect(AccountUsagePresentation.resetCreditsSpoken(value.earnedResets, now: now) == "2 available, expiring in 1d 1h, 4d 4h")
+        #expect(AccountUsagePresentation.resetCreditsSpoken(partial.earnedResets, now: now) == "2 available, expiring in 1d 1h, unknown")
+        #expect(AccountUsagePresentation.resetCreditsSpoken(empty.earnedResets, now: now) == "0 available")
+        #expect(AccountUsagePresentation.resetCreditsSpoken(nil, now: now) == "unknown")
     }
 
 
@@ -107,7 +213,7 @@ private actor SyntheticAccountCardReader: CodexAccountReading {
 }
 
 @Test(.enabled(if: ProcessInfo.processInfo.environment["LUNLET_TEST_PANEL"] == "1"))
-@MainActor func compactAccountCardFitsFreshnessBalanceAndTwoExpiryCountdowns() async throws {
+@MainActor func theCodexPageTopFitsItsBudgetAboveThreeCompleteSessionCards() async throws {
     _ = NSApplication.shared
     let now = Date(), epoch = Int(now.timeIntervalSince1970)
     let snapshot = try AccountLimitsDecoder.decode(Data("""
@@ -115,24 +221,26 @@ private actor SyntheticAccountCardReader: CodexAccountReading {
     """.utf8), observedAt: now.addingTimeInterval(-120), accountData: Data(#"{"account":{"type":"chatgpt","email":"synthetic@example.invalid","planType":"pro"}}"#.utf8))
     let model = AccountUsageModel(client: SyntheticAccountCardReader(snapshot: snapshot))
     model.start()
-    let deadline = ContinuousClock.now + .seconds(10)
+    let deadline = ContinuousClock.now + .seconds(60)
     while model.state == .loading, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
     #expect(model.displayedSnapshot == snapshot)
     let hover = UsageHoverPanelController()
-    let hosting = NSHostingView(rootView: AccountUsageSummary(model: model, hoverPanel: hover)
+    let history = LocalUsageModel()
+    let top = PanelStyle.Layout.summaryCard(lines: 2)
+    let hosting = NSHostingView(rootView: AccountUsageSummary(model: model, history: history, hoverPanel: hover)
         .frame(width: 446).background(Color(red: 0.13, green: 0.13, blue: 0.14)).environment(\.colorScheme, .dark))
-    hosting.frame = .init(x: 0, y: 0, width: 446, height: 160)
+    hosting.frame = .init(x: 0, y: 0, width: 446, height: top)
     hosting.layoutSubtreeIfNeeded()
-    #expect(hosting.fittingSize.height <= 160)
+    // The account line and the figures row hold their budget (AC-04.17).
+    #expect(hosting.fittingSize.height <= top + 0.5, "top \(hosting.fittingSize.height) of \(top)")
     let sessions = SessionListModel(displayAvailable: { false }, elapsed: { 0 }, presenter: LayoutCueSink())
     for index in 0..<3 {
         let session = SessionSnapshot(observation: .init(sessionID: UUID(), connectionID: UUID(), liveness: .alive, phase: .running),
                                       project: "Synthetic project", title: "Session \(index)", turnID: "turn-\(index)")
         sessions.receive(session, origin: .snapshot)
     }
-    let history = LocalUsageModel()
     let content = NSHostingView(rootView: VStack(alignment: .leading, spacing: PanelStyle.Grid.margin) {
-        AccountUsageSummary(model: model, hoverPanel: hover)
+        AccountUsageSummary(model: model, history: history, hoverPanel: hover)
         SessionPanel(model: sessions, usage: history)
     }.frame(width: 446).fixedSize(horizontal: false, vertical: true)
         .background(Color(red: 0.13, green: 0.13, blue: 0.14)).environment(\.colorScheme, .dark))
@@ -140,9 +248,8 @@ private actor SyntheticAccountCardReader: CodexAccountReading {
     content.layoutSubtreeIfNeeded()
     // The page between the header and footer below a 32-point notch.
     let available = PanelStyle.Layout.pageHeight
-    #expect(content.fittingSize.height <= available, "content \(content.fittingSize.height) of \(available)")
-    // Exactly three whole rows: a fourth may reveal only its blank top inset, never a sliver of text.
-    #expect(available - content.fittingSize.height + PanelStyle.Layout.listVerticalInset <= PanelStyle.Layout.rowHighlightInset + 0.5)
+    // Exactly three whole cards: the page ends with the third, with no sliver of a fourth.
+    #expect(content.fittingSize.height <= available + 0.5, "content \(content.fittingSize.height) of \(available)")
     if ProcessInfo.processInfo.environment["LUNLET_TEST_RENDER_SUMMARY"] == "1",
        let bitmap = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) {
         hosting.cacheDisplay(in: hosting.bounds, to: bitmap)

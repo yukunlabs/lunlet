@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
 // Refs: US-32, AC-32.01, AC-32.02, AC-32.03, AC-32.04, AC-32.07.
-// Refs: US-04, AC-04.11; US-25, AC-25.01.
+// Refs: US-04, AC-04.11, AC-04.19; US-25, AC-25.01.
 // Refs: US-18, AC-18.01, AC-18.02, AC-18.03.
 // Refs: US-04, AC-04.02, AC-04.03, AC-04.05, AC-04.08; US-12, AC-12.04.
 import Foundation
@@ -26,6 +26,8 @@ public actor CodexLocalUsageReader: LocalUsageReading {
     private let home: URL
     private let limits: LocalUsageReadLimits
     private let additionalHomes: @Sendable () throws -> CodexUsageRoots
+    /// Measures how long a scan took; tests step it.
+    private let clock: @Sendable () -> ContinuousClock.Instant
     private var knownHomes: Set<URL> = []
     private var cache: [URL: CachedUsageFile] = [:]
 
@@ -33,6 +35,7 @@ public actor CodexLocalUsageReader: LocalUsageReading {
         self.accounting = accounting
         self.home = home ?? Self.defaultHome()
         self.limits = .init()
+        self.clock = { .now }
         if home == nil {
             self.additionalHomes = {
                 let standard = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex", isDirectory: true)
@@ -55,9 +58,10 @@ public actor CodexLocalUsageReader: LocalUsageReading {
         return .init(homes: standardHomes + scanned.homes, complete: scanned.complete)
     }
 
-    init(home: URL, limits: LocalUsageReadLimits, additionalHomes: @escaping @Sendable () throws -> CodexUsageRoots = { .init(homes: []) }, accounting: CodexAccountingCatalog? = nil) {
+    init(home: URL, limits: LocalUsageReadLimits, additionalHomes: @escaping @Sendable () throws -> CodexUsageRoots = { .init(homes: []) }, accounting: CodexAccountingCatalog? = nil,
+         clock: @escaping @Sendable () -> ContinuousClock.Instant = { .now }) {
         self.accounting = accounting
-        self.home = home; self.limits = limits; self.additionalHomes = additionalHomes
+        self.home = home; self.limits = limits; self.additionalHomes = additionalHomes; self.clock = clock
     }
 
     private static func defaultHome() -> URL {
@@ -75,6 +79,7 @@ public actor CodexLocalUsageReader: LocalUsageReading {
     private func scan(now: Date, calendar: Calendar, dayCount: Int) throws -> LocalUsageHistory {
         try Task.checkCancellation()
         let manager = FileManager.default
+        let started = clock()
         let deadline = ContinuousClock.now + .seconds(limits.maxSeconds)
         var partial = false
         knownHomes.insert(home.standardizedFileURL)
@@ -125,9 +130,8 @@ public actor CodexLocalUsageReader: LocalUsageReading {
                 for case let file as URL in enumerator {
                     try Task.checkCancellation()
                     entries += 1
-                    guard entries <= limits.maxDirectoryEntries, files.count < limits.maxFiles, ContinuousClock.now < deadline else {
-                        partial = true; break
-                    }
+                    // Only the entry bound stops the listing: the file bound is applied after the newest-first sort.
+                    guard entries <= limits.maxDirectoryEntries, ContinuousClock.now < deadline else { partial = true; break }
                     guard let values = try? file.resourceValues(forKeys: Set(keys)) else { partial = true; continue }
                     if values.isSymbolicLink == true { enumerator.skipDescendants(); continue }
                     guard values.isRegularFile == true, file.pathExtension == "jsonl" else { continue }
@@ -139,48 +143,69 @@ public actor CodexLocalUsageReader: LocalUsageReading {
         }
         // Recent writes first make bounded, incomplete scans useful without implying full coverage.
         files.sort { $0.1.modified == $1.1.modified ? $0.0.path < $1.0.path : $0.1.modified > $1.1.modified }
+        let today = calendar.startOfDay(for: now)
+        let dates = ((1 - dayCount)...0).compactMap { calendar.date(byAdding: .day, value: $0, to: today) }
+        let shownFrom = dates.first ?? today
+        // Quota readings older than the forecast's lookback are never used, so they are not kept (US-32). This is a
+        // weekly window's lookback; a reading of a longer window is kept for that window's own (`quotaLookback`).
+        let quotaCutoff = now.addingTimeInterval(-WeeklyQuotaEstimator.inputHorizon())
+        // The files are newest first, so a rollout left unread, and every one after it, limits coverage of the shown
+        // days only when it was written within them.
+        func unread(_ stamp: UsageFileStamp) { if stamp.modified >= shownFrom { partial = true } }
+        if files.count > limits.maxFiles {
+            // The file bound keeps the most recently written rollouts, wherever the directory listed them.
+            unread(files[limits.maxFiles].1)
+            files.removeSubrange(limits.maxFiles...)
+        }
         var budget = limits.maxBytes
         var remainingSamples = limits.maxSamples
         var parsed: [ParsedUsageFile] = []
         var nextCache: [URL: CachedUsageFile] = [:]
         for (file, stamp) in files {
             try Task.checkCancellation()
-            guard ContinuousClock.now < deadline, remainingSamples > 0 else { partial = true; break }
-            if let cached = cache[file], cached.stamp == stamp {
-                guard cached.value.samples.count + cached.value.quotaSamples.count <= remainingSamples else { partial = true; break }
+            guard ContinuousClock.now < deadline, remainingSamples > 0 else { unread(stamp); break }
+            if let cached = cache[file], cached.stamp == stamp, cached.value.quotaCutoff <= quotaCutoff {
+                guard cached.value.samples.count + cached.value.quotaSamples.count <= remainingSamples else { unread(stamp); break }
                 remainingSamples -= cached.value.samples.count + cached.value.quotaSamples.count
                 parsed.append(cached.value); nextCache[file] = cached
                 continue
             }
-            guard budget > 0 else { partial = true; break }
+            guard budget > 0 else { unread(stamp); break }
             do {
                 let resume = cache[file]?.resume.flatMap { $0.identity == stamp.identity ? $0 : nil }
-                let (value, next) = try readFile(file, stamp: stamp, resume: resume, byteBudget: &budget,
-                                                 remainingSamples: &remainingSamples, deadline: deadline)
-                parsed.append(value)
+                let (read, next) = try readFile(file, stamp: stamp, resume: resume, quotaCutoff: quotaCutoff, byteBudget: &budget,
+                                                remainingSamples: &remainingSamples, deadline: deadline)
+                var value = read
                 // A concurrently appended/replaced file is not reused as-is; it resumes or is reread.
-                let after = try file.resourceValues(forKeys: Set(keys))
-                if value.complete, UsageFileStamp(after) == stamp {
+                let unchanged = UsageFileStamp(try file.resourceValues(forKeys: Set(keys))) == stamp
+                // An unchanged rollout holds nothing later than its last write; one still being written may.
+                value.end = unchanged ? stamp.modified : .distantFuture
+                if value.complete, unchanged {
                     nextCache[file] = CachedUsageFile(stamp: stamp, value: value, resume: next)
                 } else {
-                    partial = true
+                    value.partial = true
                     if let next { nextCache[file] = CachedUsageFile(stamp: nil, value: value, resume: next) }
                 }
+                parsed.append(value)
             } catch is CancellationError { throw CancellationError() }
-            catch { partial = true }
+            catch { unread(stamp) }
         }
         cache = nextCache
-        return try aggregate(parsed, now: now, calendar: calendar, dayCount: dayCount, partial: partial)
+        // The caller took `now` before the scan; a running session's records written meanwhile are still read.
+        let taken = started.duration(to: clock()).components
+        let scanEnd = now.addingTimeInterval(max(0, Double(taken.seconds) + Double(taken.attoseconds) / 1e18))
+        return try aggregate(parsed, now: now, scanEnd: scanEnd, dates: dates, calendar: calendar, partial: partial)
     }
 
-    private func readFile(_ file: URL, stamp: UsageFileStamp, resume: UsageResume?, byteBudget: inout Int, remainingSamples: inout Int,
-                          deadline: ContinuousClock.Instant) throws -> (ParsedUsageFile, UsageResume?) {
+    private func readFile(_ file: URL, stamp: UsageFileStamp, resume: UsageResume?, quotaCutoff: Date, byteBudget: inout Int,
+                          remainingSamples: inout Int, deadline: ContinuousClock.Instant) throws -> (ParsedUsageFile, UsageResume?) {
         let handle = try FileHandle(forReadingFrom: file)
         defer { try? handle.close() }
-        var parser = UsageFileParser()
+        var parser = UsageFileParser(quotaCutoff: quotaCutoff)
         // Offset after the last newline-terminated line consumed by the parser.
         var lineEnd: UInt64 = 0
-        if let resume, resume.parser.sampleCount <= remainingSamples, Self.matches(handle, resume, size: stamp.size) {
+        if let resume, resume.parser.value.quotaCutoff <= quotaCutoff, resume.parser.sampleCount <= remainingSamples,
+           Self.matches(handle, resume, size: stamp.size) {
             parser = resume.parser; lineEnd = resume.offset; remainingSamples -= parser.sampleCount
         } else { try handle.seek(toOffset: 0) }
         var position = lineEnd
@@ -188,43 +213,53 @@ public actor CodexLocalUsageReader: LocalUsageReading {
         var dropping = false
         while byteBudget > 0, remainingSamples > 0, ContinuousClock.now < deadline {
             try Task.checkCancellation()
-            let chunk = try handle.read(upToCount: min(65_536, byteBudget)) ?? Data()
-            if chunk.isEmpty {
-                // A trailing unterminated line may still be written; resume before it.
-                let checkpoint = parser
-                if dropping { parser.value.partial = true }
-                else if !line.isEmpty {
-                    let oldCount = parser.sampleCount
-                    parser.consume(line)
-                    remainingSamples -= parser.sampleCount - oldCount
-                }
-                parser.value.complete = true
-                return (parser.value, Self.resumePoint(handle, identity: stamp.identity, offset: lineEnd, parser: checkpoint))
-            }
-            let chunkStart = position
-            position += UInt64(chunk.count)
-            byteBudget -= chunk.count
-            var offset = chunk.startIndex
-            let newline = Data([10])
-            while offset < chunk.endIndex {
-                let end = chunk.range(of: newline, in: offset..<chunk.endIndex)?.lowerBound ?? chunk.endIndex
-                if !dropping {
-                    if line.count + end - offset > limits.maxLineBytes {
-                        dropping = true; line.removeAll(keepingCapacity: true); parser.value.partial = true
-                    } else { line.append(chunk[offset..<end]) }
-                }
-                if end < chunk.endIndex {
-                    if !dropping, !line.isEmpty {
+            // Foundation returns each chunk and each decoded record autoreleased. Without a pool per chunk the
+            // whole scan's input stays allocated until this actor's job ends (AC-25.01).
+            let finished: (ParsedUsageFile, UsageResume?)? = try autoreleasepool {
+                let chunk = try handle.read(upToCount: min(65_536, byteBudget)) ?? Data()
+                if chunk.isEmpty {
+                    // A trailing unterminated line may still be written; resume before it.
+                    let checkpoint = parser
+                    if dropping { parser.value.partial = true }
+                    else if !line.isEmpty {
                         let oldCount = parser.sampleCount
                         parser.consume(line)
                         remainingSamples -= parser.sampleCount - oldCount
                     }
-                    line.removeAll(keepingCapacity: true); dropping = false
-                    lineEnd = chunkStart + UInt64(end - chunk.startIndex + 1)
-                    if remainingSamples <= 0 { parser.value.partial = true; return (parser.value, nil) }
+                    parser.value.complete = true
+                    return (parser.value, Self.resumePoint(handle, identity: stamp.identity, offset: lineEnd, parser: checkpoint))
                 }
-                offset = end < chunk.endIndex ? end + 1 : end
+                let chunkStart = position
+                position += UInt64(chunk.count)
+                byteBudget -= chunk.count
+                var offset = chunk.startIndex
+                while offset < chunk.endIndex {
+                    let end = chunk[offset...].firstIndex(of: 10) ?? chunk.endIndex
+                    if !dropping {
+                        if line.count + end - offset > limits.maxLineBytes {
+                            // A record too large to decode limits coverage only when its first bytes do not rule out
+                            // an accounting record; tool outputs and images are the ones that grow this large.
+                            var head = Data(line.prefix(RolloutRecordPrefix.length))
+                            head.append(chunk[offset..<min(end, offset + RolloutRecordPrefix.length - head.count)])
+                            parser.skipped(mayCarryUsage: RolloutRecordPrefix(head).mayCarryUsage)
+                            dropping = true; line.removeAll(keepingCapacity: true)
+                        } else { line.append(chunk[offset..<end]) }
+                    }
+                    if end < chunk.endIndex {
+                        if !dropping, !line.isEmpty {
+                            let oldCount = parser.sampleCount
+                            parser.consume(line)
+                            remainingSamples -= parser.sampleCount - oldCount
+                        }
+                        line.removeAll(keepingCapacity: true); dropping = false
+                        lineEnd = chunkStart + UInt64(end - chunk.startIndex + 1)
+                        if remainingSamples <= 0 { parser.value.partial = true; return (parser.value, nil) }
+                    }
+                    offset = end < chunk.endIndex ? end + 1 : end
+                }
+                return nil
             }
+            if let finished { return finished }
         }
         parser.value.partial = true
         return (parser.value, nil)
@@ -250,15 +285,23 @@ public actor CodexLocalUsageReader: LocalUsageReading {
         return lstat(root.path, &info) != 0 && (errno == ENOENT || errno == ENOTDIR)
     }
 
-    private func aggregate(_ files: [ParsedUsageFile], now: Date, calendar: Calendar, dayCount: Int, partial: Bool) throws -> LocalUsageHistory {
-        let today = calendar.startOfDay(for: now)
-        let dates = ((1 - dayCount)...0).compactMap { calendar.date(byAdding: .day, value: $0, to: today) }
+    /// `partial` is missing coverage of unknown extent, which limits every value. Damage in one rollout limits its own
+    /// session and the shown days that rollout spans.
+    private func aggregate(_ files: [ParsedUsageFile], now: Date, scanEnd: Date, dates: [Date], calendar: Calendar,
+                           partial: Bool) throws -> LocalUsageHistory {
         var dayAmounts: [Date: UsageAccumulator] = [:]
         var groups: [UUID: [UsageSample]] = [:]
         var damagedSessions: Set<UUID> = []
-        var anyPartial = partial
+        var limitedDays: Set<Date> = []
+        // A rollout spans from its first record, when that was read intact, to its last write.
+        func limit(from start: Date?, through end: Date) {
+            for day in dates where day <= end {
+                guard let start else { limitedDays.insert(day); continue }
+                if let next = calendar.date(byAdding: .day, value: 1, to: day), start < next { limitedDays.insert(day) }
+            }
+        }
         for file in files {
-            anyPartial = anyPartial || file.partial
+            if file.partial { limit(from: file.start, through: file.end) }
             guard let id = file.session else { continue }
             groups[id, default: []] += file.samples
             if file.partial { damagedSessions.insert(id) }
@@ -281,10 +324,14 @@ public actor CodexLocalUsageReader: LocalUsageReading {
             }
             var previous: UsageCounters?
             var sessionAmount = UsageAccumulator()
-            var sessionPartial = partial || conflictingDuplicates || damagedSessions.contains(id)
+            // Every amount this session adds to a day is then a lower bound.
+            let suspect = conflictingDuplicates || damagedSessions.contains(id)
+            var sessionPartial = partial || suspect
             var invalidTotal = false
             for sample in samples {
-                guard sample.date <= now else { sessionPartial = true; continue }
+                // A record dated beyond the scan's own end comes from a moved clock: left out, and it marks the session
+                // and today, where its usage may belong.
+                guard sample.date <= scanEnd else { sessionPartial = true; limit(from: now, through: .distantFuture); continue }
                 if previous == sample.total { continue }
                 var truncated = false
                 let delta: UsageCounters?
@@ -307,32 +354,58 @@ public actor CodexLocalUsageReader: LocalUsageReading {
                 let cost = sample.price?.cost(delta)
                 sessionAmount.add(delta.total, cost: cost, partial: truncated)
                 if dates.contains(day) {
-                    dayAmounts[day, default: .init()].add(delta.total, cost: cost, partial: truncated || damagedSessions.contains(id))
+                    dayAmounts[day, default: .init()].add(delta.total, cost: cost, partial: truncated || suspect)
                 }
             }
-            anyPartial = anyPartial || sessionPartial
             let recorded = sessionAmount.amount(globalPartial: sessionPartial)
             sessions[id] = LocalUsageAmount(tokens: invalidTotal ? nil : previous?.total,
                 estimatedUSD: recorded.estimatedUSD, partial: sessionPartial,
                 pricedTokens: recorded.pricedTokens, unpricedTokens: recorded.unpricedTokens)
         }
-        // Quota readings use the forecast's own lookback, independent of the displayed day range: seven
-        // days of pace plus one day used only for the changed-week comparison (US-32).
-        let quotaStart = now.addingTimeInterval(-WeeklyQuotaEstimator.inputHorizon())
+        // Quota readings use the forecast's own lookback, independent of the displayed day range: one window
+        // of pace, seven days or as long as the reading's own window, plus one day used only for the changed-week
+        // comparison (US-32).
         let quotaHistory = Self.collapsed(Set(files.filter { $0.session != nil }.flatMap(\.quotaSamples))
-            .filter { $0.at >= quotaStart && $0.at <= now }, calendar: calendar)
-        return LocalUsageHistory(days: dates.map {
-            LocalUsageDay(date: $0, amount: dayAmounts[$0]?.amount(globalPartial: anyPartial)
-                ?? LocalUsageAmount(tokens: nil, estimatedUSD: nil, partial: anyPartial))
-        }, sessions: sessions, partial: anyPartial, quotaHistory: quotaHistory)
+            .filter { $0.at >= now.addingTimeInterval(-Self.quotaLookback(minutes: $0.windowMinutes)) && $0.at <= now },
+                                          calendar: calendar)
+        let days = dates.map { day in
+            let limited = partial || limitedDays.contains(day)
+            return LocalUsageDay(date: day, amount: dayAmounts[day]?.amount(globalPartial: limited)
+                ?? LocalUsageAmount(tokens: nil, estimatedUSD: nil, partial: limited))
+        }
+        // Partial history means the shown days may be incomplete; a session's own gaps stay with that session.
+        return LocalUsageHistory(days: days, sessions: sessions, partial: partial || days.contains { $0.amount.partial },
+                                 quotaHistory: quotaHistory)
     }
 
-    /// Keeps the first and last reading of each run of identical readings per bucket, plan and local day.
-    /// Interior copies add no pace evidence, and each day keeps its last reading for the chart.
+    /// The longest limit window whose readings are kept: 45 days, which bounds what a rollout may ask to be held.
+    static let longestQuotaWindowMinutes = 64_800
+    /// How far back a reading of a window `minutes` long is still forecast input: that window and the guard's day.
+    static func quotaLookback(minutes: Int) -> TimeInterval {
+        WeeklyQuotaEstimator.inputHorizon(window: Double(minutes) * 60)
+    }
+    /// The window a recorded `rate_limits` object shows as the account's own limit, chosen as for an account read:
+    /// the weekly window when the record has one, otherwise its longest window of a day or more; a record with two
+    /// windows of that length is ambiguous and gives none. The five-hour window is never the limit.
+    static func limitWindow(in raw: [String: Any]) -> (window: [String: Any], minutes: Int)? {
+        let windows = [raw["primary"], raw["secondary"]].compactMap { $0 as? [String: Any] }.compactMap { value -> ([String: Any], Int)? in
+            guard let n = value["window_minutes"] as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID(),
+                  n.doubleValue.isFinite, n.doubleValue == n.doubleValue.rounded(),
+                  (1_440...Double(longestQuotaWindowMinutes)).contains(n.doubleValue) else { return nil }
+            return (value, Int(n.doubleValue))
+        }
+        let weekly = windows.filter { $0.1 == 10_080 }
+        guard let length = weekly.isEmpty ? windows.map(\.1).max() : 10_080 else { return nil }
+        let chosen = windows.filter { $0.1 == length }
+        return chosen.count == 1 ? (chosen[0].0, length) : nil
+    }
+
+    /// Keeps the first and last reading of each run of identical readings per bucket, plan, window length and local
+    /// day. Interior copies add no pace evidence, and each day keeps its last reading for the chart.
     static func collapsed(_ readings: Set<LocalQuotaObservation>, calendar: Calendar) -> [LocalQuotaObservation] {
-        struct Series: Hashable { let bucket: String; let plan: String? }
+        struct Series: Hashable { let bucket: String; let plan: String?; let minutes: Int }
         var kept: [LocalQuotaObservation] = []
-        for series in Dictionary(grouping: readings, by: { Series(bucket: $0.bucketID, plan: $0.plan) }).values {
+        for series in Dictionary(grouping: readings, by: { Series(bucket: $0.bucketID, plan: $0.plan, minutes: $0.windowMinutes) }).values {
             let ordered = series.sorted {
                 ($0.at, $0.remaining, $0.resetAt) < ($1.at, $1.remaining, $1.resetAt)
             }
@@ -372,6 +445,12 @@ private struct ParsedUsageFile: Sendable {
     var quotaSamples: [LocalQuotaObservation] = []
     var partial = false
     var complete = false
+    /// The first record's time when that record was read intact; nil leaves the rollout's beginning unknown.
+    var start: Date?
+    /// Nothing in the rollout is later than this: its last write, or unbounded while it is still being written.
+    var end = Date.distantFuture
+    /// Quota readings before this were not kept.
+    var quotaCutoff = Date.distantPast
 }
 private struct UsageSnapshotKey: Hashable { let date: Date; let total: UsageCounters }
 private struct UsageSample: Hashable, Sendable {
@@ -443,14 +522,25 @@ private struct UsageFileParser: Sendable {
     var value = ParsedUsageFile()
     var price: UsagePrice?
     var invalidIdentity = false
+    private var atFirstLine = true
     var sampleCount: Int { value.samples.count + value.quotaSamples.count }
+    init(quotaCutoff: Date) { value.quotaCutoff = quotaCutoff }
+
+    /// A line too large to decode was passed over; it limits coverage only when it may be an accounting record.
+    mutating func skipped(mayCarryUsage: Bool) {
+        atFirstLine = false
+        if mayCarryUsage { value.partial = true }
+    }
     mutating func consume(_ line: Data) {
+        let first = atFirstLine
+        atFirstLine = false
         guard !invalidIdentity else { return }
         // Decode transiently and retain only accounting metadata; never retain message/tool text.
         guard let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
               let type = object["type"] as? String, let payload = object["payload"] as? [String: Any] else {
             value.partial = true; return
         }
+        if first { value.start = (object["timestamp"] as? String).flatMap(RolloutTimestamps.shared.date(from:)) }
         switch type {
         case "session_meta":
             guard let raw = (payload["id"] ?? payload["session_id"]) as? String, let id = UUID(uuidString: raw),
@@ -466,20 +556,18 @@ private struct UsageFileParser: Sendable {
                let bucketID = raw["limit_id"] as? String, !bucketID.isEmpty,
                let timestamp = object["timestamp"] as? String,
                let date = RolloutTimestamps.shared.date(from: timestamp) {
-                let windows = [raw["primary"], raw["secondary"]].compactMap { $0 as? [String: Any] }
-                    .filter { value in
-                        guard let n = value["window_minutes"] as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID() else { return false }
-                        return n.doubleValue == 10_080
-                    }
-                if windows.count == 1, let used = windows[0]["used_percent"] as? NSNumber,
-                   let reset = windows[0]["resets_at"] as? NSNumber,
+                if let limit = CodexLocalUsageReader.limitWindow(in: raw), let used = limit.window["used_percent"] as? NSNumber,
+                   let reset = limit.window["resets_at"] as? NSNumber,
                    CFGetTypeID(used) != CFBooleanGetTypeID(), CFGetTypeID(reset) != CFBooleanGetTypeID(),
                    used.doubleValue.isFinite, (0...100).contains(used.doubleValue),
                    reset.doubleValue.isFinite {
-                    let resetAt = Date(timeIntervalSince1970: reset.doubleValue)
-                    if resetAt > date, resetAt.timeIntervalSince(date) <= 7 * 86_400 {
+                    let resetAt = Date(timeIntervalSince1970: reset.doubleValue), length = Double(limit.minutes) * 60
+                    // The cutoff is a weekly window's lookback; a longer window's reaches back by the difference.
+                    let cutoff = value.quotaCutoff.addingTimeInterval(-max(0, length - WeeklyQuotaEstimator.week))
+                    if date >= cutoff, resetAt > date, resetAt.timeIntervalSince(date) <= length {
                         value.quotaSamples.append(.init(at: date, resetAt: resetAt, remaining: 100 - used.doubleValue,
-                                                        bucketID: bucketID, plan: raw["plan_type"] as? String))
+                                                        bucketID: bucketID, plan: raw["plan_type"] as? String,
+                                                        windowMinutes: limit.minutes))
                     }
                 }
             }

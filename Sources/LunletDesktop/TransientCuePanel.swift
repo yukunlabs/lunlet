@@ -40,7 +40,7 @@ import LunletCore
         panel.setFrame(frame, display: true)
         switch cue.phase {
         case .started: changed?(.working)
-        case .finished(.stopped), .finished(.failed): changed?(.awake)
+        case .finished(.stopped), .finished(.failed), .waiting: changed?(.awake)
         case .finished: changed?(.finished)
         }
         surface.setExpanded(true, animated: !presenting && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
 // Refs: US-25, AC-25.01, AC-25.02; US-02, AC-02.06; US-04, AC-04.05.
-// Refs: US-03, AC-03.01, AC-03.05; US-12, AC-12.04.
+// Refs: US-03, AC-03.01, AC-03.05; US-12, AC-12.04; US-39, AC-39.08; US-40, AC-40.04.
 import AppKit
 import Darwin
 import Foundation
@@ -60,6 +60,57 @@ private struct ProcessSample {
 /// files/process bindings and windows; no credentials, accounts or personal records.
 @Suite(.serialized, .enabled(if: ProcessInfo.processInfo.environment["LUNLET_TEST_PERFORMANCE"] == "1"))
 @MainActor struct PerformanceBudgetTests {
+    /// The pet window at rest (AC-39.08): the dog idle and asleep, and the sample pack idle, each framed for eight
+    /// seconds with no pointer near, after two seconds of settling. Reported, not asserted.
+    @Test func measureThePetWindowAtRest() async throws {
+        _ = NSApplication.shared
+        let screen = try #require(NSScreen.main)
+        let palette = PetPalette.make(coat: .golden, accent: AllowanceColor(hex: 0xC83F49))
+        let host = PetHostView(palette: palette)
+        let frame = CGRect(x: screen.visibleFrame.minX + 24, y: screen.visibleFrame.minY + 24,
+                           width: PetEntryController.windowSize.width, height: PetEntryController.windowSize.height)
+        let panel = FloatingPanel(identifier: "Lunlet.pet.benchmark", title: "Lunlet pet benchmark", frame: frame, acceptsKey: false, level: .floating)
+        panel.hasShadow = false; panel.contentView = host
+        defer { panel.orderOut(nil); panel.close() }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("lunlet-pet-benchmark-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        _ = try SamplePetPack.write(to: root.appendingPathComponent("mochi", isDirectory: true))
+        let library = PetPackLibrary(lunletDirectory: root, codexDirectory: root.appendingPathComponent("none"))
+        let pack = try #require(library.validEntries.first?.pack)
+        let sheet = try #require(await library.loadSheet(for: pack))
+        // The application's own event loop, so the display link, layout and autorelease pools behave as in the app.
+        func pump(_ seconds: TimeInterval) {
+            let end = Date(timeIntervalSinceNow: seconds)
+            while Date() < end {
+                autoreleasepool {
+                    if let event = NSApp.nextEvent(matching: .any, until: min(end, Date(timeIntervalSinceNow: 0.25)), inMode: .default, dequeue: true) {
+                        NSApp.sendEvent(event)
+                    }
+                }
+            }
+        }
+        var reports: [[String: Any]] = []
+        // The still dog first: what the harness itself costs while nothing is framed.
+        let workloads: [(String, PetPose, PetAppearance, Bool)] = [("pet-dog-still-8-seconds", .idle, .dog(palette), false),
+                                                                  ("pet-dog-idle-8-seconds", .idle, .dog(palette), true),
+                                                                  ("pet-dog-asleep-8-seconds", .asleep, .dog(palette), true),
+                                                                  ("pet-pack-idle-8-seconds", .idle, .sprite(sheet), true)]
+        for (name, pose, appearance, animating) in workloads {
+            var input = PetMotionInput(); input.pose = pose; input.poseChangedAt = Date().timeIntervalSinceReferenceDate - 100
+            let state = PetState(pose: pose, sessionID: nil, sessionCount: pose == .idle ? 1 : 0, waitingCount: 0, runningCount: 0, summary: nil)
+            host.update(state, appearance: appearance, input: input, animating: animating)
+            panel.orderFrontRegardless()
+            pump(2)
+            let settled = try ProcessSample()
+            pump(8)
+            reports.append(try ProcessSample().report(name, from: settled))
+        }
+        host.update(PetState(pose: .asleep, sessionID: nil, sessionCount: 0, waitingCount: 0, runningCount: 0, summary: nil),
+                    appearance: .dog(palette), input: PetMotionInput(), animating: false)
+        let envelope: [String: Any] = ["build": "debug", "reports": reports]
+        print("LUNLET_BENCHMARK " + String(decoding: try JSONSerialization.data(withJSONObject: envelope, options: [.sortedKeys]), as: UTF8.self))
+    }
+
     @Test func measureLargeHistoryIdleObservationAndPanelOpening() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("lunlet-benchmark-\(UUID())")
         defer { try? FileManager.default.removeItem(at: root) }

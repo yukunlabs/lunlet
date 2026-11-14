@@ -20,13 +20,13 @@ import LunletCore
     // Refs: US-33, AC-33.09.
     @Test func validReadingsBecomeProviderNeutralWindowsAndWeeklyRemaining() throws {
         let week = t + 3 * 86_400
+        // Claude Code stopped reporting a five-hour window on 2026-11-05; a line an earlier build stored is ignored.
         let state = "lunlet-claude-limits 1\nfive_hour 47 \(t + 3_600) \(t - 120)\nseven_day 13.5 \(week) \(t - 120)\n"
         let (reader, box) = try reader(state: state, log: "\(t - 86_400) 10 \(week)\n\(t - 3_600) 13 \(week)\n")
         defer { box.remove() }
         let limits = try #require(try reader.read(now: now))
-        #expect(limits.fiveHour == LimitWindowReading(usedPercent: 47, resetsAt: Date(timeIntervalSince1970: Double(t + 3_600)),
+        #expect(limits.sevenDay == LimitWindowReading(usedPercent: 13.5, resetsAt: Date(timeIntervalSince1970: Double(week)),
                                                       at: Date(timeIntervalSince1970: Double(t - 120))))
-        #expect(limits.sevenDay?.usedPercent == 13.5)
         #expect(limits.weekly.map(\.remaining) == [90, 87, 86.5])
         #expect(limits.weekly.allSatisfy { $0.resetAt == Date(timeIntervalSince1970: Double(week)) })
     }
@@ -36,23 +36,24 @@ import LunletCore
         let (missing, empty) = try reader(state: nil); defer { empty.remove() }
         #expect(try missing.read(now: now) == nil)
         let bad = [
-            "five_hour 101 \(t + 60) \(t)", "five_hour -1 \(t + 60) \(t)", "five_hour 1e2 \(t + 60) \(t)",
-            "five_hour 5 \(t) \(t)",                         // reset not after the reading
-            "five_hour 5 \(t + 6 * 3_600) \(t)",             // reset beyond one five-hour window
-            "five_hour 5 \(t + 7_200) \(t + 3_600)",         // a reading from the future
-            "five_hour 5 \(t + 60)", "five_hour 5 0\(t + 60) \(t)", "five_hour 5.1234567 \(t + 60) \(t)",
+            "seven_day 101 \(t + 60) \(t)", "seven_day -1 \(t + 60) \(t)", "seven_day 1e2 \(t + 60) \(t)",
+            "seven_day 5 \(t) \(t)",                         // reset not after the reading
+            "seven_day 5 \(t + 8 * 86_400) \(t)",            // reset beyond one seven-day window
+            "seven_day 5 \(t + 7_200) \(t + 3_600)",         // a reading from the future
+            "seven_day 5 \(t + 60)", "seven_day 5 0\(t + 60) \(t)", "seven_day 5.1234567 \(t + 60) \(t)",
+            "five_hour 5 \(t + 60) \(t)",                    // a window Claude Code no longer reports
         ]
         for line in bad {
             let (reader, box) = try reader(state: "lunlet-claude-limits 1\n\(line)\n"); defer { box.remove() }
             let limits = try reader.read(now: now)
-            #expect(limits?.fiveHour == nil && limits?.sevenDay == nil, "\(line)")
+            #expect(limits?.sevenDay == nil, "\(line)")
         }
-        let (unknown, box) = try reader(state: "lunlet-claude-limits 2\nfive_hour 5 \(t + 60) \(t)\n"); defer { box.remove() }
+        let (unknown, box) = try reader(state: "lunlet-claude-limits 2\nseven_day 5 \(t + 60) \(t)\n"); defer { box.remove() }
         #expect(throws: ClaudeStatusLineFailure.self) { try unknown.read(now: now) }
         // A linked state file is refused, never followed.
         let (linked, other) = try reader(state: nil); defer { other.remove() }
         let target = other.scratch.appendingPathComponent("elsewhere")
-        try Data("lunlet-claude-limits 1\nfive_hour 5 \(t + 60) \(t)\n".utf8).write(to: target)
+        try Data("lunlet-claude-limits 1\nseven_day 5 \(t + 60) \(t)\n".utf8).write(to: target)
         try FileManager.default.createSymbolicLink(at: other.location.limits, withDestinationURL: target)
         #expect(throws: ClaudeStatusLineFailure.self) { try linked.read(now: now) }
     }
@@ -74,7 +75,6 @@ import LunletCore
         defer { box.remove() }
         let limits = try #require(try reader.read(now: now))
         #expect(limits.weekly.map(\.remaining) == [30, 95, 70, 60, 59])
-        #expect(limits.fiveHour == nil)
         // The estimator accepts them as comparable readings of the identified window.
         let pace = WeeklyQuotaEstimator.pace(readings: limits.weekly, resetAt: Date(timeIntervalSince1970: Double(week)), now: now)
         #expect(pace.latest?.remaining == 59)

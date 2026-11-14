@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
-// Refs: US-19, AC-19.02, AC-19.03, AC-19.04, AC-19.05; US-16, AC-16.03.
-// Refs: US-33, AC-33.01, AC-33.04, AC-33.08, AC-33.09, AC-33.10, AC-33.11; US-04, AC-04.02, AC-04.03, AC-04.08, AC-04.12; US-24, AC-24.01, AC-24.02.
-// Refs: US-02, AC-02.03, AC-02.05; US-32, AC-32.05, AC-32.06, AC-32.07, AC-32.08.
+// Refs: US-19, AC-19.02, AC-19.03, AC-19.04, AC-19.07, AC-19.08, AC-19.09, AC-19.11; US-16, AC-16.03.
+// Refs: US-33, AC-33.01, AC-33.04, AC-33.08, AC-33.09, AC-33.10, AC-33.11; US-04, AC-04.02, AC-04.03, AC-04.08, AC-04.12, AC-04.17; US-24, AC-24.01, AC-24.02.
+// Refs: US-02, AC-02.03, AC-02.05; US-13, AC-13.10.
 import SwiftUI
 import Charts
 import LunletClaude
@@ -18,9 +18,16 @@ enum ProviderPages {
     static func homeTitle(selected: [SessionProvider]) -> String {
         selected.count == 1 ? selected[0].displayName : selected.isEmpty ? "Agents" : "Overview"
     }
-    /// Tab bar entries in order: nil is the Overview, then each selected provider. One provider shows no tab bar.
-    static func tabs(selected: [SessionProvider]) -> [SessionProvider?] {
-        selected.count > 1 ? [nil] + selected.map(Optional.some) : []
+}
+
+/// The Overview's waiting line (AC-19.11): each agent with sessions waiting for the developer, in selection order.
+enum OverviewWaiting {
+    static let none = "Nothing needs you"
+    static func lines(_ waiting: [SessionProvider: Int], order: [SessionProvider]) -> [(provider: SessionProvider, text: String)] {
+        order.compactMap { provider in
+            guard let count = waiting[provider], count > 0 else { return nil }
+            return (provider, provider.displayName + " · " + (count == 1 ? "1 session needs you" : "\(count) sessions need you"))
+        }
     }
 }
 
@@ -114,28 +121,56 @@ enum OverviewChart {
     }
 }
 
-/// The Overview tab: combined recorded usage totals and one limit row per agent window, then a daily chart
-/// segmented by provider with the daily average. Limits are never combined, and the page has no navigation or
-/// session list; details stay on each provider's tab (AC-19.05).
+/// The Overview under the header: who is waiting, the combined recorded usage totals, then a daily chart segmented by
+/// agent with the daily average. Each agent's limit is in the header, never combined, and the page lists no sessions;
+/// details stay on each agent's page (AC-19.08, AC-19.11).
 struct ProviderOverview: View {
     @ObservedObject var codexHistory: LocalUsageModel
     @ObservedObject var claudeHistory: LocalUsageModel
-    @ObservedObject var account: AccountUsageModel
     let providers: [SessionProvider]
+    /// Sessions waiting for the developer, by agent.
+    var waiting: [SessionProvider: Int] = [:]
+    /// Opens an agent's page from the waiting line.
+    var open: (SessionProvider) -> Void = { _ in }
     /// The selected palette; each agent's chart color is its AgentPalette variant (AC-16.03).
     var accentHex: String? = nil
-    @Environment(\.claudePlanLimits) private var claudeLimits
     /// Tokens lead: a subscriber watches usage first, the API-price equivalent second.
     @ViewState private var showCost = false
     @ViewState private var hoveredDay: String?
     var body: some View {
-        // The provider pages' frame: a card of the provider cards' height, a header row, then a module of the session
-        // list's height, so switching between any two tabs never moves a section (AC-19.05).
-        VStack(alignment: .leading, spacing: 0) {
-            OverviewLimitsCard(account: account, limits: claudeLimits ?? .placeholder, providers: providers, accentHex: accentHex)
-            usageHeader.padding(.top, PanelStyle.Grid.margin)
-            chartCard.padding(.top, PanelStyle.Grid.group)
+        VStack(alignment: .leading, spacing: PanelStyle.Grid.group) {
+            waitingLine
+            usageHeader
+            chartCard
         }
+    }
+
+    /// One line of capsules: each agent with sessions waiting, which opens that agent's page, or that nothing is
+    /// waiting. A capsule gives the words their own surface; set straight on the panel's glass they would take the
+    /// color of the window behind it.
+    private var waitingLine: some View {
+        let lines = OverviewWaiting.lines(waiting, order: providers)
+        return HStack(spacing: PanelStyle.Space.small) {
+            if lines.isEmpty {
+                Text(OverviewWaiting.none).foregroundStyle(.secondary).modifier(WaitingCapsule(attention: false))
+            } else {
+                ForEach(lines, id: \.provider) { line in
+                    Button { open(line.provider) } label: {
+                        HStack(spacing: PanelStyle.Space.small) {
+                            Image(systemName: "exclamationmark.circle.fill").accessibilityHidden(true)
+                            Text(verbatim: line.text).fontWeight(.semibold)
+                            Image(systemName: "chevron.forward").font(.system(size: 8, weight: .bold)).accessibilityHidden(true)
+                        }
+                        .foregroundStyle(PanelTone.attention.color)
+                        .modifier(WaitingCapsule(attention: true))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Opens this agent's page, where the waiting session is listed.")
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .font(PanelStyle.Text.secondary).lineLimit(1)
     }
 
     private var histories: [(SessionProvider, LocalUsageHistory?)] { providers.map { ($0, history($0).snapshot) } }
@@ -198,15 +233,15 @@ struct ProviderOverview: View {
                             yEnd: .value(showCost ? "Cost" : "Tokens", part.end), width: .ratio(0.56))
                         .foregroundStyle(by: .value("Agent", part.provider.displayName))
                         .opacity(hoveredDay == nil || hoveredDay == label(part.day) ? 1 : 0.4)
-                        .cornerRadius(3, style: .continuous)
+                        .cornerRadius(4, style: .continuous)
                 }
                 ForEach(tops, id: \.day) { point in
                     LineMark(x: .value("Day", label(point.day)), y: .value("Total", point.value), series: .value("Series", "Total"))
                         .interpolationMethod(.monotone)
-                        .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
-                        .foregroundStyle(Color.primary.opacity(0.75))
+                        .lineStyle(StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
+                        .foregroundStyle(Color.primary.opacity(0.62))
                     PointMark(x: .value("Day", label(point.day)), y: .value("Total", point.value))
-                        .symbolSize(30).foregroundStyle(Color.primary.opacity(0.85))
+                        .symbolSize(20).foregroundStyle(Color.primary.opacity(0.9))
                 }
                 if let average {
                     // Labeled on the line itself, so no axis column takes width from the plot.
@@ -246,9 +281,12 @@ struct ProviderOverview: View {
                     .map { $0.provider.displayName + " " + ($0.value.map(format) ?? "unknown") }.joined(separator: ", ")
             }.joined(separator: "; "))
             legend(values)
+            // The one place the two signs are explained.
+            Text("Recorded on this Mac · ≈ estimate · ≥ at least").font(PanelStyle.Text.secondary).foregroundStyle(.tertiary)
+                .frame(height: PanelStyle.Layout.secondaryLine)
         }
-        // Exactly the session list's module, so the chart sits where the provider pages show three rows.
-        .frame(height: PanelStyle.Layout.threeRows - 2 * PanelStyle.Grid.margin)
+        // The chart takes the rest of the page, where an agent's page lists its sessions.
+        .frame(maxHeight: .infinity)
         .modifier(PanelModule())
         .help("Each bar is one day on this Mac, stacked by agent; the solid line joins each day's total at the bar's top and "
             + "the dashed line is the range's daily average. Hover a day for its detail. Missing days are unknown, never zero.")
@@ -309,203 +347,95 @@ struct ProviderOverview: View {
     private func history(_ provider: SessionProvider) -> LocalUsageModel { provider == .codex ? codexHistory : claudeHistory }
 }
 
-/// The Overview's first card, exactly the provider cards' height: a title, then one compact window per agent window
-/// — the agent's color, name, window and reset over its own meter, with percent left — as on the Claude card. Values
-/// are never combined (AC-19.05).
-private struct OverviewLimitsCard: View {
-    @ObservedObject var account: AccountUsageModel
-    @ObservedObject var limits: ClaudePlanLimitsModel
-    let providers: [SessionProvider]
-    let accentHex: String?
-
-    var body: some View {
-        TimelineView(.periodic(from: .now, by: 60)) { context in
-            let now = context.date
-            VStack(alignment: .leading, spacing: 0) {
-                Text("Limits").font(PanelStyle.Text.title).frame(height: PanelStyle.Layout.line)
-                    .accessibilityAddTraits(.isHeader)
-                // Three compact windows and the title fill the card: 20 + 10 + 3 × 24 + 2 × 10 = 122 inside the padding.
-                VStack(alignment: .leading, spacing: PanelStyle.Space.module) {
-                    ForEach(providers, id: \.self) { provider in
-                        switch provider {
-                        case .codex: codex(now: now)
-                        case .claude: claude(now: now)
-                        }
-                    }
-                }
-                .padding(.top, PanelStyle.Space.module)
-                Spacer(minLength: 0)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .frame(height: PanelStyle.Layout.cardHeight - 2 * PanelStyle.Grid.margin)
-            .modifier(PanelModule())
-        }
-        .help("Each agent's own allowance as it reports it. Allowances are never combined.")
-    }
-
-    private var weekly: WeeklyAllowance? { account.displayedSnapshot.flatMap(AccountUsagePresentation.weekly) }
-    private var readings: ClaudePlanLimits? { limits.connection == .connected ? limits.limits : nil }
-
-    @ViewBuilder private func codex(now: Date) -> some View {
-        let remaining = weekly?.remainingPercent
-        row(.codex, window: "week", reset: weekly?.resetsAt.map { "resets " + ClaudeLimitsText.moment($0, now: now) } ?? "reset —",
-            remaining: remaining, missing: account.state == .loading ? "Refreshing…" : "Unknown") {
-            AllowanceBar(remaining: remaining, accentHex: accentHex)
-        }
-    }
-
-    @ViewBuilder private func claude(now: Date) -> some View {
-        let missing = limits.connection == .notConnected ? "Not connected" : "Unknown"
-        ForEach([ClaudeLimitsText.Window.session, .week], id: \.self) { window in
-            let reading = window == .session ? readings?.fiveHour : readings?.sevenDay
-            let remaining = ClaudeLimitsText.remaining(reading, now: now)
-            row(.claude, window: window == .session ? "session" : "week", reset: ClaudeLimitsText.resetLine(reading, now: now),
-                remaining: remaining, missing: missing) {
-                AllowanceBar(remaining: remaining, accentHex: accentHex, agent: .claude,
-                             label: "Claude Code " + (window == .session ? "session" : "weekly") + " limit remaining")
-            }
-        }
-    }
-
-    /// One compact window: the agent's color dot and name, the window and its reset, and the percent left in one
-    /// secondary line, then the agent's meter at full width.
-    private func row(_ provider: SessionProvider, window: String, reset: String, remaining: Double?, missing: String,
-                     @ViewBuilder meter: () -> some View) -> some View {
-        let percent = remaining.map { ($0 > 0 && $0 < 1 ? "<1" : String(Int($0))) + "%" }
-        return VStack(alignment: .leading, spacing: PanelStyle.Space.tight) {
-            HStack(spacing: PanelStyle.Space.tight) {
-                Circle().fill(AgentPalette.color(provider, accentHex: accentHex).color).frame(width: 6, height: 6)
-                    .accessibilityHidden(true)
-                Text(provider.shortName).foregroundStyle(.primary)
-                Text(verbatim: window + " · " + reset).foregroundStyle(.secondary)
-                Spacer(minLength: PanelStyle.Space.tight)
-                if let percent {
-                    Text(percent).fontWeight(.semibold).foregroundStyle(.primary)
-                    Text("left").foregroundStyle(.secondary)
-                } else {
-                    Text(missing).foregroundStyle(.secondary)
-                }
-            }
-            .font(PanelStyle.Text.secondary).lineLimit(1)
-            .frame(height: PanelStyle.Layout.secondaryLine)
-            meter()
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(provider.displayName + " " + window)
-        .accessibilityValue((percent.map { $0 + " left" } ?? missing) + ", " + reset)
+/// The surface of one item on the Overview's waiting line: a module-colored capsule, tinted while a session waits.
+private struct WaitingCapsule: ViewModifier {
+    let attention: Bool
+    func body(content: Content) -> some View {
+        content.padding(.horizontal, PanelStyle.Space.module).frame(height: PanelStyle.Layout.listHeaderHeight)
+            .background(attention ? AnyShapeStyle(PanelTone.attention.color.opacity(0.14)) : AnyShapeStyle(PanelStyle.moduleFill),
+                        in: Capsule())
+            .contentShape(Capsule())
     }
 }
 
-/// The Claude page's plan limits in Claude's own terms, then recorded usage with cost first. Percent used and reset
-/// times come from Claude Code's status line; model-specific weekly limits and the plan tier are not reported there
-/// and are not shown. Recorded usage on this Mac opens in a hover chart, as Codex usage does.
+/// The top of the Claude Code page under the header: the account line with the status line's state, then today's
+/// recorded usage (AC-04.17, AC-33.11). The weekly limit is in the header; percent used and the reset time come from
+/// Claude Code's status line, and model-specific weekly limits, usage credits and the plan tier are not reported there.
 struct ClaudeUsageSummary: View {
     @ObservedObject var history: LocalUsageModel
     let hoverPanel: UsageHoverPanelController
-    /// The selected skin's accent, which colors the meters as it colors the Codex allowance.
-    var accentHex: String? = nil
+    /// The panel's global Refresh, offered on the account line after a failed read (AC-04.12).
+    var refresh: () -> Void = {}
     @Environment(\.claudePlanLimits) private var limits
 
     var body: some View {
-        ClaudeUsageCard(history: history, hoverPanel: hoverPanel, limits: limits ?? .placeholder, accentHex: accentHex)
+        ClaudeUsageTop(history: history, hoverPanel: hoverPanel, limits: limits ?? .placeholder, refresh: refresh)
     }
 }
 
-private struct ClaudeUsageCard: View {
+private struct ClaudeUsageTop: View {
     @ObservedObject var history: LocalUsageModel
     let hoverPanel: UsageHoverPanelController
     @ObservedObject var limits: ClaudePlanLimitsModel
-    let accentHex: String?
+    let refresh: () -> Void
     @Environment(\.openSettings) private var openSettings
-    /// Set when this card made the connection, so the card can offer Undo for the rest of this panel visit.
+    /// Set when this page made the connection, so it can offer Undo for the rest of this panel visit.
     @ViewState private var connectedHere = false
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 60)) { context in content(now: context.date) }
     }
 
-    /// The Codex card's rhythm and height: a title line, the status line, the two windows stacked in the limits group
-    /// (each a compact line over a full-width meter) and a footnote. One size per line.
     private func content(now: Date) -> some View {
-        let readings = limits.connection == .connected ? limits.limits : nil
-        let pace = ClaudeLimitsText.pace(readings, now: now)
-        return VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: PanelStyle.Space.small) {
-                Text("Limits").font(PanelStyle.Text.title).accessibilityAddTraits(.isHeader)
-                UsageChartButton(label: "Show Claude usage history", action: hoverPanel.showForKeyboard)
-                Spacer(minLength: PanelStyle.Grid.row)
-            }
-            .frame(height: PanelStyle.Layout.line)
-            // The account line, as on the Codex card: who and which plan, then the reading's age or the connection.
-            subtitle(pace: pace, now: now)
-                .font(PanelStyle.Text.secondary).lineLimit(1).truncationMode(.tail)
-                .frame(height: PanelStyle.Layout.secondaryLine)
-                .padding(.top, PanelStyle.Grid.row)
-            VStack(alignment: .leading, spacing: 0) {
-                VStack(alignment: .leading, spacing: PanelStyle.Space.tight) {
-                    window(.session, readings?.fiveHour, even: nil, now: now)
-                    window(.week, readings?.sevenDay, even: pace?.evenPace, now: now,
-                           estimate: hasReadings ? QuotaForecastText.header(pace, stale: limits.readFailed, now: now) : nil,
-                           estimateHelp: QuotaForecastText.help(pace, stale: limits.readFailed, resetAt: readings?.sevenDay?.resetsAt))
+        let today = OverviewUsage.today(history.snapshot)
+        let recorded = today.flatMap(ClaudeLimitsText.spokenBreakdown).map { " Recorded: " + $0 + "." } ?? ""
+        return AgentSummaryCard(account: limits.account?.email ?? "Claude Code account", plan: limits.account?.plan,
+                                accountHelp: ClaudeLimitsText.cardHelp,
+                                figures: [AgentFigures.today(today, reading: history.isLoading)],
+                                help: ["Today": "Recorded on this Mac from local Claude Code transcripts, each response counted once; a lower bound."
+                                    + recorded + " Cost uses published Claude API list prices, not a subscription bill."
+                                    + (today == nil && history.unavailable ? " Refresh to try again." : "")],
+                                hoverPanel: hoverPanel, label: "Claude Code usage") {
+            HStack(spacing: PanelStyle.Space.tight) {
+                status(now: now)
+                if limits.isChanging {
+                    ProgressView().controlSize(.mini).accessibilityLabel("Updating Claude Code's status line")
+                } else if (connectedHere || limits.addedAutomatically) && limits.connection == .connected {
+                    Button("Undo") { connectedHere = false; limits.disconnect() }
+                        .buttonStyle(.plain).foregroundStyle(.tint)
+                        .help("Restores Claude Code's previous status line exactly.")
                 }
-                usage.frame(height: PanelStyle.Layout.secondaryLine).padding(.top, PanelStyle.Grid.group)
-            }
-            .padding(.top, PanelStyle.Grid.group)
-            .contentShape(Rectangle())
-            .background(UsageHoverAnchor(controller: hoverPanel))
-        }
-        .modifier(PanelModule())
-        .help("Percent used and reset times as Claude Code reported them through Lunlet's status line: official values, "
-            + "not estimates. Hover This week for an estimate from those readings, never a guarantee. Model-specific "
-            + "weekly limits and the plan tier are only in Claude Code's own /usage. Hover for daily usage on this Mac.")
-    }
-
-    /// The source line plus one inline action: Connect while not connected, Undo right after connecting here.
-    private func subtitle(pace: QuotaPace?, now: Date) -> some View {
-        HStack(spacing: PanelStyle.Space.tight) {
-            Image(systemName: "person.crop.circle").accessibilityHidden(true)
-            Text(limits.account?.email ?? "Claude Code account").lineLimit(1).truncationMode(.middle)
-            Text(verbatim: "·").foregroundStyle(.tertiary).accessibilityHidden(true)
-            Text(limits.account?.plan ?? "Plan —").lineLimit(1).layoutPriority(1)
-            Spacer(minLength: PanelStyle.Grid.group)
-            status(now: now).layoutPriority(1)
-            if limits.isChanging {
-                ProgressView().controlSize(.mini).accessibilityLabel("Updating Claude Code's status line")
-            } else if (connectedHere || limits.addedAutomatically) && limits.connection == .connected {
-                Button("Undo") { connectedHere = false; limits.disconnect() }
-                    .buttonStyle(.plain).foregroundStyle(.tint)
-                    .help("Restores Claude Code's previous status line exactly.")
             }
         }
     }
 
+    /// The reading's age, or the status line's state with the one action it calls for (AC-33.08).
     @ViewBuilder private func status(now: Date) -> some View {
         switch limits.connection {
         case .connected:
             if limits.addedAutomatically {
                 // Said once, on the first visit after Lunlet connected on its own (AC-33.08).
-                Text("Status line added").foregroundStyle(.secondary).help(Self.connectHelp)
+                Text("Status line added").help(Self.connectHelp)
             } else if limits.limits == nil && limits.readFailed {
-                Text("Unavailable · Refresh").foregroundStyle(.secondary)
-            } else if let at = [limits.limits?.fiveHour?.at, limits.limits?.sevenDay?.at].compactMap({ $0 }).max() {
-                // The same wording as the Codex card: the user needs the age, not where it came from.
-                Text(AccountUsagePresentation.updatedLabel(at: at, now: now) ?? "Updated")
-                    .foregroundStyle(.secondary).monospacedDigit()
+                refreshButton
+            } else if let at = limits.limits?.sevenDay?.at {
+                // The same wording as the Codex page: the user needs the age, not where it came from.
+                Text(AccountUsagePresentation.updatedLabel(at: at, now: now) ?? "Updated").monospacedDigit()
                     .help("Last update " + at.formatted(date: .abbreviated, time: .shortened))
             } else {
-                Text("Awaiting first reading").foregroundStyle(.secondary)
+                Text("Awaiting first reading")
                     .help("Claude Code reports plan limits only for Pro and Max plans, after a session's first response.")
             }
-        case .checking: Text("Checking…").foregroundStyle(.secondary)
+        case .checking: Text("Checking…")
         case .changedOutsideLunlet:
-            Text("Changed outside Lunlet").foregroundStyle(.secondary)
+            Text("Changed outside Lunlet")
                 .help("Claude Code's status line was changed after Lunlet connected; see Settings › Agents.")
         case .unavailable:
-            Text("Unavailable · Refresh").foregroundStyle(.secondary)
+            refreshButton
         case .notConnected:
             // One explicit click connects in place (AC-33.08); the line states what the click changes first.
             if let issue = limits.actionIssue {
-                Text("Couldn't connect").foregroundStyle(.secondary).help(ClaudePlanLimitsSettings.message(issue))
+                Text("Couldn't connect").help(ClaudePlanLimitsSettings.message(issue))
                 if let openSettings {
                     Button("Details…") { openSettings(.agents) }.buttonStyle(.plain).foregroundStyle(.tint)
                         .accessibilityHint("Opens Settings › Agents")
@@ -518,65 +448,9 @@ private struct ClaudeUsageCard: View {
             }
         }
     }
-    private static let connectHelp = "Lunlet adds its status line to Claude Code's settings.json while Claude Code is "
-        + "selected, unless you disconnected it; an existing status line keeps running. A custom status line hides most of Claude Code's footer keyboard hints. Lunlet keeps only percent "
-        + "used and reset times and reads no credentials. Undo, or Disconnect in Settings › Agents, restores the previous "
-        + "setting exactly."
-
-    private var hasReadings: Bool {
-        limits.connection == .connected && (limits.limits?.fiveHour != nil || limits.limits?.sevenDay != nil)
+    private var refreshButton: some View {
+        Button("Refresh", action: refresh).buttonStyle(.plain).foregroundStyle(.tint)
+            .help("The limit could not be read; Refresh tries again.")
     }
-
-    /// One compact window: its label, reset time and percent left on one secondary line, then the meter.
-    private func window(_ window: ClaudeLimitsText.Window, _ reading: LimitWindowReading?, even: Double?, now: Date,
-                        estimate: String? = nil, estimateHelp: String? = nil) -> some View {
-        let remaining = ClaudeLimitsText.remaining(reading, now: now)
-        let spoken = remaining.map { _ in
-            ClaudeLimitsText.left(reading, now: now) + ", " + ClaudeLimitsText.resetLine(reading, now: now)
-                + (even.map { ", even pace " + String(Int($0)) + "% left" } ?? "") + (estimate.map { ". " + $0 } ?? "")
-        }
-        return VStack(alignment: .leading, spacing: PanelStyle.Space.tight) {
-            HStack(spacing: PanelStyle.Space.tight) {
-                Text(window.title).foregroundStyle(.primary)
-                Text(verbatim: "· " + ClaudeLimitsText.resetLine(reading, now: now)).foregroundStyle(.secondary)
-                Spacer(minLength: PanelStyle.Space.tight)
-                Text(ClaudeLimitsText.left(reading, now: now)).foregroundStyle(remaining == nil ? .secondary : .primary)
-            }
-            .font(PanelStyle.Text.secondary).lineLimit(1)
-            .frame(height: PanelStyle.Layout.secondaryLine)
-            AllowanceBar(remaining: remaining, accentHex: accentHex, agent: .claude, evenPace: remaining == nil ? nil : even,
-                         label: window.title + " remaining")
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .help(estimate.map { $0 + (estimateHelp.map { "\n" + $0 } ?? "") } ?? "")
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(window.title)
-        .accessibilityValue(spoken ?? "Unknown")
-    }
-
-    /// Recorded usage today with tokens first and the categories listed separately, so cache reads can be read apart
-    /// (AC-33.10); the API-price estimate is in the help. A footnote in one size, with the total in the primary color.
-    private var usage: some View {
-        let today = OverviewUsage.today(history.snapshot)
-        let recorded = today.flatMap(ClaudeLimitsText.spokenBreakdown).map { " Recorded: " + $0 + "." } ?? ""
-        return HStack(spacing: PanelStyle.Space.tight) {
-            // The help names the source; the short label keeps every token category on the footnote line.
-            Text("Today").foregroundStyle(.secondary)
-            if let today {
-                Text(LocalUsageText.tokens(today)).foregroundStyle(.primary)
-                if let categories = ClaudeLimitsText.breakdown(today) {
-                    Text(verbatim: "· " + categories).foregroundStyle(.secondary).truncationMode(.tail)
-                }
-            } else {
-                Text(history.isLoading ? "Reading…" : history.unavailable ? "Unavailable · Refresh to try again" : "Unavailable")
-                    .foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 0)
-        }
-        .font(PanelStyle.Text.secondary).lineLimit(1)
-        .accessibilityElement(children: .combine)
-        .help("Recorded on this Mac from local Claude Code transcripts, each response counted once; a lower bound. "
-            + (today.map { "Estimated cost " + LocalUsageText.cost($0) + " at " } ?? "Cost uses ")
-            + "published Claude API list prices, not a subscription bill." + recorded)
-    }
+    private static let connectHelp = ClaudeLimitsText.connectHelp
 }

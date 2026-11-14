@@ -3,7 +3,7 @@
 // Refs: US-15, AC-15.06.
 // Refs: US-02, AC-02.08.
 // Refs: US-02, AC-02.01, AC-02.02, AC-02.05; US-03, AC-03.01; US-11, AC-11.06; US-13, AC-13.01, AC-13.04.
-// Refs: US-06, AC-06.02, AC-06.03, AC-06.05.
+// Refs: US-06, AC-06.02, AC-06.03, AC-06.05; US-25, AC-25.01.
 import Darwin
 import Foundation
 import Testing
@@ -335,6 +335,113 @@ struct CodexSessionReaderTests {
         #expect(try reader.openRollouts(pid: getpid()).contains(file))
         try writer.close(); try readOnly.close()
         #expect(!(try reader.openRollouts(pid: getpid())).contains(file))
+    }
+    /// One record over the 4096-byte line bound these tests set, with its members in the order Codex writes them.
+    func oversized(_ type: String, _ payload: String, role: String? = nil, count: Int = 5000) -> Data {
+        let lead = role.map { #""role":""# + $0 + #"","# } ?? ""
+        return Data((#"{"timestamp":"2026-10-26T12:00:00Z","type":""# + type + #"","payload":{"type":""# + payload + #"","# + lead
+            + #""content":""# + String(repeating: "x", count: count) + "\"}}\n").utf8)
+    }
+    // Refs: US-02, AC-02.05; US-13, AC-13.01. A record larger than one read's budget is passed over across reads. The
+    // turn is confirmed again once it is, and its completion afterwards is a new observation rather than a baseline.
+    @Test func aRecordLargerThanOneReadIsPassedOverAndTheTurnThenCompletesNormally() throws {
+        let (root, file) = try fixture(header(first) + event("task_started", "turn"))
+        defer { try? FileManager.default.removeItem(at: root) }
+        var reader = CodexSessionReader(file: file, maximumLine: 4096, maximumRead: 8192)
+        #expect(try reader.read().content.phase == .running)
+        try append(oversized("response_item", "function_call_output", count: 20_000), to: file)
+        var read = try reader.read()
+        #expect(read.needsCatchup && read.content.phase == .unknown && read.baseline)
+        while read.needsCatchup { read = try reader.read() }
+        #expect(read.content.phase == .running && read.content.turn == "turn")
+        try append(event("task_complete", "turn"), to: file)
+        let done = try reader.read()
+        #expect(done.content.phase == .idle(completedTurnID: "turn") && !done.baseline)
+    }
+    // Refs: US-25, AC-25.01. The monitor reads the tail of every open rollout in one job on its queue, so what one
+    // read allocates must not stay alive across the others.
+    @Test func manyLargeRolloutTailsAreReadInOneJobWithoutHoldingThemInMemory() throws {
+        let megabyte = try line("response_item", ["type": "function_call_output", "output": String(repeating: "x", count: 1_000_000)])
+        var roots: [URL] = [], files: [CodexRolloutFile] = []
+        defer { for root in roots { try? FileManager.default.removeItem(at: root) } }
+        // Twelve rollouts whose last 4 MiB, one read's budget, are one-megabyte tool outputs.
+        for _ in 0..<12 {
+            let (root, file) = try fixture(header(first) + event("task_started", "turn"))
+            roots.append(root); files.append(file)
+            for _ in 0..<5 { try append(megabyte, to: file) }
+        }
+        // Holding what was read costs about twice its size (the chunks and the decoded records); a draining read
+        // stays near one record. The bound sits between.
+        let bound: UInt64 = 48 * 1_048_576
+        var read = 0
+        let growth = try FootprintSampler.leastGrowth(under: bound) {
+            read = 0
+            for file in files {
+                var reader = CodexSessionReader(file: file)
+                if try reader.read().content.id == first { read += 1 }
+            }
+        }
+        #expect(read == files.count)
+        #expect(growth < bound, "the reads grew the footprint by \(growth / 1_048_576) MiB")
+    }
+    // Refs: US-02, AC-02.01, AC-02.05. Tool outputs, images and compaction records are what outgrow the line bound,
+    // and none of them changes a session's state.
+    @Test func anOversizedRecordThatChangesNoStateLeavesTheTurnConfirmed() throws {
+        let note = try line("event_msg", ["type": "agent_message", "message": "Working on it"])
+        let (root, file) = try fixture(header(first) + event("task_started", "turn") + note)
+        defer { try? FileManager.default.removeItem(at: root) }
+        var reader = CodexSessionReader(file: file, maximumLine: 4096)
+        #expect(try reader.read().content.phase == .running)
+        for (type, payload) in [("response_item", "function_call_output"), ("event_msg", "mcp_tool_call_end"),
+                                ("compacted", "summary"), ("turn_context", "context")] {
+            try append(oversized(type, payload), to: file)
+            let read = try reader.read()
+            #expect(read.content.phase == .running && read.content.turn == "turn" && !read.needsCatchup && !read.baseline)
+        }
+        // The turn still completes with its own latest message.
+        try append(event("task_complete", "turn"), to: file)
+        let done = try reader.read()
+        #expect(done.content.phase == .idle(completedTurnID: "turn") && done.content.conclusion == "Working on it" && !done.baseline)
+    }
+    // Refs: US-02, AC-02.05. A lifecycle record, a message, or a record whose kind its first bytes do not show may have
+    // changed the state, so the turn is no longer confirmed.
+    @Test func anOversizedRecordThatMayChangeStateUnconfirmsTheTurn() throws {
+        let unknown = Data((String(repeating: "x", count: 5000) + "\n").utf8)
+        let unordered = Data((#"{"payload":{"content":""# + String(repeating: "x", count: 5000) + #"","type":"function_call_output"},"type":"response_item"}"# + "\n").utf8)
+        for record in [oversized("event_msg", "task_complete"), oversized("event_msg", "turn_aborted"), oversized("event_msg", "task_started"),
+                       oversized("response_item", "message", role: "assistant"), unknown, unordered] {
+            let (root, file) = try fixture(header(first) + event("task_started", "turn"))
+            defer { try? FileManager.default.removeItem(at: root) }
+            var reader = CodexSessionReader(file: file, maximumLine: 4096)
+            #expect(try reader.read().content.phase == .running)
+            try append(record, to: file)
+            #expect(try reader.read().content.phase == .unknown)
+        }
+    }
+    // Refs: US-06, AC-06.02, AC-06.03. An agent message too large to read may have been the final one: the turn stays
+    // confirmed, and no earlier message stands in for it.
+    @Test func anOversizedAgentMessageIsNotReplacedByAnEarlierOne() throws {
+        let note = try line("event_msg", ["type": "agent_message", "message": "Earlier note"])
+        let (root, file) = try fixture(header(first) + event("task_started", "turn") + note)
+        defer { try? FileManager.default.removeItem(at: root) }
+        var reader = CodexSessionReader(file: file, maximumLine: 4096); _ = try reader.read()
+        try append(oversized("event_msg", "agent_message"), to: file)
+        #expect(try reader.read().content.phase == .running)
+        try append(event("task_complete", "turn"), to: file)
+        let done = try reader.read().content
+        #expect(done.phase == .idle(completedTurnID: "turn") && done.conclusion == nil)
+    }
+    // Refs: US-06, AC-06.02. A request too large to read, such as one with an inline image, is still the latest
+    // request: the one before it is no longer shown as such.
+    @Test func anOversizedUserMessageDoesNotLeaveThePreviousRequestAsTheLatest() throws {
+        let asked = try line("response_item", ["type": "message", "role": "user", "id": "one", "content": [["type": "input_text", "text": "Fix the layout"]]])
+        let (root, file) = try fixture(header(first) + asked + event("task_started", "one") + event("task_complete", "one"))
+        defer { try? FileManager.default.removeItem(at: root) }
+        var reader = CodexSessionReader(file: file, maximumLine: 4096)
+        #expect(try reader.read().content.localPreview == "Fix the layout")
+        try append(oversized("response_item", "message", role: "user"), to: file)
+        let content = try reader.read().content
+        #expect(content.localPreview == nil && content.phase == .unknown && content.conclusion == nil)
     }
     @Test func unreadBacklogCannotPublishAnIntermediatePhaseAsCurrent() throws {
         let (root, file) = try fixture(header(first) + event("task_started", "old"))

@@ -3,7 +3,7 @@
 // Refs: US-22, AC-22.01, AC-22.02; US-24, AC-24.02.
 // Refs: US-01, AC-01.05, AC-01.08; US-05, AC-05.04, AC-05.05, AC-05.06.
 // Refs: US-06, AC-06.01, AC-06.02, AC-06.05; US-12, AC-12.02, AC-12.04; US-14, AC-14.01, AC-14.03.
-// Refs: US-05, AC-05.09.
+// Refs: US-05, AC-05.09; US-38, AC-38.02, AC-38.07; US-25, AC-25.01.
 import Combine
 import Foundation
 import LunletCore
@@ -67,6 +67,14 @@ enum CompletionDeliveryStatus: Equatable {
     /// so remembering the most recent ones is enough to suppress duplicates.
     private static let retainedCompletions = 1024
     private let isLocked: @MainActor () -> Bool?
+    /// Told when a reply window can open or must close: open only while the Mac is confirmed locked and a channel's
+    /// sender is configured, the givens of AC-05.09. The Claude reply window follows it, so no finished turn waits
+    /// for a phone reply that nothing could deliver (AC-38.02, AC-38.07).
+    var replyWindowObserver: (@MainActor (Bool) -> Void)? {
+        // An observer attached after a sender was configured learns the window as it stands.
+        didSet { if let observedWindow { replyWindowObserver?(observedWindow) } }
+    }
+    private var observedWindow: Bool?
     private let power: any IdleSleepControlling
     private var sender: (any CompletionNotificationSending)?
     private var seen: Set<Completion> = []
@@ -90,8 +98,13 @@ enum CompletionDeliveryStatus: Equatable {
     }
     /// Validates a newly configured sender once, so saved or new credentials never sit unchecked.
     private let checksOnConfigure: Bool
-    init(isLocked: @escaping @MainActor () -> Bool?, power: any IdleSleepControlling, checksOnConfigure: Bool = false) {
-        self.isLocked = isLocked; self.power = power; self.checksOnConfigure = checksOnConfigure
+    private let now: @MainActor () -> ContinuousClock.Instant
+    /// When the lock was last read, and how long a record that is not a new completion may rely on that reading.
+    private var lastLockRead: ContinuousClock.Instant?
+    private static let lockReadInterval: Duration = .seconds(1)
+    init(isLocked: @escaping @MainActor () -> Bool?, power: any IdleSleepControlling, checksOnConfigure: Bool = false,
+         now: @escaping @MainActor () -> ContinuousClock.Instant = { .now }) {
+        self.isLocked = isLocked; self.power = power; self.checksOnConfigure = checksOnConfigure; self.now = now
     }
     func configure(sender next: (any CompletionNotificationSending)?) {
         guard !closed else { return }
@@ -137,8 +150,11 @@ enum CompletionDeliveryStatus: Equatable {
     @discardableResult func refreshLockState() -> Bool {
         guard !closed else { return false }
         let locked = isLocked() == true
+        lastLockRead = now()
         // Unlocking ends every card's reply window; unknown lock state never opens one.
         if reportedLock != locked, let sender { reportedLock = locked; sender.lockChanged(locked) }
+        let window = locked && sender != nil
+        if observedWindow != window { observedWindow = window; replyWindowObserver?(window) }
         if !locked {
             generation = UUID()
             for task in pending.values { task.cancel() }
@@ -150,13 +166,19 @@ enum CompletionDeliveryStatus: Equatable {
     }
     func receive(_ snapshot: SessionSnapshot, baseline: Bool) {
         guard !closed else { return }
-        let locked = refreshLockState()
+        var completion: Completion?
+        if snapshot.hasConfirmedActivity, case .idle(let turn) = snapshot.observation.phase, !turn.isEmpty {
+            completion = Completion(session: snapshot.observation.sessionID, connection: snapshot.observation.connectionID, turn: turn)
+        }
+        // A streaming session sends several records a second (US-25). The lock is read before a completion not
+        // handled before, so the decision to send never rests on an older reading, and otherwise at most once a
+        // second; lock changes themselves arrive through the monitor.
+        let unhandled = completion.map { !seen.contains($0) } ?? false
+        let due = lastLockRead.map { now() - $0 >= Self.lockReadInterval } ?? true
+        let locked = unhandled || due ? refreshLockState() : false
         // Ordered before any send this snapshot schedules, so a reply check sees it first.
         sender?.observe(snapshot)
-        guard snapshot.hasConfirmedActivity,
-              case .idle(let turn) = snapshot.observation.phase, !turn.isEmpty else { return }
-        let key = Completion(session: snapshot.observation.sessionID, connection: snapshot.observation.connectionID, turn: turn)
-        guard markSeen(key), !baseline, locked, let sender else { return }
+        guard let key = completion, markSeen(key), !baseline, locked, let sender else { return }
         let id = UUID(), current = generation
         status = .sending
         pending[id] = Task { [weak self] in

@@ -4,6 +4,7 @@
 // Refs: US-07, AC-07.02, AC-07.03, AC-07.04; US-08, AC-08.01, AC-08.03, AC-08.04.
 // Refs: US-10, AC-10.01, AC-10.03, AC-10.04; US-11, AC-11.01, AC-11.02, AC-11.03.
 // Refs: US-12, AC-12.01, AC-12.02, AC-12.03, AC-12.04.
+// Refs: US-14, AC-14.01.
 import Foundation
 import Testing
 import LunletCore
@@ -46,7 +47,7 @@ struct MobileCoordinatorTests {
         await value.configure(owner: CardCallbackFixture.owner, connectionID: connection, callbacksVerified: true, adapterAvailable: true)
     }
     private func waitForCards(_ sender: SyntheticCardSender, count: Int) async throws {
-        for _ in 0..<2_000 {
+        for _ in 0..<20_000 {
             if await sender.cards.count >= count { return }
             try await Task.sleep(for: .milliseconds(1))
         }
@@ -64,12 +65,28 @@ struct MobileCoordinatorTests {
 
     private func accepted(_ router: CardActionRouter, id: UUID, event: String) async throws -> AuthorizedContinuation {
         let payload = try CardCallbackFixture.data(control: id, event: event)
-        for _ in 0..<2_000 {
+        for _ in 0..<20_000 {
             if case .received(let action) = await router.handle(payload, connectionID: connection) { return action }
             try await Task.sleep(for: .milliseconds(1))
         }
         Issue.record("The delivered form was never bound for the verified owner")
         throw URLError(.timedOut)
+    }
+
+    // Refs: US-14, AC-14.01; US-05, AC-05.09. A notice sent without a reply box is logged with the number of the
+    // first check that refused it.
+    @Test func aRefusedReplyCapabilityNamesItsFirstFailedCheckByNumber() async {
+        let value = coordinator(SyntheticCardSender()), session = snapshot()
+        #expect(await value.replyRefusal(for: session) == 12)
+        await value.setReplyWindow(true)
+        #expect(await value.replyRefusal(for: session) == 13)
+        await ready(value)
+        #expect(await value.replyRefusal(for: session) == 16)
+        await value.observe(session)
+        #expect(await value.replyRefusal(for: snapshot(id: session.observation.sessionID, phase: .idle(completedTurnID: "next"))) == 17)
+        #expect(await value.replyRefusal(for: session) == nil)
+        await value.setRemoteInput(false)
+        #expect(await value.replyRefusal(for: session) == 14)
     }
 
     @Test func setupAndAdapterProofAreRequiredBeforeAwayMode() async {

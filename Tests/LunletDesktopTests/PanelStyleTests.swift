@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
 // Refs: US-02, AC-02.05; US-24, AC-24.02; US-23, AC-23.03.
-// Refs: US-01, AC-01.08; US-20, AC-20.02; US-03, AC-03.09; US-04, AC-04.03; US-33, AC-33.09.
+// Refs: US-01, AC-01.08; US-20, AC-20.02; US-03, AC-03.05, AC-03.09; US-04, AC-04.03; US-33, AC-33.09.
 import AppKit
 import Foundation
 import SwiftUI
@@ -85,8 +85,58 @@ struct PanelStyleTests {
         #expect(PanelStyle.spokenAge(since: now.addingTimeInterval(-7_200), now: now) == "active 2 hours ago")
         #expect(PanelStyle.spokenAge(since: nil, now: now) == nil)
     }
+    // Design notes, Panel header and pages: every session card carries one round badge of one size, a glyph on its
+    // tone; the glyph alone tells the states apart, so no state depends on color (AC-24.02).
+    @Test func everySessionStateHasItsOwnBadgeGlyph() {
+        let kinds: [SessionStatusStyle.Kind] = [.waiting, .approval, .input, .running, .completed, .failed, .stopped, .finished, .unknown, .ended]
+        let glyphs = kinds.map { SessionStatusStyle(kind: $0).glyph }
+        #expect(Set(glyphs).count == kinds.count, "glyphs \(glyphs)")
+        // A glyph sits inside the badge's circle, so none brings a circle of its own.
+        #expect(glyphs.allSatisfy { !$0.contains("circle") })
+    }
+
+    // Design notes, Panel presentation: three complete session cards, ending cleanly after the third; further cards
+    // scroll, and what is above them stays. An agent with a shorter card at the top of its page has room to spare,
+    // which its three cards share rather than showing part of a fourth.
+    @Test func theSessionListShowsExactlyThreeWholeCardsOnEveryAgentsPage() {
+        let layout = PanelStyle.Layout.self
+        for lines in 1...2 {
+            let available = layout.pageHeight - layout.summaryCard(lines: lines) - PanelStyle.Grid.margin
+                - layout.listHeaderHeight - PanelStyle.Grid.group
+            let card = layout.sessionCard(available: available), viewport = layout.sessionViewport(available: available)
+            #expect(card >= layout.rowHeight && card == card.rounded(), "\(lines) lines: card \(card)")
+            // The third card ends where the viewport ends; the gap after it and the fourth card are outside.
+            #expect(viewport == 3 * card + 2 * layout.rowGap && viewport <= available, "\(lines) lines: \(viewport) of \(available)")
+            #expect(available - viewport < 3, "\(lines) lines: \(available - viewport) left blank")
+        }
+        #expect(layout.sessionCard(available: layout.threeRows) == layout.rowHeight)
+        // Room far beyond three cards is not stretched into: a card stays a card, and the list ends after three.
+        let roomy = layout.sessionCard(available: 400)
+        #expect(roomy == layout.tallestSessionCard && layout.sessionViewport(available: 400) == 3 * roomy + 2 * layout.rowGap)
+        // A display too short for three standard cards keeps them standard and scrolls within what there is.
+        #expect(layout.sessionCard(available: 100) == layout.rowHeight && layout.sessionViewport(available: 100) == 100)
+    }
+
     // AC-03.09: the panel pages use exactly four text roles, none below 11 points, and the page budget holds a card
     // and three whole rows on the 4-point grid.
+    // Design notes, Surfaces: the panel is the system's glass under its own deep color, about half of each. With less
+    // glass the frosted surface turns into a slab; with less color a white window behind leaves the secondary text
+    // too little contrast (AC-03.05, AC-24.02).
+    @Test func theSurfaceLetsTheGlassThroughAndKeepsItsTextLegible() throws {
+        let depth = PanelStyle.surfaceDepth
+        #expect(depth <= 0.55, "the system's glass reads through the surface")
+        // The brightest the system's dark glass was measured on a device, over a white window: sRGB 133 of 255.
+        let glass = 133.0 / 255
+        let surface = try #require(NSColor(PanelStyle.surface).usingColorSpace(.sRGB))
+        func linear(_ value: Double) -> Double { value <= 0.04045 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4) }
+        func luminance(_ r: Double, _ g: Double, _ b: Double) -> Double { 0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b) }
+        let page = [surface.redComponent, surface.greenComponent, surface.blueComponent].map { Double($0) * depth + glass * (1 - depth) }
+        // Secondary text is white at 55% in the dark appearance.
+        let text = page.map { 0.55 + 0.45 * $0 }
+        let contrast = (luminance(text[0], text[1], text[2]) + 0.05) / (luminance(page[0], page[1], page[2]) + 0.05)
+        #expect(contrast >= 4, "secondary text over a white window: \(contrast)")
+    }
+
     @Test @MainActor func panelTextHasFourRolesAndThePageBudgetHoldsThreeRows() {
         typealias Role = PanelStyle.Text.Role
         #expect(Role.allCases == [.title, .primary, .secondary, .figure])
@@ -94,7 +144,9 @@ struct PanelStyleTests {
         #expect(sizes == [13, 13, 11, 15], "role sizes \(sizes)")
         #expect(Role.allCases.filter { $0.weight == .semibold } == [.title, .figure])
         let page = PanelStyle.Layout.pageHeight
-        #expect(page >= 3 * PanelStyle.Layout.rowHeight + 2 * PanelStyle.Layout.listVerticalInset)
+        let rows = PanelStyle.Layout.rowHeight * 3
+        let gaps = PanelStyle.Layout.rowGap * 2
+        #expect(page >= rows + gaps && PanelStyle.Layout.threeRows == rows + gaps)
         #expect(PanelStyle.Layout.iconButton >= 28 && PanelStyle.Layout.inlineButton >= 20)
         // The row inset plus row padding, and the segmented label inset, equal the card padding: one text edge.
         #expect(PanelStyle.Layout.listInset + PanelStyle.Layout.rowPadding == PanelStyle.Grid.margin)
@@ -104,7 +156,7 @@ struct PanelStyleTests {
         }
         #expect(PanelSegmentedStyle(size: .small, scheme: .light, contrast: .standard).height == PanelStyle.Layout.listHeaderHeight)
         for value in [PanelStyle.Grid.margin, PanelStyle.Grid.row, PanelStyle.Grid.group, PanelStyle.Layout.line,
-                      PanelStyle.Layout.secondaryLine, PanelStyle.Layout.meterHeight, PanelStyle.Layout.cardHeight] {
+                      PanelStyle.Layout.secondaryLine, PanelStyle.Layout.rowHeight, PanelStyle.Layout.rowGap, PanelStyle.Layout.skyHeight] {
             #expect(value.truncatingRemainder(dividingBy: 2) == 0, "\(value) is off the grid")
         }
     }
@@ -114,7 +166,7 @@ struct PanelStyleTests {
         let sources = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().appendingPathComponent("Sources/LunletDesktop")
         let pages = ["CompanionPanel", "ProviderSummaries", "AccountUsageSummary", "SessionPanel", "SessionListHeader",
-                     "PanelSegmentedControl", "WeeklyAllowanceBar"]
+                     "PanelSegmentedControl", "PanelHeader", "AgentFigures"]
         let styles = "caption2?|subheadline|headline|body|footnote|callout|title[23]?|largeTitle"
         let direct = try NSRegularExpression(pattern: #"\.font\(\.("# + styles + #")\b"#)
         for page in pages {
@@ -122,39 +174,5 @@ struct PanelStyleTests {
             let range = NSRange(text.startIndex..., in: text)
             #expect(direct.numberOfMatches(in: text, range: range) == 0, "\(page) sets a system text style directly")
         }
-    }
-
-    // AC-04.03, AC-33.09: every meter, Codex allowance and both Claude windows, has one height, with the fill exactly
-    // as tall as the track; the even-pace tick and the ruler marks never change it, and a small share stays a dot.
-    @Test @MainActor func everyMeterHasOneHeightAndAFullHeightMinimumFill() throws {
-        _ = NSApplication.shared
-        let width: CGFloat = 200, height = PanelStyle.Layout.meterHeight
-        let meters: [(String, AnyView)] = [
-            ("codex", AnyView(AllowanceBar(remaining: 62))),
-            ("session", AnyView(AllowanceBar(remaining: 95, agent: .claude))),
-            ("week", AnyView(AllowanceBar(remaining: 85, agent: .claude, evenPace: 60))),
-            ("unknown", AnyView(AllowanceBar(remaining: nil, agent: .claude))),
-        ]
-        for (name, meter) in meters {
-            let hosting = NSHostingView(rootView: meter.frame(width: width).padding(.vertical, 8))
-            hosting.frame = .init(x: 0, y: 0, width: width, height: height + 16)
-            hosting.layoutSubtreeIfNeeded()
-            #expect(hosting.fittingSize.height == height + 16, "\(name) layout height \(hosting.fittingSize.height - 16)")
-            let bitmap = try #require(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
-            hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
-            let scale = CGFloat(bitmap.pixelsHigh) / hosting.bounds.height
-            // Painted rows in a column clear of every mark: the track, and inside the fill the fill, are as tall
-            // as the meter. A column at 2 points sits inside the 5% fill's minimum width.
-            // The unknown meter is a dashed outline, so only its layout height is compared.
-            for x in name == "unknown" ? [] : [CGFloat(4), 150] {
-                let column = Int(x * scale)
-                let painted = (0..<bitmap.pixelsHigh).filter { (bitmap.colorAt(x: column, y: $0)?.alphaComponent ?? 0) > 0.05 }
-                let extent = CGFloat((painted.last ?? 0) - (painted.first ?? 0) + 1) / scale
-                #expect(abs(extent - height) <= 1, "\(name) at \(x): \(extent)")
-            }
-        }
-        #expect(PanelMeter.fillWidth(0, width: width) == 0)
-        #expect(PanelMeter.fillWidth(1, width: width) == height)
-        #expect(PanelMeter.fillWidth(50, width: width) == 100 && PanelMeter.fillWidth(140, width: width) == width)
     }
 }

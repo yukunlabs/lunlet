@@ -17,20 +17,6 @@ import LunletCore
 }
 
 struct VineEntryTests {
-    @Test(.enabled(if: ProcessInfo.processInfo.environment["LUNLET_TEST_RENDER_SUMMARY"] == "1"))
-    @MainActor func renderAllowanceRulerForBothAppearances() throws {
-        _ = NSApplication.shared
-        for (name, scheme, background) in [("light", ColorScheme.light, Color.white), ("dark", .dark, Color(white: 0.13))] {
-            let hosting = NSHostingView(rootView: AllowanceBar(remaining: 82)
-                .padding(12).frame(width: 438).background(background).environment(\.colorScheme, scheme))
-            hosting.frame = CGRect(x: 0, y: 0, width: 438, height: 32)
-            hosting.layoutSubtreeIfNeeded()
-            let bitmap = try #require(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
-            hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
-            let data = try #require(bitmap.representation(using: .png, properties: [:]))
-            try data.write(to: URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent(".tmp/ruler-\(name).png"))
-        }
-    }
     @Test func entryWrapsEachPhysicalNotchWithSymmetricTargetsAndFiniteWave() throws {
         for notch in [CGSize(width: 160, height: 26), CGSize(width: 185, height: 32), CGSize(width: 230, height: 40)] {
             let geometry = VineGeometry(notch: notch)
@@ -302,17 +288,29 @@ struct VineEntryTests {
         #expect(abs(secondLamp - 0.56) < 0.001)
     }
 
+    // Refs: US-04, AC-04.13, AC-04.19. The strand shows the account's own limit; its words name the window it is.
+    @Test @MainActor func aMonthlyCodexLimitFillsTheStrandAndIsNamedMonthly() {
+        let now = Date(timeIntervalSince1970: 1_793_390_400)
+        let monthly = NotchEntryController.allowances(providers: [.codex], codex: 88, codexWindow: "monthly", claude: nil,
+                                                      claudeConnected: false, now: now)
+        #expect(monthly == [.init(provider: .codex, remaining: 88, window: "monthly")])
+        #expect(LettermarkView.allowanceDescription(monthly) == "Codex 88% monthly allowance left")
+        // Without a window the words stay as they were.
+        let unknown = NotchEntryController.allowances(providers: [.codex], codex: nil, claude: nil, claudeConnected: false, now: now)
+        #expect(LettermarkView.allowanceDescription(unknown) == "Codex weekly allowance unavailable")
+        #expect(LettermarkView.allowanceDescription([.init(provider: .codex, remaining: 72)]) == "Codex 72% weekly allowance left")
+    }
+
     // Refs: US-04, AC-04.13, AC-04.03; US-33, AC-33.09.
     @Test @MainActor func entryAllowancesFollowSelectionAndUseOnlyAConnectedUnexpiredClaudeWeek() {
         let now = Date(timeIntervalSince1970: 1_793_390_400)
         func limits(used: Double, resetIn: TimeInterval) -> ClaudePlanLimits {
-            .init(fiveHour: .init(usedPercent: 90, resetsAt: now.addingTimeInterval(600), at: now),
-                  sevenDay: .init(usedPercent: used, resetsAt: now.addingTimeInterval(resetIn), at: now), weekly: [])
+            .init(sevenDay: .init(usedPercent: used, resetsAt: now.addingTimeInterval(resetIn), at: now), weekly: [])
         }
         let week = limits(used: 30, resetIn: 86_400)
         #expect(NotchEntryController.allowances(providers: [.codex, .claude], codex: 72, claude: week, claudeConnected: true, now: now)
                 == [.init(provider: .codex, remaining: 72), .init(provider: .claude, remaining: 70)])
-        // Selection order is kept; the Claude value never depends on Codex's, and the five-hour window is not used.
+        // Selection order is kept; the Claude value never depends on Codex's.
         #expect(NotchEntryController.allowances(providers: [.claude, .codex], codex: nil, claude: week, claudeConnected: true, now: now)
                 == [.init(provider: .claude, remaining: 70), .init(provider: .codex, remaining: nil)])
         #expect(NotchEntryController.allowances(providers: [.claude], codex: 72, claude: week, claudeConnected: true, now: now)

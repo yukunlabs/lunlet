@@ -1,6 +1,6 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
-// Refs: US-08, AC-08.01, AC-08.04; US-10, AC-10.01, AC-10.03.
+// Refs: US-08, AC-08.01, AC-08.04; US-10, AC-10.01, AC-10.03; US-25, AC-25.01.
 import CryptoKit
 import Darwin
 import Foundation
@@ -55,11 +55,16 @@ struct CodexDeliveryWatch {
         do { try handle.seek(toOffset: offset) } catch { return .unavailable }
         while offset < size {
             guard budget > 0 else { return .unavailable }
-            let count = min(65_536, budget, Int(size - offset))
-            guard let chunk = try? handle.read(upToCount: count), !chunk.isEmpty else { break }
-            offset += UInt64(chunk.count)
-            budget -= chunk.count
-            if let decided = consume(chunk) { return decided }
+            // Each chunk and decoded record is released before the next is read, as in the session reader (AC-25.01).
+            let step: (decided: Status?, more: Bool) = autoreleasepool {
+                let count = min(65_536, budget, Int(size - offset))
+                guard let chunk = try? handle.read(upToCount: count), !chunk.isEmpty else { return (nil, false) }
+                offset += UInt64(chunk.count)
+                budget -= chunk.count
+                return (consume(chunk), true)
+            }
+            if let decided = step.decided { return decided }
+            if !step.more { break }
         }
         return .pending
     }

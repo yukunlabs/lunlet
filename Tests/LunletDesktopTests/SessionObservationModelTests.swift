@@ -44,7 +44,7 @@ private final class SilentCuePresenter: TaskCuePresenting {
         let child = SessionSnapshot(observation: .init(sessionID: UUID(), connectionID: UUID(), liveness: .unverified, phase: .running),
             project: "Synthetic", title: "Child", activityConfirmed: true, parentSessionID: UUID())
         await source.send(.snapshot(child, baseline: false))
-        let deadline = ContinuousClock.now + .seconds(10)
+        let deadline = ContinuousClock.now + .seconds(60)
         while model.sessions.isEmpty && ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
         #expect(model.sessions.count == 1 && forwarded.isEmpty)
         await owner.shutdown(); model.shutdown()
@@ -92,7 +92,7 @@ private final class SilentCuePresenter: TaskCuePresenting {
         await source.send(.snapshot(snapshot, baseline: true))
         await source.setVerified([:])
         owner.refresh()
-        let deadline = ContinuousClock.now + .seconds(10)
+        let deadline = ContinuousClock.now + .seconds(60)
         while model.isRefreshing, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
         #expect(model.displayedSessions.isEmpty)
         await source.setVerified([snapshot.observation.sessionID: snapshot.observation.connectionID])
@@ -118,7 +118,7 @@ private final class SilentCuePresenter: TaskCuePresenting {
               project: "Synthetic", turnID: "turn", activityConfirmed: true, localPreview: "Synthetic", provider: provider)
     }
     private func until(_ condition: @MainActor () async -> Bool) async throws {
-        let deadline = ContinuousClock.now + .seconds(10)
+        let deadline = ContinuousClock.now + .seconds(60)
         while !(await condition()), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
     }
 

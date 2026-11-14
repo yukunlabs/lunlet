@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
 // Refs: US-18, AC-18.01, AC-18.02, AC-18.03; US-33, AC-33.04.
-// Refs: US-25, AC-25.02.
+// Refs: US-25, AC-25.01, AC-25.02; US-19, AC-19.01.
 // Refs: US-23, AC-23.01.
 // Refs: US-04, AC-04.01, AC-04.02, AC-04.03, AC-04.05, AC-04.08; US-12, AC-12.04.
 import Combine
@@ -21,6 +21,19 @@ import LunletCore
     private var lastAttempt: ContinuousClock.Instant?
     private var closed = false
     private var rangeRevision = UUID()
+    /// Whether this model's agent is selected. While it is not, nothing starts a scan and no history is kept.
+    private(set) var isActive = true
+
+    /// Follows the agent selection (AC-19.01): turning the agent off cancels a scan in flight and drops what was
+    /// read; turning it on lets the next request scan at once, whatever the earlier scan's five-minute floor.
+    func setActive(_ active: Bool) {
+        guard !closed, active != isActive else { return }
+        isActive = active
+        lastAttempt = nil
+        guard !active else { return }
+        rangeRevision = UUID(); operation?.cancel()
+        snapshot = nil; unavailable = false; lastSuccessfulRefresh = nil
+    }
 
     init(reader: any LocalUsageReading = CodexLocalUsageReader(), now: @escaping @MainActor () -> Date = Date.init) {
         self.reader = reader; self.now = now
@@ -30,7 +43,7 @@ import LunletCore
         refresh()
     }
     func refresh() {
-        guard !closed, operation == nil else { return }
+        guard !closed, isActive, operation == nil else { return }
         lastAttempt = .now; isLoading = true; unavailable = false
         let days = historyDays, revision = rangeRevision
         operation = Task {
@@ -73,13 +86,18 @@ enum LocalUsageText {
         if value > 0 && value < 0.0001 {
             return prefix + String(format: "%.0e", locale: locale, value).lowercased()
         }
+        // One money rule everywhere: whole dollars from $10, cents below.
         return prefix + value.formatted(.number.locale(locale)
-            .precision(.fractionLength(value > 0 && value < 0.01 ? 4 : 2)))
+            .precision(.fractionLength(value >= 10 ? 0 : value > 0 && value < 0.01 ? 4 : 2)))
+    }
+    /// A bar label without the lower-bound sign, which the chart's footnote states once.
+    static func tokenBar(_ amount: LocalUsageAmount) -> String {
+        amount.tokens.map { $0.formatted(.number.notation(.compactName)) } ?? "—"
     }
     /// A bounded bar label; exact USD and price coverage are available in help text.
     static func costBar(_ amount: LocalUsageAmount) -> String {
         guard let value = amount.estimatedUSD else { return "—" }
-        let prefix = amount.costPartial ? "≥$" : "≈$"
+        let prefix = "≈$"
         let locale = Locale(identifier: "en_US_POSIX")
         for (scale, suffix) in [(1e12, "T"), (1e9, "B"), (1e6, "M"), (1e3, "K")] {
             if value >= scale { return prefix + String(format: "%.1f", locale: locale, value / scale) + suffix }
