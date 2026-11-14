@@ -146,7 +146,7 @@ import LunletCore
 
     convenience init(presenter: any TaskCuePresenting) {
         let clock = ContinuousClock(), start = ContinuousClock.now
-        self.init(displayAvailable: { SystemDisplayState.isAvailable }, elapsed: {
+        self.init(displayAvailable: { SystemDisplayState.showsCues }, elapsed: {
             let duration = start.duration(to: clock.now).components
             return Double(duration.seconds) + Double(duration.attoseconds) / 1e18
         }, presenter: presenter)

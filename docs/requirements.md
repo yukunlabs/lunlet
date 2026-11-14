@@ -29,7 +29,7 @@ These Epics group existing confirmed stories by user outcome. Stories retain the
 | EPIC-02 | Understand allowance and recorded usage | US-04, US-18, US-32, US-37, US-41 |
 | EPIC-03 | Connect one private channel and receive useful updates | US-01, US-20, US-22, US-05, US-06 |
 | EPIC-04 | Continue the correct existing CLI conversation safely | US-07, US-08, US-09, US-10, US-11, US-36, US-38 |
-| EPIC-05 | Personalize a focused and durable macOS interface | US-31, US-16, US-17, US-21, US-19, US-26, US-39, US-40 |
+| EPIC-05 | Personalize a focused and durable macOS interface | US-31, US-16, US-17, US-21, US-19, US-26, US-39, US-40, US-42 |
 | EPIC-06 | Keep control of access and application reliability | US-12, US-14, US-24, US-25 |
 | EPIC-07 | Publish and support a trustworthy product | US-28, US-27, US-29, US-30, US-34, US-35 |
 
@@ -78,6 +78,7 @@ Approval, release scope, delivery and acceptance are separate facts. A story's S
 | US-17 | Wired Vine/Lantern and validated declarative skins | Physical style and imported-skin acceptance |
 | US-21 | Wired exclusive notch/menu modes, full artwork and the allowance text with its Only below level | Physical lock/wake and display-transition acceptance; the text on a real menu bar |
 | US-39 | Pet entry with six poses and three coats, cues routed to the dog, the panel beside it, position kept per display, hover status and accessibility label; poses rendered and checked against the sketches | On-device acceptance of the floating window across Spaces, full-screen apps and locking, and of click-through on transparent space |
+| US-42 | Full-screen detection from window frames and display-sleep assertions, the three choices and their setting; a packaged preview stepped aside under a full-screen window that began to keep the display awake (macOS 27, before the entry learned to stay away through a pause and to fade) | The final behavior on screen; a browser's and a player's own full-screen video, Safari, a player that fills the display above the menu bar, an external display and macOS 14 to 26 |
 | US-19 | Codex and Claude Code selectable; one provider shown directly, several with a segmented Overview of totals and parallel provider tabs | On-device tab acceptance; Cursor remains later scope |
 | US-26 | Wired validated non-secret preferences and recovery | Preferences and credentials surviving a real in-app update (US-35) |
 | US-12 | Wired Quit/cleanup; phone-reply switch and disconnect invalidate issued controls | Live stale-control invalidation and complete live connection shutdown |
@@ -122,7 +123,6 @@ Pending on-device acceptance:
 Bugs:
 
 - TODO (bug, priority 1, not reproduced): on 2026-11-13 four notices sent from a locked Mac carried no reply box: for three the callback connection opened and no reply control was issued, and for one none was attempted. On 2026-11-14 the same path worked on a locked Mac over Feishu for a Claude Code session and for a Codex session: the notice arrived with its reply box, and one reply reached the session and was confirmed. The two card events rejected as malformed that day were not replies: the provider also delivers an event that is not a card action when the chat is opened; such an event is now acknowledged and ignored. The system log names the refusing check by number (`replyControl` and `cardAction` for the Feishu card, `stopVerdict` for a Claude Code turn), so a recurrence identifies its cause. (US-05 / AC-05.09, US-08, US-38 / AC-38.02; `log show --predicate 'subsystem == "com.lunlet"'`).
-- TODO (bug, priority 1): the notch entry stays on screen above another application's full-screen window, for example over a video played full screen. Which full-screen windows hide it is not decided yet (US-03).
 - TODO (bug, priority 1, mitigated): Quit stalled twice on 2026-11-01 while a Slack reply listener was active; the system log holds each quit's `shutdown started` without stages or completion. Both stalls ran a build that predates the fix that resumes a Socket Mode receive on cancellation, and every later quit completed within 100 ms, so that receive is the probable cause but is unproven. Since then each shutdown stage waits at most two seconds and logs `uncertain`/`timeout` with its number, and the eight-second watchdog remains. Acceptance needs one owner reproduction: Slack selected, a Codex turn finishing while the Mac is locked, then unlock and quit within ten minutes; a clean quit with all nine stages logged closes this item (US-12 / AC-12.04, US-14 / AC-14.01; evidence in [feasibility](feasibility.md#messaging-channels)).
 
 Not started:
@@ -798,6 +798,21 @@ Out of scope: generating pets (Codex's `/pet` and its hatch-pet skill do that), 
 Implementation choices (rules in [design notes](design.md#imported-pets)): the pack reader, its validation and the pose-to-row mapping live in the core module on Foundation alone so a later Linux or Windows entry reuses them; decoding and drawing are in the desktop module; frames are drawn from the sheet by cell rectangle, never split into files; the hit test samples the current frame's alpha; preferences store the chosen pack's source and folder, never its pixels.
 
 Implementation: [pack format, reader and frame rule](../Sources/LunletCore/PetPack.swift), [pack library and image reading](../Sources/LunletDesktop/PetPackLibrary.swift), [sheet cells, masks and drawing](../Sources/LunletDesktop/PetSpriteSheet.swift), [pet canvas and hit test](../Sources/LunletDesktop/PetView.swift), [frame clock on the pack's frame boundaries](../Sources/LunletDesktop/PetMotion.swift), [entry controller: choice, fallback and drag](../Sources/LunletDesktop/PetEntryController.swift), [preference](../Sources/LunletDesktop/PreferencesStore.swift), [Settings pet choice](../Sources/LunletDesktop/PreferencesPane.swift); [format, reader and rule tests](../Tests/LunletCoreTests/PetPackTests.swift), [library, pixel, hit-test, fallback and preference tests](../Tests/LunletDesktopTests/PetPackLibraryTests.swift), [opt-in pack render](../Tests/LunletDesktopTests/PetRenderTests.swift).
+
+### US-42: Keep the entry out of full-screen video
+
+Status: Confirmed.
+
+**As a developer, I want the notch entry to step aside while another application fills the display with video, so that nothing sits on top of what I am watching or presenting.**
+
+Acceptance criteria:
+
+- **AC-42.01**: **Given** the notch entry and another application whose full-screen window is in front on that display, **When** that application keeps the display awake, as video, a presentation or a call does, **Then** the entry fades from the display within about a second together with an open panel, and no cue appears there. It stays away while that window remains in front, so a pause or a moment of buffering does not bring it back over the picture, and it fades in again when the application leaves full screen or another application comes in front. With Reduce Motion it leaves and returns at once.
+- **AC-42.02**: **Given** a full-screen application that does not keep the display awake, such as a terminal or an editor, **When** it is in front, **Then** the entry and its cues stay as they are outside full screen.
+- **AC-42.03**: **Given** Settings › Appearance with the notch entry selected, **When** I choose Hide in full screen, **Then** During video (the default) behaves as AC-42.01 and AC-42.02, Always hides the entry and its cues under every full-screen application, and Never keeps them; the choice survives upgrades (US-26). The menu-bar entry leaves with the menu bar and the pet stays out of full-screen Spaces (AC-39.02), so neither offers the choice.
+- **AC-42.04**: **Given** the detection, **When** it runs, **Then** it uses only the frames and owners of on-screen windows and which processes hold a display-sleep assertion, never a window's title or contents and no recording permission; it reads on a change of Space, application or displays and a few more times as that change settles, and once a second only while a display is in full screen.
+
+Implementation: [full-screen scene and watcher](../Sources/LunletDesktop/FullScreenQuiet.swift), [display state](../Sources/LunletDesktop/DisplayState.swift), [saved choice](../Sources/LunletDesktop/PreferencesStore.swift), [Appearance settings](../Sources/LunletDesktop/PreferencesPane.swift), [tests](../Tests/LunletDesktopTests/FullScreenQuietTests.swift).
 
 ### US-26: Keep customization stable across upgrades
 

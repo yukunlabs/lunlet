@@ -123,13 +123,16 @@ struct LunletPreferences: Codable, Equatable {
     var allowanceWarnBelow = 20
     var allowanceResetNotices = false
     static let allowanceWarnLevels = [30, 20, 10, 5]
+    /// When the notch entry steps aside for another application's full-screen window (AC-42.03).
+    var fullScreen = FullScreenPolicy.video
     /// Fields a newer build of this schema saved and this build does not know. They travel with the value and are
     /// written back unchanged, so opening newer settings here never strips them (AC-26.01).
     private(set) var unknownFields: [String: UnknownPreferenceValue] = [:]
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, presentation, skinID, accentOverrides, accentHex, historyDays, providers, channel, petCoat, petPositions, petDisplay,
-             petPack, menuBarAllowance, menuBarAllowanceBelow, needsYouSound, allowanceNotifications, allowanceWarnBelow, allowanceResetNotices
+             petPack, menuBarAllowance, menuBarAllowanceBelow, needsYouSound, allowanceNotifications, allowanceWarnBelow, allowanceResetNotices,
+             fullScreen
     }
     private struct AnyKey: CodingKey {
         let stringValue: String
@@ -164,6 +167,8 @@ struct LunletPreferences: Codable, Equatable {
         allowanceNotifications = try data.decodeIfPresent(Bool.self, forKey: .allowanceNotifications) ?? false
         allowanceWarnBelow = try data.decodeIfPresent(Int.self, forKey: .allowanceWarnBelow) ?? 20
         allowanceResetNotices = try data.decodeIfPresent(Bool.self, forKey: .allowanceResetNotices) ?? false
+        // A choice a later build adds reads as the default here, and the settings stay readable.
+        fullScreen = (try data.decodeIfPresent(String.self, forKey: .fullScreen)).flatMap(FullScreenPolicy.init(rawValue:)) ?? .video
         let savedChannel = try data.decodeIfPresent(String.self, forKey: .channel) ?? "feishu"
         if savedChannel == "whatsapp" { channel = .feishu }
         else if let supported = CommunicationChannel(rawValue: savedChannel) { channel = supported }
@@ -186,6 +191,7 @@ struct LunletPreferences: Codable, Equatable {
         try data.encode(allowanceNotifications, forKey: .allowanceNotifications)
         try data.encode(allowanceWarnBelow, forKey: .allowanceWarnBelow)
         try data.encode(allowanceResetNotices, forKey: .allowanceResetNotices)
+        try data.encode(fullScreen, forKey: .fullScreen)
         var every = encoder.container(keyedBy: AnyKey.self)
         for (name, value) in unknownFields where CodingKeys(stringValue: name) == nil {
             try every.encode(value, forKey: AnyKey(stringValue: name))

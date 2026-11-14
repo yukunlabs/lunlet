@@ -37,6 +37,10 @@ import IOKit
         guard CGGetActiveDisplayList(count, &displays, &count) == .success else { return false }
         return displays.prefix(Int(count)).contains { CGDisplayIsAsleep($0) == 0 }
     }
+
+    /// Whether a cue may appear: the session is in front, awake and unlocked, and the display where the cue would
+    /// show is not given over to another application's full-screen window (AC-42.01).
+    static var showsCues: Bool { isAvailable && !FullScreenQuiet.shared.isQuiet(PanelScreen.notchDisplay ?? NSScreen.main) }
 }
 
 final class NotificationObservation {
@@ -71,6 +75,8 @@ final class NotificationObservation {
                        NSWorkspace.sessionDidResignActiveNotification, NSWorkspace.sessionDidBecomeActiveNotification]
             .map { NotificationObservation(center: workspace, name: $0, changed: notify) }
         entries.append(NotificationObservation(center: .default, name: NSApplication.didChangeScreenParametersNotification, changed: notify))
+        // A display entering or leaving another application's full screen is settled when it is announced.
+        entries.append(NotificationObservation(center: .default, name: FullScreenQuiet.didChange, changed: { [weak self] in self?.changed() }))
         let distributed = DistributedNotificationCenter.default()
         entries += ["com.apple.screenIsLocked", "com.apple.screenIsUnlocked"].map {
             NotificationObservation(center: distributed, name: .init($0), changed: notify)

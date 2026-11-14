@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: 0BSD
 // Refs: US-31, AC-31.01, AC-31.02, AC-31.04; US-04, AC-04.04; US-19, AC-19.01; US-21, AC-21.04, AC-21.05.
 // Refs: US-40, AC-40.01; US-33, AC-33.08; US-38, AC-38.06; US-29, AC-29.05; US-24, AC-24.01, AC-24.02.
+// Refs: US-42, AC-42.03.
 import AppKit
 import SwiftUI
 import Testing
@@ -22,7 +23,8 @@ import LunletCore
 // AC-31.02: an entry's own options are shown only while that entry is selected, as before the redesign.
 @Test func anEntryShowsItsOwnOptionsOnlyWhileItIsSelected() {
     var value = LunletPreferences()
-    #expect(SettingsModel.entryOptions(value, packsListed: true).isEmpty)
+    // AC-42.03: only the notch entry would stay over a full-screen window, so only it offers the choice.
+    #expect(SettingsModel.entryOptions(value, packsListed: true) == [.fullScreen])
     value.presentation = .menuBar
     #expect(SettingsModel.entryOptions(value, packsListed: true) == [.showAllowance])
     value.menuBarAllowance = .percentAndReset

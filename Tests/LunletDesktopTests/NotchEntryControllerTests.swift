@@ -37,6 +37,27 @@ import LunletCore
     }
 
     // Refs: US-04, AC-04.13; US-16, AC-16.03.
+    // Refs: US-42, AC-42.01.
+    @Test func theEntryStepsAsideForFullScreenVideoAndComesBack() throws {
+        _ = NSApplication.shared
+        let screen = try #require(PanelScreen.notchDisplay)
+        var quiet = false
+        let companion = CompanionPanelController()
+        let entry = NotchEntryController(companion: companion, display: { screen }, available: { true }, quiet: { quiet },
+                                         fades: { false })
+        defer { entry.shutdown(); companion.shutdown() }
+        entry.start()
+        #expect(entry.window?.isVisible == true)
+        // Another application begins to fill the display with video: the entry leaves.
+        quiet = true
+        entry.refresh()
+        #expect(entry.window?.isVisible == false)
+        // It ends: the entry is back, fully opaque.
+        quiet = false
+        entry.refresh()
+        #expect(entry.window?.isVisible == true && entry.window?.alphaValue == 1)
+    }
+
     @Test func entryFollowsClaudeLimitsAndTheSelectedAgentsAsTheyChange() async throws {
         _ = NSApplication.shared
         let screen = try #require(PanelScreen.notchDisplay)

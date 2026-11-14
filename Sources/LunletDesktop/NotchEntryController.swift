@@ -34,15 +34,23 @@ import LunletCore
     private let mark = LettermarkView(frame: .zero)
     private let display: () -> NSScreen?
     private let available: () -> Bool
+    /// Whether the display is given over to another application's full-screen window (AC-42.01).
+    private let quiet: () -> Bool
+    private let fades: () -> Bool
+    /// Raised while the entry fades out, so a fade that was overtaken does not take the window away.
+    private var leaving = false
     private var monitor: DisplayStateMonitor?
     private var closed = false
     private var cuePose: LettermarkView.Pose?
     init(companion: CompanionPanelController,
          display: @escaping () -> NSScreen? = { PanelScreen.notchDisplay },
-         available: @escaping () -> Bool = { SystemDisplayState.isAvailable }, usage: AccountUsageModel? = nil,
-         claudeLimits: ClaudePlanLimitsModel? = nil,
+         available: @escaping () -> Bool = { SystemDisplayState.isAvailable },
+         quiet: @escaping () -> Bool = { FullScreenQuiet.shared.isQuiet(PanelScreen.notchDisplay) },
+         fades: @escaping () -> Bool = { !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion },
+         usage: AccountUsageModel? = nil, claudeLimits: ClaudePlanLimitsModel? = nil,
          preferences: PreferencesStore? = nil, skinCatalog: SkinCatalog? = nil, sessions: SessionListModel? = nil) {
         self.companion = companion; self.display = display; self.available = available; self.skinCatalog = skinCatalog
+        self.quiet = quiet; self.fades = fades
         if let sessions {
             sessionObservation = sessions.$compactStatus.removeDuplicates().sink { [weak self] in self?.mark.setSessionStatus($0) }
         }
@@ -136,7 +144,12 @@ import LunletCore
             companion.cancelHoverPreview(); return
         }
         guard available() else {
+            leaving = false
             mark.setActive(false); window?.orderOut(nil); companion.hide(animated: false); return
+        }
+        // AC-42.01: under another application's full-screen video the entry and an open panel step aside, softly.
+        guard !quiet() else {
+            mark.setActive(false); companion.hide(animated: fades()); stepAside(); return
         }
         guard let geometry = display().map(PanelScreen.init), let notch = geometry.notch,
               let frame = PanelPlacement.entry(screen: geometry) else {
@@ -159,8 +172,39 @@ import LunletCore
         }
         mark.notchSize = notch.size
         window?.setFrame(frame, display: true); mark.layoutSubtreeIfNeeded()
-        window?.orderFrontRegardless(); mark.setActive(true)
+        comeBack(); mark.setActive(true)
         notchAvailabilityChanged?(true)
+    }
+    /// Fades the entry out before it leaves, so nothing blinks over what is on screen; at once with Reduce Motion.
+    private func stepAside() {
+        guard let window, window.isVisible, !leaving else { return }
+        guard fades() else { window.orderOut(nil); return }
+        leaving = true
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.2
+            window.animator().alphaValue = 0
+        }, completionHandler: { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.leaving else { return }
+                self.leaving = false
+                self.window?.orderOut(nil); self.window?.alphaValue = 1
+            }
+        })
+    }
+    /// Shows the entry, fading it in when it had stepped aside.
+    private func comeBack() {
+        guard let window else { return }
+        let returning = leaving || !window.isVisible
+        leaving = false
+        guard returning, fades(), monitor != nil, window.alphaValue < 1 || !window.isVisible else {
+            window.alphaValue = 1; window.orderFrontRegardless(); return
+        }
+        if !window.isVisible { window.alphaValue = 0 }
+        window.orderFrontRegardless()
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.2
+            window.animator().alphaValue = 1
+        }
     }
     func panelVisibilityChanged(_ visible: Bool) {
         mark.setDetailsVisible(visible)
