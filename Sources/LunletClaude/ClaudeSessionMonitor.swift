@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: 0BSD
 // Refs: US-33, AC-33.01, AC-33.02, AC-33.03, AC-33.05, AC-33.06, AC-33.07; US-38, AC-38.02, AC-38.03.
 // Refs: US-02, AC-02.05, AC-02.06; US-13, AC-13.01, AC-13.04; US-15, AC-15.05, AC-15.06; US-12, AC-12.04; US-25, AC-25.01.
+// Refs: US-14, AC-14.01.
 import Darwin
 import Foundation
 import LunletCore
@@ -453,7 +454,7 @@ public actor ClaudeSessionMonitor: ClaudeSessionObserving {
                       let signal = try? HookSpool.decoder.decode(HookSpool.StopSignal.self, from: data),
                       signal.version == HookSpool.formatVersion, signal.stopID == stopID, signal.sessionID == id,
                       let owner = value.sole, processes.presence(of: owner) == .same, processes.parent(of: signal.pid) == owner.pid
-                else { writeVerdict(id, stopID, HookSpool.releaseSuffix); continue }
+                else { writeVerdict(id, stopID, HookSpool.releaseSuffix); logVerdict(held: false, code: 1); continue }
                 // Only an interactive session is ever held, so only it is said to take phone replies.
                 if value.record.isInteractive { hookSeen.insert(id) }
                 if let previous = holds[id] { release(id, previous) }
@@ -474,13 +475,24 @@ public actor ClaudeSessionMonitor: ClaudeSessionObserving {
                     holds[id] = .init(stopID: stopID, hookPID: signal.pid, turn: turn, since: now)
                     settledTurns[id] = turn
                     writeVerdict(id, stopID, HookSpool.holdSuffix)
+                    logVerdict(held: true, code: nil)
                 } else {
                     writeVerdict(id, stopID, HookSpool.releaseSuffix)
+                    logVerdict(held: false, code: !replyWindow ? 2 : !value.record.isInteractive ? 3 : !namesTranscriptTurn ? 4 : 5)
                 }
                 republish(id)
             }
         }
     }
+    /// Logs the verdict on one stop: held, or released with the number of the check that released it and nothing
+    /// of the session (AC-14.01): 1 the signal does not come from the session's own verified process, 2 the reply
+    /// window is closed, 3 the session is not interactive, 4 the stop names another turn than the transcript's,
+    /// 5 the turn was already completed or held, 6 the session is not tracked.
+    private func logVerdict(held: Bool, code: Int?) {
+        DiagnosticLog.record(.stopVerdict, component: .claude, outcome: held ? .completed : .rejected,
+                             operation: DiagnosticOperation(), code: code)
+    }
+
     /// Remembers an answered stop so it is never answered twice. Past the bound the oldest are forgotten first, and
     /// never a stop that is still held: forgetting that one would read its signal again and end its hold.
     private func markHandled(_ stopID: UUID) {
@@ -510,6 +522,7 @@ public actor ClaudeSessionMonitor: ClaudeSessionObserving {
                 guard looked else { waiting = true; continue }
                 markHandled(stopID)
                 writeVerdict(id, stopID, HookSpool.releaseSuffix)
+                logVerdict(held: false, code: 6)
             }
         }
         // The scan ends by answering whatever is still untracked.

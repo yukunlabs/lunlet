@@ -171,6 +171,15 @@ public actor CardActionRouter {
         return control
     }
 
+    /// Why `prepare` would issue no control right now, as a number for the log: 21 no callback connection, 22 the
+    /// session is not observed, 23 its phase takes no such form, 24 the gate refuses (access not ready, the session
+    /// not eligible, or its turn already answered).
+    public func prepareRefusal(sessionID: UUID, form: CardForm) -> Int {
+        guard connectionID != nil else { return 21 }
+        guard let observation = observations[sessionID] else { return 22 }
+        return form.matches(observation.phase) ? 24 : 23
+    }
+
     /// Binds a delivered card to its authenticated send receipt and reports whether it can take
     /// replies. A control revoked while its card was in flight keeps the receipt only so a later
     /// tap receives an accurate refusal; it never becomes usable.
@@ -205,7 +214,11 @@ public actor CardActionRouter {
               owner.isComplete else { return rejected() }
         let callback: CardCallback
         do { callback = try CardCallback.decodeFromLongConnection(data, owner: owner, now: wallTime()) }
-        catch { return rejected((error as? CardCallbackFailure)?.diagnosticReason ?? .protocolViolation) }
+        catch {
+            let failure = error as? CardCallbackFailure
+            return rejected(failure?.diagnosticReason ?? .protocolViolation,
+                            code: failure == .malformed ? CardCallback.malformedStage(data) : nil)
+        }
         // Only the verified owner, on the exact message and chat this control was delivered in,
         // learns anything about it.
         guard let record = issued[callback.controlID], let receipt = record.receipt,
@@ -243,9 +256,9 @@ public actor CardActionRouter {
 
     /// Unauthenticated, malformed, foreign or unbound submissions all answer the same
     /// unavailable toast; only a fixed reason is logged.
-    private func rejected(_ reason: DiagnosticReason? = nil) -> CardActionResult {
+    private func rejected(_ reason: DiagnosticReason? = nil, code: Int? = nil) -> CardActionResult {
         DiagnosticLog.record(.cardAction, component: .feishu, outcome: .rejected, operation: DiagnosticOperation(),
-                             reason: reason)
+                             reason: reason, code: code)
         return .unavailable
     }
 

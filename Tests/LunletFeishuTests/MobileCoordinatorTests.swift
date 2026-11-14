@@ -4,6 +4,7 @@
 // Refs: US-07, AC-07.02, AC-07.03, AC-07.04; US-08, AC-08.01, AC-08.03, AC-08.04.
 // Refs: US-10, AC-10.01, AC-10.03, AC-10.04; US-11, AC-11.01, AC-11.02, AC-11.03.
 // Refs: US-12, AC-12.01, AC-12.02, AC-12.03, AC-12.04.
+// Refs: US-14, AC-14.01.
 import Foundation
 import Testing
 import LunletCore
@@ -70,6 +71,22 @@ struct MobileCoordinatorTests {
         }
         Issue.record("The delivered form was never bound for the verified owner")
         throw URLError(.timedOut)
+    }
+
+    // Refs: US-14, AC-14.01; US-05, AC-05.09. A notice sent without a reply box is logged with the number of the
+    // first check that refused it.
+    @Test func aRefusedReplyCapabilityNamesItsFirstFailedCheckByNumber() async {
+        let value = coordinator(SyntheticCardSender()), session = snapshot()
+        #expect(await value.replyRefusal(for: session) == 12)
+        await value.setReplyWindow(true)
+        #expect(await value.replyRefusal(for: session) == 13)
+        await ready(value)
+        #expect(await value.replyRefusal(for: session) == 16)
+        await value.observe(session)
+        #expect(await value.replyRefusal(for: snapshot(id: session.observation.sessionID, phase: .idle(completedTurnID: "next"))) == 17)
+        #expect(await value.replyRefusal(for: session) == nil)
+        await value.setRemoteInput(false)
+        #expect(await value.replyRefusal(for: session) == 14)
     }
 
     @Test func setupAndAdapterProofAreRequiredBeforeAwayMode() async {

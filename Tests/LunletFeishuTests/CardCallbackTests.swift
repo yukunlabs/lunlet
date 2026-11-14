@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
 // Refs: US-07, AC-07.02, AC-07.03; US-10, AC-10.02, AC-10.04.
+// Refs: US-14, AC-14.01.
 import Foundation
 import Testing
 import LunletCore
@@ -18,6 +19,30 @@ struct CardCallbackTests {
         #expect(callback.values == ["answer_0": .text("café ✓"), "answer_1": .selections(["one", "two"])])
         #expect(!String(describing: callback).contains("café"))
         #expect(!String(describing: callback.values).contains("café"))
+    }
+
+    // Refs: US-14, AC-14.01. A malformed callback is logged with the number of the check it failed and nothing of
+    // its content, so a refused reply can be traced to its cause.
+    @Test func aMalformedCallbackNamesTheCheckItFailedByNumber() throws {
+        func stage(_ change: (inout [String: Any]) -> Void) throws -> Int {
+            var body = CardCallbackFixture.body()
+            change(&body)
+            return CardCallback.malformedStage(try JSONSerialization.data(withJSONObject: body))
+        }
+        func action(_ body: inout [String: Any], _ change: (inout [String: Any]) -> Void) {
+            var event = body["event"] as! [String: Any], action = event["action"] as! [String: Any]
+            change(&action); event["action"] = action; body["event"] = event
+        }
+        #expect(CardCallback.malformedStage(Data("not json".utf8)) == 1)
+        #expect(try stage { $0["schema"] = "1.0" } == 2)
+        #expect(try stage { var header = $0["header"] as! [String: Any]; header["event_type"] = "im.message.receive_v1"; $0["header"] = header } == 3)
+        #expect(try stage { $0["event"] = ["host": "im_message"] } == 4)
+        #expect(try stage { action(&$0) { $0["tag"] = "input" } } == 5)
+        #expect(try stage { action(&$0) { $0["value"] = ["lunlet_control": "x", "other": "y"] } } == 6)
+        #expect(try stage { var event = $0["event"] as! [String: Any]; event["host"] = "url_preview"; $0["event"] = event } == 7)
+        #expect(try stage { action(&$0) { $0["form_value"] = nil } } == 8)
+        // A callback that passes these coarse checks failed a finer one: an identifier, the time or a field's text.
+        #expect(try stage { _ in } == 9)
     }
 
     @Test(arguments: ["app_id", "tenant_key", "operator_tenant", "open_id"])

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 yukunlabs
 // SPDX-License-Identifier: 0BSD
 // Refs: US-07, AC-07.02, AC-07.03; US-10, AC-10.02, AC-10.04.
+// Refs: US-14, AC-14.01.
 import Foundation
 import LunletCore
 
@@ -78,6 +79,22 @@ public struct CardCallback: Sendable, CustomStringConvertible {
         return Self(eventID: body.header.event_id, controlID: control,
                     messageID: body.event.context.open_message_id, chatID: body.event.context.open_chat_id,
                     values: values)
+    }
+
+    /// Which check a malformed callback failed, as a number for the log and never its content (AC-14.01): 1 not a
+    /// JSON object, 2 not schema 2.0, 3 not a card action, 4 no action, 5 not the submit button, 6 not exactly
+    /// Lunlet's control value, 7 not a message card, 8 no or too many form values, 9 a finer check (an identifier,
+    /// the time or a field's text).
+    static func malformedStage(_ data: Data) -> Int {
+        guard data.count <= 65_536, let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return 1 }
+        guard body["schema"] as? String == "2.0", let header = body["header"] as? [String: Any] else { return 2 }
+        guard header["event_type"] as? String == "card.action.trigger" else { return 3 }
+        guard let event = body["event"] as? [String: Any], let action = event["action"] as? [String: Any] else { return 4 }
+        guard action["tag"] as? String == "button", action["name"] as? String == "submit" else { return 5 }
+        guard let value = action["value"] as? [String: Any], value.count == 1, value["lunlet_control"] is String else { return 6 }
+        guard event["host"] as? String == "im_message", event["context"] is [String: Any] else { return 7 }
+        guard let form = action["form_value"] as? [String: Any], !form.isEmpty, form.count <= 8 else { return 8 }
+        return 9
     }
 
     private static func validID(_ value: String, limit: Int = 256) -> Bool {

@@ -4,6 +4,7 @@
 // Refs: US-09, AC-09.01, AC-09.02, AC-09.03; US-10, AC-10.01, AC-10.02, AC-10.03, AC-10.04.
 // Refs: US-11, AC-11.01, AC-11.02, AC-11.03, AC-11.05; US-12, AC-12.04.
 // Refs: US-06, AC-06.02.
+// Refs: US-14, AC-14.01.
 import Foundation
 import LunletCore
 
@@ -122,26 +123,59 @@ public actor FeishuReplyService {
         // helper running inside a Claude Code session (US-38).
         // The newest observation must be this same turn. Its title, preview or activity time may change between
         // two observations of one turn, also while the connection opens; those never decide a capability.
-        guard !closed, !blocked, replyWindow, owner?.isComplete == true, snapshot.inputPath != nil,
-              snapshot.parentSessionID == nil, latest[session]?.observesSameTurn(as: snapshot) == true,
-              case .idle = snapshot.observation.phase, snapshot.observation.liveness == .alive else { return nil }
+        if let refusal = earlyRefusal(for: snapshot) { return refused(refusal) }
         preparing += 1
         startConnectionIfNeeded()
         var capability: FeishuReplyCapability?
+        // 10: the callback connection did not open, or the turn moved on while it did.
+        var refusal = 10
         if await waitForConnection(), !closed, replyWindow, let current = latest[session], current.observesSameTurn(as: snapshot) {
             // Opening the connection reconfigured access, which requires a fresh observation. The newest local
             // observation is still this turn, and dispatch rechecks the live binding.
             await coordinator.observe(current)
             capability = await coordinator.prepareReply(for: current)
+            if capability == nil {
+                if let code = await coordinator.replyRefusal(for: current) { refusal = code }
+                else { refusal = await router.prepareRefusal(sessionID: session, form: .followup(field: FeishuReplyCapability.fieldName)) }
+            }
             if let issued = capability, latest[session]?.observesSameTurn(as: snapshot) != true {
                 await coordinator.withdrawReply(issued)
                 if let newer = latest[session] { await coordinator.observe(newer) }
                 capability = nil
+                // 25: a newer observation of the session arrived while the control was issued.
+                refusal = 25
             }
         }
         preparing -= 1
-        if let capability { unbound[capability.token] = .now } else { await reevaluate() }
+        if let capability {
+            unbound[capability.token] = .now
+            DiagnosticLog.record(.replyControl, component: .feishu, outcome: .completed, operation: DiagnosticOperation())
+        } else {
+            await reevaluate()
+            return refused(refusal)
+        }
         return capability
+    }
+
+    /// The first check a snapshot fails before any connection is opened, as a number for the log: 1 closed, 2 the
+    /// provider refused this app, 3 the reply window is closed, 4 no verified owner, 5 the session has no input path,
+    /// 6 a child session, 7 not the newest observation's turn, 8 not idle, 9 not alive.
+    private func earlyRefusal(for snapshot: SessionSnapshot) -> Int? {
+        if closed { return 1 }
+        if blocked { return 2 }
+        if !replyWindow { return 3 }
+        if owner?.isComplete != true { return 4 }
+        if snapshot.inputPath == nil { return 5 }
+        if snapshot.parentSessionID != nil { return 6 }
+        if latest[snapshot.observation.sessionID]?.observesSameTurn(as: snapshot) != true { return 7 }
+        guard case .idle = snapshot.observation.phase else { return 8 }
+        return snapshot.observation.liveness == .alive ? nil : 9
+    }
+
+    /// Logs why a notice goes out without a reply box: a number, never the session or its content (AC-14.01).
+    private func refused(_ code: Int) -> FeishuReplyCapability? {
+        DiagnosticLog.record(.replyControl, component: .feishu, outcome: .unavailable, operation: DiagnosticOperation(), code: code)
+        return nil
     }
 
     /// Binds a sent card to its receipt; false means the card takes no replies. `card` renders that card in a

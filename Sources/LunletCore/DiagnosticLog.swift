@@ -23,6 +23,11 @@ public enum DiagnosticEvent: String, Sendable {
     case sessionInput
     /// The live-binding check of one reply against the observed session; a refusal names the failed check.
     case sessionBinding
+    /// Whether a notice was given a reply control; when it was not, the code is the number of the check that refused.
+    case replyControl
+    /// Whether a finished Claude Code turn was held for a phone reply; when it was not, the code is the number of
+    /// the check that released it.
+    case stopVerdict
 }
 public enum DiagnosticOutcome: String, Sendable {
     case started, completed, cancelled, retrying, stopped, failed, unavailable, rejected

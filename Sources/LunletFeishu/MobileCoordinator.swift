@@ -5,6 +5,7 @@
 // Refs: US-10, AC-10.01, AC-10.03, AC-10.04; US-11, AC-11.01, AC-11.02, AC-11.03.
 // Refs: US-12, AC-12.01, AC-12.02, AC-12.03, AC-12.04; US-05, AC-05.09; US-38, AC-38.03.
 // Refs: US-05, AC-05.08, AC-05.09; US-08, AC-08.05; US-09, AC-09.03.
+// Refs: US-14, AC-14.01.
 import Foundation
 import LunletCore
 
@@ -119,6 +120,25 @@ public actor MobileCoordinator {
         }
         return FeishuReplyCapability(token: control.id, sessionID: session, turnID: turn,
                                      expiresAt: Date(timeIntervalSinceNow: ContinuationGate.controlLifetime))
+    }
+
+    /// Why `prepareReply` issues no capability for this snapshot right now, as a number for the log, or nil when
+    /// every check before the router passes: 11 closed, 12 the reply window is closed, 13 no owner or callback
+    /// connection, 14 replies turned off, 15 no adapter, 16 the session is not validated, 17 not its newest turn,
+    /// 18 not alive, 19 not idle after a turn, 20 the notice takes no follow-up.
+    public func replyRefusal(for snapshot: SessionSnapshot) -> Int? {
+        let session = snapshot.observation.sessionID
+        if closed { return 11 }
+        if !replyWindow { return 12 }
+        if !canEnableAway { return 13 }
+        if !remoteInput { return 14 }
+        if !adapterAvailable { return 15 }
+        if !validated.contains(session) { return 16 }
+        guard let newest = snapshots[session], newest.observesSameTurn(as: snapshot) else { return 17 }
+        if snapshot.observation.liveness != .alive || snapshot.isEnded { return 18 }
+        guard case .idle(let turn) = snapshot.observation.phase, !turn.isEmpty else { return 19 }
+        if !SessionNotice.prepare(snapshot).allowsFollowup || !SessionNotice.prepare(newest).allowsFollowup { return 20 }
+        return nil
     }
 
     /// Binds the delivered card to its authenticated send receipt; false means it takes no replies.
