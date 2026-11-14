@@ -176,6 +176,9 @@ import SwiftUI
             self?.cueRouter.mode = presentation
             self?.updateMenuVisibility(presentation: presentation)
         }.store(in: &preferenceObservations)
+        // AC-42.03: the saved choice decides when the entry steps aside in full screen.
+        preferences.$value.map(\.fullScreen).removeDuplicates().sink { FullScreenQuiet.shared.policy = $0 }
+            .store(in: &preferenceObservations)
         preferences.$value.map(\.needsYouSound).removeDuplicates().sink { [weak self] enabled in
             self?.cueRouter.soundEnabled = enabled
         }.store(in: &preferenceObservations)
@@ -253,6 +256,7 @@ import SwiftUI
             self?.updateMenuVisibility()
         }
         pet.refreshAction = { [weak self] in self?.refresh() }
+        FullScreenQuiet.shared.start()
         entry.start()
         pet.start()
         started = true
@@ -312,6 +316,7 @@ import SwiftUI
         menu?.shutdown(); menu = nil
         updater?.willPresent = nil
         entry.shutdown(); pet.shutdown()
+        FullScreenQuiet.shared.stop()
         panel.shutdown(); usageHover.shutdown(); claudeUsageHover.shutdown()
         // Each stage is logged by number as it finishes, or as `uncertain` with `timeout` when it overran its bound,
         // so a quit never waits on a provider or a socket and the log names the cleanup that stalled (AC-12.04,

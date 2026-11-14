@@ -20,12 +20,14 @@ enum SettingsModel {
 
     /// The three pictured entries.
     static let entries = EntryPresentation.allCases
-    enum EntryOption: Equatable { case showAllowance, onlyBelow, pet, coat, packs }
+    enum EntryOption: Equatable { case fullScreen, showAllowance, onlyBelow, pet, coat, packs }
     /// The rows under the entry choice: only the selected entry's own options (AC-21.04, AC-21.05, AC-40.01). A
     /// chosen pack brings its own colors, so the coat is offered for the built-in dog only.
     static func entryOptions(_ value: LunletPreferences, packsListed: Bool) -> [EntryOption] {
         switch value.presentation {
-        case .notch: return []
+        // The menu bar item leaves with the menu bar and the pet stays out of full-screen Spaces; only the notch
+        // entry would otherwise remain over another application's full-screen window (AC-42.03).
+        case .notch: return [.fullScreen]
         case .menuBar: return value.menuBarAllowance == .off ? [.showAllowance] : [.showAllowance, .onlyBelow]
         case .pet:
             guard packsListed else { return [.coat] }
