@@ -96,8 +96,7 @@ private actor CardBotClient: ChannelBotClient {
 
     private func render(channel: CommunicationChannel, feishu store: CardEnrollmentStore, bot: BotChannelSetupModel,
                         name: String, to directory: URL) async throws {
-        let suite = "com.lunlet.test.card.\(UUID())"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let (defaults, suite) = try ScratchSettings.make("card")
         defer { defaults.removePersistentDomain(forName: suite) }
         let preferences = PreferencesStore(defaults: defaults)
         preferences.update { $0.channel = channel }

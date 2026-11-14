@@ -10,7 +10,7 @@ import LunletCore
 
 @MainActor struct PetEntryControllerTests {
     private func store() throws -> PreferencesStore {
-        let defaults = try #require(UserDefaults(suiteName: "lunlet-pet-" + UUID().uuidString))
+        let defaults = try ScratchSettings.make("pet").defaults
         return PreferencesStore(defaults: defaults)
     }
     private func controller(_ preferences: PreferencesStore, screen: NSScreen?, available: Bool = true,

@@ -90,8 +90,7 @@ import LunletCore
 }
 
 @MainActor private func settingsModels() throws -> (PreferencesStore, SkinCatalog, () -> Void) {
-    let suite = "com.lunlet.test.settings.\(UUID())"
-    let defaults = try #require(UserDefaults(suiteName: suite))
+    let (defaults, suite) = try ScratchSettings.make("settings")
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("lunlet-settings-\(UUID())")
     return (PreferencesStore(defaults: defaults), SkinCatalog(directory: directory), {
         defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: directory)

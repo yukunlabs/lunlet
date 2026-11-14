@@ -190,8 +190,7 @@ private struct BandContent: View {
 
     // AC-24.03: Command-R and Command-comma act only while the pinned panel is key; a hover preview takes no keys.
     @Test(arguments: [false, true]) func refreshAndSettingsShortcutsWorkOnlyInTheKeyPinnedPanel(notched: Bool) async throws {
-        let suite = "com.lunlet.test.keyboard.\(UUID())"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let (defaults, suite) = try ScratchSettings.make("keyboard")
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("lunlet-keyboard-\(UUID())")
         defer { defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: directory) }
         let usage = AccountUsageModel(client: KeyboardAccount())

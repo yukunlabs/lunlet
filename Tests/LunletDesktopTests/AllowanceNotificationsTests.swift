@@ -210,8 +210,7 @@ private actor FixedReader: CodexAccountReading {
     // MARK: Notifier
 
     private func store() throws -> (PreferencesStore, UserDefaults, String) {
-        let suite = "com.lunlet.test.allowance.\(UUID())"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let (defaults, suite) = try ScratchSettings.make("allowance")
         return (PreferencesStore(defaults: defaults), defaults, suite)
     }
 
