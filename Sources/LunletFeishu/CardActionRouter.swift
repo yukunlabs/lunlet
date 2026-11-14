@@ -20,6 +20,8 @@ public struct FeishuCardRefusal: Equatable, Sendable, CustomStringConvertible {
 
 public enum CardActionResult: Sendable, CustomStringConvertible {
     case received(AuthorizedContinuation), duplicate(ActionReceipt), unavailable, invalidInput
+    /// An event that is not a card action, such as a read receipt for the notice: acknowledged, never answered.
+    case ignored
     /// The verified owner's bound card cannot be used; `report` is set the first time only.
     case refused(ContinuationRefusal, report: FeishuCardRefusal?)
     public var description: String { "Card action result (redacted)" }
@@ -31,6 +33,9 @@ public enum CardActionResult: Sendable, CustomStringConvertible {
         let text: String
         let name = agent.displayName
         switch self {
+        case .ignored:
+            // Nothing was tapped, so there is no toast to show.
+            return Data("{}".utf8)
         case .received:
             type = "info"
             text = "Received. Waiting for \(name) confirmation."
@@ -216,8 +221,11 @@ public actor CardActionRouter {
         do { callback = try CardCallback.decodeFromLongConnection(data, owner: owner, now: wallTime()) }
         catch {
             let failure = error as? CardCallbackFailure
-            return rejected(failure?.diagnosticReason ?? .protocolViolation,
-                            code: failure == .malformed ? CardCallback.malformedStage(data) : nil)
+            let stage = failure == .malformed ? CardCallback.malformedStage(data) : nil
+            // The provider also delivers other events on this connection, such as a read receipt when the chat is
+            // opened. They are no one's reply, so they are neither refused with a toast nor logged as rejected.
+            if stage == CardCallback.notACardAction { return .ignored }
+            return rejected(failure?.diagnosticReason ?? .protocolViolation, code: stage)
         }
         // Only the verified owner, on the exact message and chat this control was delivered in,
         // learns anything about it.

@@ -54,6 +54,24 @@ struct CardActionRouterTests {
         if case .unavailable = result { return true }; return false
     }
 
+    // Refs: US-14, AC-14.01; US-08, AC-08.01. The provider also delivers events that are not card actions on the
+    // same connection, such as a read receipt when the chat is opened. They are acknowledged and ignored: answering
+    // them with a toast or logging them as rejected actions would report a refused reply that never happened.
+    @Test func anEventThatIsNotACardActionIsAcknowledgedAndIgnored() async throws {
+        let router = await ready()
+        _ = try await issue(router)
+        var body = CardCallbackFixture.body()
+        var header = body["header"] as! [String: Any]
+        header["event_type"] = "im.message.message_read_v1"
+        body["header"] = header
+        let result = await router.handle(try JSONSerialization.data(withJSONObject: body), connectionID: feishuConnection)
+        guard case .ignored = result else { Issue.record("Expected the event to be ignored"); return }
+        #expect(try result.responseJSON() == Data("{}".utf8))
+        // A real card action on the same connection is still taken.
+        #expect(try accepted(await router.handle(try CardCallbackFixture.data(control: try await issue(router, form: nil).id, event: "event_after"),
+                                                 connectionID: feishuConnection)).input == .followup("Continue the synthetic task"))
+    }
+
     /// The accurate reason given to the verified owner, and whether this tap is the first report.
     private func refused(_ result: CardActionResult) -> (ContinuationRefusal, reported: Bool)? {
         if case .refused(let reason, let report) = result {

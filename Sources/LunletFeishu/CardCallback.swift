@@ -85,10 +85,11 @@ public struct CardCallback: Sendable, CustomStringConvertible {
     /// JSON object, 2 not schema 2.0, 3 not a card action, 4 no action, 5 not the submit button, 6 not exactly
     /// Lunlet's control value, 7 not a message card, 8 no or too many form values, 9 a finer check (an identifier,
     /// the time or a field's text).
+    static let notACardAction = 3
     static func malformedStage(_ data: Data) -> Int {
         guard data.count <= 65_536, let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return 1 }
         guard body["schema"] as? String == "2.0", let header = body["header"] as? [String: Any] else { return 2 }
-        guard header["event_type"] as? String == "card.action.trigger" else { return 3 }
+        guard header["event_type"] as? String == "card.action.trigger" else { return notACardAction }
         guard let event = body["event"] as? [String: Any], let action = event["action"] as? [String: Any] else { return 4 }
         guard action["tag"] as? String == "button", action["name"] as? String == "submit" else { return 5 }
         guard let value = action["value"] as? [String: Any], value.count == 1, value["lunlet_control"] is String else { return 6 }
