@@ -51,18 +51,43 @@ jobs:
         run: |
           swift package resolve --disable-keychain
           git diff --exit-code -- Package.resolved
-      - name: Verify application modules
-        run: scripts/test-core.sh all
-      - name: Verify requirements and product-page sources
+      # Each stage answers one question, so a failure names its area. The stages go from what everything
+      # needs to what depends on it: the build, the rules without a screen, the agents, the messengers, the
+      # app, then the requirements, the product page, the release tooling and the tree itself. Modules run one
+      # at a time through the same script a developer uses, so a run means the same here and on a Mac.
+      - name: Build the package and its tests
+        run: scripts/test-core.sh build
+      - name: Core rules, storage and the hook helper
+        run: |
+          scripts/test-core.sh core
+          scripts/test-core.sh storage
+          scripts/test-core.sh hook
+      - name: Agents (Codex and Claude Code)
+        run: |
+          scripts/test-core.sh codex
+          scripts/test-core.sh claude
+      - name: Messengers (Feishu, Slack and Telegram)
+        run: |
+          scripts/test-core.sh feishu
+          scripts/test-core.sh messaging
+      - name: Desktop app (models, panel and drawings)
+        run: scripts/test-core.sh desktop
+      - name: Requirements and traceability
         run: |
           python3 scripts/test_traceability.py
           python3 scripts/check_traceability.py
+      - name: Product page and its pictures
+        run: |
           python3 -m unittest discover -s scripts -p test_site.py
-          python3 -m unittest discover -s scripts -p test_release.py
           node --check website/app.js
           python3 scripts/build_site.py
           python3 scripts/check_site_assets.py
+      - name: Release tooling
+        run: python3 -m unittest discover -s scripts -p test_release.py
       # A clean checkout has no working-tree changes, so the committed tree is compared with the empty tree;
-      # upstream license texts keep their own whitespace.
-      - name: Check whitespace in the committed tree
-        run: git diff --check "$(git hash-object -t tree /dev/null)" HEAD -- . ':(exclude)Resources/third-party'
+      # upstream license texts keep their own whitespace. Test waits must leave room for a slow machine.
+      - name: Repository hygiene (whitespace and test waits)
+        run: |
+          git diff --check "$(git hash-object -t tree /dev/null)" HEAD -- . ':(exclude)Resources/third-party'
+          python3 -m unittest discover -s scripts -p test_test_waits.py
+          python3 scripts/check_test_waits.py

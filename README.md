@@ -74,7 +74,7 @@ open .tmp/Lunlet.app
 Lunlet is a Swift package (SwiftUI and AppKit) with separate modules for the core, Codex, Claude Code, Feishu, messaging, secure storage and the desktop app.
 
 ```sh
-scripts/test-core.sh all                      # default suite
+scripts/test-core.sh all                      # default suite: every module in turn
 scripts/test-core.sh desktop                  # one module: core, codex, claude, feishu, messaging, storage, desktop
 LUNLET_TEST_PANEL=1 scripts/test-core.sh --filter PanelPlacementTests   # native window checks
 python3 scripts/check_traceability.py         # story references, licensing headers, language
