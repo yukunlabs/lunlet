@@ -22,7 +22,9 @@ struct HeaderLayoutTests {
         let slots = HeaderLayout.slots(agents: [.codex, .claude], chosen: nil, width: width, top: 30)
         #expect(slots.map(\.body) == [.agent(.codex), .all, .agent(.claude)])
         #expect(slots.allSatisfy { $0.role == .row && $0.visible && $0.y == 60 && $0.diameter == 54 })
-        #expect(slots.map(\.x) == [215 - 122, 215, 215 + 122])
+        // Typed apart from the comparison: a literal of sums inside `#expect` takes the compiler seconds to resolve.
+        let row: [CGFloat] = [215 - 122, 215, 215 + 122]
+        #expect(slots.map(\.x) == row)
         // The lit side of a body faces the Sun.
         #expect(slots.map(\.mirrored) == [true, false, false])
     }
@@ -31,12 +33,14 @@ struct HeaderLayoutTests {
     @Test func aChosenAgentTakesTheCenterAndTheOthersDrawBackOnTheirOwnSide() throws {
         let codex = HeaderLayout.slots(agents: [.codex, .claude], chosen: .codex, width: width, top: 30)
         #expect(codex.map(\.role) == [.center, .side, .side])
-        #expect(codex.map(\.x) == [215, 215 + 108, 215 + 172])
+        let trailing: [CGFloat] = [215, 215 + 108, 215 + 172]
+        #expect(codex.map(\.x) == trailing)
         #expect(codex.map(\.diameter) == [64, 34, 26])
         #expect(codex.map(\.distance) == [0, 1, 2] && codex.allSatisfy(\.visible))
         #expect(codex.map(\.mirrored) == [true, false, false])
         let claude = HeaderLayout.slots(agents: [.codex, .claude], chosen: .claude, width: width, top: 30)
-        #expect(claude.map(\.x) == [215 - 172, 215 - 108, 215])
+        let leading: [CGFloat] = [215 - 172, 215 - 108, 215]
+        #expect(claude.map(\.x) == leading)
         #expect(claude.map(\.role) == [.side, .side, .center])
         #expect(claude.map(\.mirrored) == [true, false, false])
         // The bodies at the sides sit a little lower than the chosen one, which is larger.
