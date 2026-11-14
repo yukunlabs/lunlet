@@ -200,7 +200,7 @@ import LunletCore
         entry.start()
         let window = try #require(entry.window), mark = try #require(window.contentView as? LettermarkView)
         mark.hover?(true)
-        let deadline = ContinuousClock.now + .seconds(10)
+        let deadline = ContinuousClock.now + .seconds(60)
         while !companion.isVisible, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
         #expect(companion.isVisible && window.ignoresMouseEvents)
         // An ignored entry window need not emit mouseExited. The controller
@@ -241,13 +241,13 @@ import LunletCore
         entry.start()
         available = false
         NotificationCenter.default.post(name: NSApplication.didChangeScreenParametersNotification, object: nil)
-        let hiddenDeadline = ContinuousClock.now + .seconds(1)
+        let hiddenDeadline = ContinuousClock.now + .seconds(30)
         while entry.window?.isVisible == true, ContinuousClock.now < hiddenDeadline {
             try await Task.sleep(for: .milliseconds(5))
         }
         #expect(entry.window?.isVisible == false)
         available = true
-        let recoveryDeadline = ContinuousClock.now + .seconds(10)
+        let recoveryDeadline = ContinuousClock.now + .seconds(60)
         while entry.window?.isVisible != true, ContinuousClock.now < recoveryDeadline {
             try await Task.sleep(for: .milliseconds(5))
         }

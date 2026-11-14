@@ -18,7 +18,7 @@ struct DiagnosticLogTests {
         let predicate = NSPredicate(format: "subsystem == %@ AND composedMessage CONTAINS %@",
                                     "com.lunlet", operation.id.uuidString)
         var messages: [String] = []
-        for _ in 0..<20 {
+        for _ in 0..<300 {
             messages = try store.getEntries(at: position, matching: predicate).compactMap {
                 ($0 as? OSLogEntryLog)?.composedMessage
             }

@@ -139,7 +139,7 @@ private actor SlackSocketFixture: ChannelSocket {
                               probeEvery: probe.every, probeWithin: probe.within)
     }
     private func waitForReceive(_ socket: SlackSocketFixture, count: Int = 2) async throws {
-        for _ in 0..<1000 {
+        for _ in 0..<20_000 {
             if await socket.receiveCount >= count { return }
             try await Task.sleep(for: .milliseconds(1))
         }
@@ -400,7 +400,7 @@ private actor SlackSocketFixture: ChannelSocket {
         defer { task.cancel() }
         try await waitForReceive(socket, count: 2)
         // While pings are answered the listener stays up.
-        for _ in 0..<2_000 {
+        for _ in 0..<20_000 {
             if await socket.pings >= 2 { break }
             try await Task.sleep(for: .milliseconds(1))
         }

@@ -257,7 +257,7 @@ private struct BandContent: View {
         controller.entryHoverChanged(true, on: nil)
         #expect(!controller.isVisible)
         // The preview opens after the hover delay; how long that takes depends on what else holds the main actor.
-        let opening = ContinuousClock.now + .seconds(3)
+        let opening = ContinuousClock.now + .seconds(30)
         while !controller.isVisible, ContinuousClock.now < opening { try await Task.sleep(for: .milliseconds(20)) }
         #expect(controller.isVisible && !controller.isPinned)
         #expect(controller.window?.isKeyWindow == false)

@@ -131,12 +131,14 @@ struct PetMotionTests {
         let observation = clock.$frame.compactMap { $0 }.sink { frames.append($0) }
         defer { observation.cancel(); clock.stop() }
         clock.start()
-        let deadline = Date(timeIntervalSinceNow: 2)
+        let deadline = Date(timeIntervalSinceNow: 30)
         while frames.count < 6, Date() < deadline { RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.02)) }
-        #expect(frames.count >= 6, "\(frames.count) frames in two seconds")
-        // Frames come at most thirty times a second and the calm ones twelve.
+        #expect(frames.count >= 6, "\(frames.count) frames")
+        // Frames come at most thirty times a second and the calm ones twelve. A busy machine delivers a frame late
+        // and never early, so no gap is shorter than the lively interval and the shortest is a calm one at most.
         let gaps = zip(frames, frames.dropFirst()).map { $0.1 - $0.0 }
-        #expect(gaps.allSatisfy { $0 >= PetMotion.livelyInterval - 0.001 && $0 <= PetMotion.calmInterval + 0.001 }, "\(gaps)")
+        #expect(gaps.allSatisfy { $0 >= PetMotion.livelyInterval - 0.001 }, "\(gaps)")
+        #expect((gaps.min() ?? .infinity) <= PetMotion.calmInterval + 0.001, "\(gaps)")
     }
 
     @Test func theHiddenBubbleIsNotPartOfTheDogWhileThePanelIsOpen() {

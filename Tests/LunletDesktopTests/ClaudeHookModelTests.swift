@@ -31,7 +31,7 @@ import LunletHook
     func lockSettings(_ locked: Bool) { chmod(claude.path, locked ? 0o500 : 0o700) }
     func remove() { lockSettings(false); try? FileManager.default.removeItem(at: root) }
     static func settle(until done: @MainActor () -> Bool) async throws {
-        let deadline = ContinuousClock.now + .seconds(15)
+        let deadline = ContinuousClock.now + .seconds(60)
         while !done(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
     }
 }

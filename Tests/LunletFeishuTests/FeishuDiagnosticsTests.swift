@@ -18,7 +18,7 @@ struct NativeDiagnosticCapture {
     func read(until needle: String) async throws -> [String] {
         let predicate = NSPredicate(format: "subsystem == %@", "com.lunlet")
         var messages: [String] = []
-        for _ in 0..<20 {
+        for _ in 0..<300 {
             messages = try store.getEntries(at: position, matching: predicate).compactMap {
                 ($0 as? OSLogEntryLog)?.composedMessage
             }

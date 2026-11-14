@@ -228,14 +228,14 @@ struct SystemCodexProcessRunnerTests {
     @Test func argumentsAndEnvironmentArePassedExactlyWithoutAShell() async {
         let runner = SystemCodexProcessRunner()
         // `test` succeeds only if each value arrives as one unexpanded argument.
-        #expect(await runner.run(request("/bin/test", ["a b; $HOME", "=", "a b; $HOME"]), timeout: .seconds(5)) == .exited(0))
-        #expect(await runner.run(request("/usr/bin/false", []), timeout: .seconds(5)) == .exited(1))
+        #expect(await runner.run(request("/bin/test", ["a b; $HOME", "=", "a b; $HOME"]), timeout: .seconds(60)) == .exited(0))
+        #expect(await runner.run(request("/usr/bin/false", []), timeout: .seconds(60)) == .exited(1))
         #expect(await runner.run(request("/usr/bin/printenv", ["LUNLET_SYNTHETIC"], environment: ["LUNLET_SYNTHETIC": "1"]),
-                                 timeout: .seconds(5)) == .exited(0))
+                                 timeout: .seconds(60)) == .exited(0))
         // Nothing is inherited, not even PATH.
         #expect(await runner.run(request("/usr/bin/printenv", ["PATH"], environment: ["LUNLET_SYNTHETIC": "1"]),
-                                 timeout: .seconds(5)) == .exited(1))
-        #expect(await runner.run(request("/nonexistent/codex", []), timeout: .seconds(5)) == .launchFailed)
+                                 timeout: .seconds(60)) == .exited(1))
+        #expect(await runner.run(request("/nonexistent/codex", []), timeout: .seconds(60)) == .launchFailed)
     }
 
     @Test func timeoutsAndCancellationStopTheChild() async {

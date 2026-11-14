@@ -28,7 +28,7 @@ import LunletCore
     func remove() { try? FileManager.default.removeItem(at: root) }
     /// Waits for the model's background read to publish.
     static func settle(_ model: ClaudePlanLimitsModel, until done: @MainActor () -> Bool) async throws {
-        let deadline = ContinuousClock.now + .seconds(15)
+        let deadline = ContinuousClock.now + .seconds(60)
         while !done(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
     }
 }

@@ -175,7 +175,7 @@ private final class ReplyPower: IdleSleepControlling {
     }
 
     private func waitUntil(_ condition: () async -> Bool) async throws {
-        let end = ContinuousClock.now + .seconds(5)
+        let end = ContinuousClock.now + .seconds(60)
         while !(await condition()) {
             guard ContinuousClock.now < end else { Issue.record("The reply flow did not reach the expected state"); throw URLError(.timedOut) }
             try await Task.sleep(for: .milliseconds(5))

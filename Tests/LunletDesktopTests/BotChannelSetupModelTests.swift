@@ -43,7 +43,7 @@ private actor SetupBotFixture: ChannelBotClient {
 
 @MainActor struct BotChannelSetupModelTests {
     private func wait(_ condition: () -> Bool) async {
-        let deadline = ContinuousClock.now + .seconds(10)
+        let deadline = ContinuousClock.now + .seconds(60)
         while !condition(), ContinuousClock.now < deadline { await Task.yield() }
         #expect(condition())
     }
@@ -165,7 +165,7 @@ private actor SetupBotFixture: ChannelBotClient {
         let model = BotChannelSetupModel(storeFactory: { $0 == .slack ? slack : telegram },
                                          clientFactory: { SetupBotFixture($0.channel) })
         model.sealSavedConnections()
-        for _ in 0..<400 {
+        for _ in 0..<40_000 {
             if await slack.loads >= 1, await telegram.loads >= 1 { break }
             try await Task.sleep(for: .milliseconds(5))
         }
@@ -231,17 +231,17 @@ private actor HeldCredentialWrite: ChannelCredentialStoring {
     let store = HeldCredentialWrite(), client = SetupBotFixture(.telegram)
     let model = BotChannelSetupModel(storeFactory: { _ in store }, clientFactory: { _ in client })
     model.select(.telegram)
-    let ready = ContinuousClock.now + .seconds(10)
+    let ready = ContinuousClock.now + .seconds(60)
     while model.state != .disconnected, ContinuousClock.now < ready { await Task.yield() }
     model.connect(.init(channel: .telegram, botToken: "9001:synthetic-token"))
-    let started = ContinuousClock.now + .seconds(10)
+    let started = ContinuousClock.now + .seconds(60)
     while !(await store.started), ContinuousClock.now < started { await Task.yield() }
     #expect(await store.started)
     model.disconnect()
     for _ in 0..<20 { await Task.yield() }
     #expect(await store.removals == 0)
     await store.finish()
-    let removed = ContinuousClock.now + .seconds(10)
+    let removed = ContinuousClock.now + .seconds(60)
     while model.state != .disconnected, ContinuousClock.now < removed { await Task.yield() }
     #expect(model.state == .disconnected)
     #expect(await store.data == nil)

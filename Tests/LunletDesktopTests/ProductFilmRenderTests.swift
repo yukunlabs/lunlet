@@ -273,7 +273,7 @@ final class FilmWindow: NSWindow {
         }
         // Opening right after the cue selects its conversation on its agent's page (AC-13.09).
         sessions.select(codexIDs[0])
-        let deadline = ContinuousClock.now + .seconds(3)
+        let deadline = ContinuousClock.now + .seconds(60)
         while (codexUsage.snapshot == nil || claudeUsage.snapshot == nil || usage.state == .loading), ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(5))
         }

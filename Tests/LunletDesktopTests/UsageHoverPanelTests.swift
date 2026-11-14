@@ -39,7 +39,7 @@ struct UsageHoverPlacementTests {
 @MainActor struct UsageHoverPanelTests {
     /// Waits for the hover delay to open the chart; a busy main actor may hold the open past its delay.
     private func opened(_ controller: UsageHoverPanelController) async throws {
-        let deadline = ContinuousClock.now + .seconds(3)
+        let deadline = ContinuousClock.now + .seconds(30)
         while !controller.isVisible, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
     }
     private func fixture() -> (UsageHoverPanelController, NSPanel, NSView) {

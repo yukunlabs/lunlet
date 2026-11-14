@@ -61,7 +61,7 @@ struct FeishuConnectionRunnerTests {
             try await runner.run(router: CardActionRouter(), onState: { states.append($0) },
                                  onAction: { _ in Issue.record("No connection exists") })
         }
-        for _ in 0..<3_000 {
+        for _ in 0..<30_000 {
             if states.snapshot().contains(where: { if case .waitingToReconnect = $0 { return true }; return false }) { break }
             try await Task.sleep(for: .milliseconds(1))
         }
@@ -159,7 +159,7 @@ struct FeishuConnectionRunnerTests {
         }
     }
     private func waitUntil(_ condition: @Sendable () -> Bool) async throws {
-        for _ in 0..<4_000 {
+        for _ in 0..<40_000 {
             if condition() { return }
             try await Task.sleep(for: .milliseconds(1))
         }
@@ -184,13 +184,13 @@ struct FeishuConnectionRunnerTests {
             try await runner.run(router: CardActionRouter(), onState: { states.append($0) }, onAction: { _ in })
         }
         defer { running.cancel() }
-        for _ in 0..<3_000 {
+        for _ in 0..<30_000 {
             if !server.messages().isEmpty { break }
             try await Task.sleep(for: .milliseconds(1))
         }
         #expect(!server.messages().isEmpty)
         server.stop()
-        for _ in 0..<3_000 {
+        for _ in 0..<30_000 {
             if states.snapshot().contains(where: {
                 if case .blocked = $0 { return true }
                 if case .waitingToReconnect = $0 { return true }

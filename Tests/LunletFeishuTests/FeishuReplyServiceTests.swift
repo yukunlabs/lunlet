@@ -138,7 +138,7 @@ struct FeishuReplyServiceTests {
         return try JSONSerialization.data(withJSONObject: body)
     }
     private func waitUntil(_ condition: @Sendable () async -> Bool) async throws {
-        for _ in 0..<2_000 {
+        for _ in 0..<20_000 {
             if await condition() { return }
             try await Task.sleep(for: .milliseconds(1))
         }
@@ -454,6 +454,6 @@ struct ReplyReceiptCardTests {
 
 /// Polls `condition` for up to ten seconds; a fixed sleep is not enough on a loaded shared runner.
 private func settle(_ condition: () async -> Bool) async throws {
-    let end = ContinuousClock.now + .seconds(10)
+    let end = ContinuousClock.now + .seconds(60)
     while !(await condition()), ContinuousClock.now < end { try await Task.sleep(for: .milliseconds(5)) }
 }

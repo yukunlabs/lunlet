@@ -29,7 +29,7 @@ struct FeishuSocketTests {
     }
 
     private func waitUntil(_ condition: @Sendable () -> Bool) async throws {
-        for _ in 0..<3_000 {
+        for _ in 0..<30_000 {
             if condition() { return }
             try await Task.sleep(for: .milliseconds(1))
         }

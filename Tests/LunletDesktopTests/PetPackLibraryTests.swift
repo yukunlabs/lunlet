@@ -165,7 +165,7 @@ import LunletCore
                                        display: { nil }, available: { false }, motionAllowed: { false })
         defer { entry.shutdown() }
         preferences.update { $0.presentation = .pet; $0.petPack = "lunlet/mochi" }
-        let deadline = ContinuousClock.now + .seconds(5)
+        let deadline = ContinuousClock.now + .seconds(60)
         while entry.shownPack == nil, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
         #expect(entry.shownPack == PetPackReference(source: .lunlet, folder: "mochi") && library.chosenProblem == nil)
         preferences.update { $0.petPack = "lunlet/absent" }

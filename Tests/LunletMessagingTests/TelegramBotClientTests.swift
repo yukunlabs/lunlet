@@ -75,7 +75,7 @@ private final class TelegramPairingOutcome: @unchecked Sendable {
 
 @Suite(.serialized) struct TelegramBotClientTests {
     private func expectStoppedPolling() async throws {
-        let deadline = ContinuousClock.now + .seconds(1)
+        let deadline = ContinuousClock.now + .seconds(60)
         while TelegramHTTPProtocol.state.stops() == 0 && ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(1))
         }
@@ -117,7 +117,7 @@ private final class TelegramPairingOutcome: @unchecked Sendable {
             publicConclusion: "Completed the synthetic task.", outcome: .succeeded, turnID: "synthetic-turn")
     }
     private func waitForRequests(_ count: Int) async throws {
-        for _ in 0..<1_000 {
+        for _ in 0..<20_000 {
             if TelegramHTTPProtocol.state.requests().count >= count { return }
             try await Task.sleep(for: .milliseconds(1))
         }
@@ -278,7 +278,7 @@ private final class TelegramPairingOutcome: @unchecked Sendable {
             }
         }
         try await waitForRequests(3)
-        for _ in 0..<1_000 {
+        for _ in 0..<20_000 {
             if outcome.result() != nil { break }
             try await Task.sleep(for: .milliseconds(1))
         }

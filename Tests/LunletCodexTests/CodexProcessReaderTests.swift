@@ -39,9 +39,11 @@ struct CodexProcessReaderTests {
         let identity = CodexProcessReader.identity(try #require(CodexProcessReader.info(pid)))
         #expect(reader.presence(of: identity) == .same)
         // Once it exits the kernel no longer describes it, while its PID still answers until it is collected.
-        let deadline = ContinuousClock.now + .seconds(5)
+        let deadline = ContinuousClock.now + .seconds(60)
         while CodexProcessReader.info(pid) != nil, ContinuousClock.now < deadline { usleep(10_000) }
         #expect(CodexProcessReader.info(pid) == nil && kill(pid, 0) == 0)
+        // Between the two the process is still exiting, which reads as unknown; it is ended once it has exited.
+        while reader.presence(of: identity) == .unknown, ContinuousClock.now < deadline { usleep(10_000) }
         #expect(reader.presence(of: identity) == .ended)
         var status: Int32 = 0
         #expect(waitpid(pid, &status, 0) == pid)

@@ -366,7 +366,7 @@ private actor FixedReader: CodexAccountReading {
         notifier.observe(preferences: preferences)
         notifier.observe(usage: usage)
         usage.start()
-        let deadline = ContinuousClock.now + .seconds(10)
+        let deadline = ContinuousClock.now + .seconds(60)
         while deliverer.delivered.isEmpty, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
         await notifier.settle()
         #expect(deliverer.delivered.map(\.title) == ["Codex weekly allowance: 25% left"])

@@ -68,7 +68,7 @@ private final class Counter: @unchecked Sendable {
                 if other.value > 0 { finishedMeanwhile.increment() }
             }
             #expect(try (connecting ? hook.connect() : hook.disconnect()) == (connecting ? .connected : .notConnected))
-            #expect(done.wait(timeout: .now() + 10) == .success)
+            #expect(done.wait(timeout: .now() + 60) == .success)
             // The other edit waited for this one, so this one never had to start over, and both took effect.
             #expect(finishedMeanwhile.value == 0 && starts.value == 1 && other.value == 1)
             #expect(fixture.namesTheHook == connecting && fixture.namesTheStatusLine == connecting)

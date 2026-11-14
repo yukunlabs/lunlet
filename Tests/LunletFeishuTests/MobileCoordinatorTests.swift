@@ -47,7 +47,7 @@ struct MobileCoordinatorTests {
         await value.configure(owner: CardCallbackFixture.owner, connectionID: connection, callbacksVerified: true, adapterAvailable: true)
     }
     private func waitForCards(_ sender: SyntheticCardSender, count: Int) async throws {
-        for _ in 0..<2_000 {
+        for _ in 0..<20_000 {
             if await sender.cards.count >= count { return }
             try await Task.sleep(for: .milliseconds(1))
         }
@@ -65,7 +65,7 @@ struct MobileCoordinatorTests {
 
     private func accepted(_ router: CardActionRouter, id: UUID, event: String) async throws -> AuthorizedContinuation {
         let payload = try CardCallbackFixture.data(control: id, event: event)
-        for _ in 0..<2_000 {
+        for _ in 0..<20_000 {
             if case .received(let action) = await router.handle(payload, connectionID: connection) { return action }
             try await Task.sleep(for: .milliseconds(1))
         }

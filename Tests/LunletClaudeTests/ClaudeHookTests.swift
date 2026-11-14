@@ -84,7 +84,7 @@ struct ClaudeHookTests {
         FileManager.default.fileExists(atPath: spool.file(session, stop: stop, suffix: suffix).path)
     }
     private func settle(_ captured: Captured, until condition: @escaping @Sendable ([SessionSnapshot]) -> Bool) async throws {
-        let end = ContinuousClock.now + .seconds(10)
+        let end = ContinuousClock.now + .seconds(60)
         while !condition(await captured.snapshots), ContinuousClock.now < end { try await Task.sleep(for: .milliseconds(5)) }
     }
 

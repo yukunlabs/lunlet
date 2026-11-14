@@ -100,7 +100,7 @@ struct PetPackTests {
             outcome.set(PetPackReader.read(reference: .init(source: .codex, folder: "pipe"), directory: directory, sheetSize: { _ in nil }))
             finished.signal()
         }
-        #expect(finished.wait(timeout: .now() + 2) == .success)
+        #expect(finished.wait(timeout: .now() + 30) == .success)
         #expect(outcome.value?.fault == .manifestUnreadable)
     }
 

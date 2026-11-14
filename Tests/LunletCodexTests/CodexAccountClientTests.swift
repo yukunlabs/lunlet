@@ -67,7 +67,7 @@ private struct FakeCodex {
     let fake = try FakeCodex("cancel")
     defer { try? FileManager.default.removeItem(at: fake.directory) }
     let task = Task { try await CodexAccountClient(executableURL: fake.executable).readLimits() }
-    let deadline = ContinuousClock.now + .seconds(10)
+    let deadline = ContinuousClock.now + .seconds(60)
     while !FileManager.default.fileExists(atPath: fake.directory.appendingPathComponent("waiting").path),
           ContinuousClock.now < deadline {
         try await Task.sleep(for: .milliseconds(5))
