@@ -40,8 +40,7 @@ import LunletCore
     @Test func entryFollowsClaudeLimitsAndTheSelectedAgentsAsTheyChange() async throws {
         _ = NSApplication.shared
         let screen = try #require(PanelScreen.notchDisplay)
-        let suite = "com.lunlet.test.entry.\(UUID())"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let (defaults, suite) = try ScratchSettings.make("entry")
         defer { defaults.removePersistentDomain(forName: suite) }
         let preferences = PreferencesStore(defaults: defaults)
         preferences.update { $0.providers = [.codex, .claude] }
@@ -76,8 +75,7 @@ import LunletCore
     // Refs: US-21, AC-21.04, AC-21.05.
     @Test func menuEntryShowsTheAllowanceTextOnlyAsChosen() async throws {
         _ = NSApplication.shared
-        let suite = "com.lunlet.test.menu.\(UUID())"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let (defaults, suite) = try ScratchSettings.make("menu")
         defer { defaults.removePersistentDomain(forName: suite) }
         let preferences = PreferencesStore(defaults: defaults)
         preferences.update { $0.providers = [.claude]; $0.presentation = .menuBar }
@@ -116,8 +114,7 @@ import LunletCore
     // with a fresh text.
     @Test func theCountdownTickRunsOnlyWhileTheMenuEntryIsShownWithACountdown() async throws {
         _ = NSApplication.shared
-        let suite = "com.lunlet.test.menu.\(UUID())"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let (defaults, suite) = try ScratchSettings.make("menu")
         defer { defaults.removePersistentDomain(forName: suite) }
         let preferences = PreferencesStore(defaults: defaults)
         preferences.update { $0.providers = [.claude]; $0.menuBarAllowance = .percentAndReset }
@@ -273,8 +270,7 @@ import LunletCore
     @Test func savedMenuModeSurvivesDisplayRefreshAndCanSwitchBackToTheNotch() throws {
         _ = NSApplication.shared
         let screen = try #require(PanelScreen.notchDisplay)
-        let suite = "com.lunlet.test.entry.\(UUID())"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let (defaults, suite) = try ScratchSettings.make("entry")
         defer { defaults.removePersistentDomain(forName: suite) }
         let preferences = PreferencesStore(defaults: defaults)
         var value = preferences.value; value.presentation = .menuBar

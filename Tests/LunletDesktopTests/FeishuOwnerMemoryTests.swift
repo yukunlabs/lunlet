@@ -9,8 +9,7 @@ import LunletCore
 
 struct FeishuOwnerMemoryTests {
     private func memory() throws -> (FeishuOwnerMemory, UserDefaults, String) {
-        let suite = "com.lunlet.tests.owner-memory.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let (defaults, suite) = try ScratchSettings.make("owner-memory")
         return (FeishuOwnerMemory(defaults: defaults), defaults, suite)
     }
 

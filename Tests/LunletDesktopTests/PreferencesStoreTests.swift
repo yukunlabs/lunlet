@@ -9,8 +9,7 @@ import Testing
 
 @MainActor struct PreferencesStoreTests {
     @Test func preferencesSurviveReopeningAndKeepProviderChannelAndAppearanceChoices() throws {
-        let suite = "com.lunlet.test.preferences.\(UUID())"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let (defaults, suite) = try ScratchSettings.make("preferences")
         defer { defaults.removePersistentDomain(forName: suite) }
         let store = PreferencesStore(defaults: defaults)
         var value = store.value
@@ -36,8 +35,7 @@ import Testing
 
     // AC-17.08: each official skin keeps its own color and Restore resets only the selected one.
     @Test func officialSkinsKeepIndependentColorsAcrossSwitchesAndReopening() throws {
-        let suite = "com.lunlet.test.preferences.\(UUID())"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let (defaults, suite) = try ScratchSettings.make("preferences")
         defer { defaults.removePersistentDomain(forName: suite) }
         let store = PreferencesStore(defaults: defaults)
         store.update { $0.skinID = "vine"; $0.accentHex = "#D0A8E6" }
@@ -51,8 +49,7 @@ import Testing
         #expect(reopened.value.accentHex == nil && reopened.value.accentOverrides == ["lantern": "#AA3344"])
     }
     @Test func aColorSavedInTheSharedFormatStaysWithTheSkinSelectedAtThatTime() throws {
-        let suite = "com.lunlet.test.preferences.\(UUID())"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let (defaults, suite) = try ScratchSettings.make("preferences")
         defer { defaults.removePersistentDomain(forName: suite) }
         defaults.set(Data(##"{"schemaVersion":1,"skinID":"vine","accentHex":"#D0A8E6"}"##.utf8), forKey: "preferences.current")
         let store = PreferencesStore(defaults: defaults)
@@ -62,8 +59,7 @@ import Testing
     }
 
     @Test func invalidSavedConfigurationsRecoverThePreviousValidSelection() throws {
-        let suite = "com.lunlet.test.preferences.\(UUID())"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let (defaults, suite) = try ScratchSettings.make("preferences")
         defer { defaults.removePersistentDomain(forName: suite) }
         let store = PreferencesStore(defaults: defaults)
         var valid = store.value; valid.historyDays = 3
@@ -93,8 +89,7 @@ import Testing
     // AC-26.01: a newer build of the same schema adds fields; an older build opening its settings reads every field
     // it knows, reports nothing, and writes the newer build's fields back unchanged.
     @Test func fieldsSavedByANewerBuildAreCarriedThroughNotRejected() throws {
-        let suite = "com.lunlet.test.preferences.\(UUID())"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let (defaults, suite) = try ScratchSettings.make("preferences")
         defer { defaults.removePersistentDomain(forName: suite) }
         // Both saved copies carry fields this build does not know.
         let newer = ##"{"schemaVersion":1,"historyDays":3,"providers":["codex","claude"],"skinID":"lantern","futureSwitch":true,"futureCount":9007199254740993,"futureLayout":{"columns":[1,2,3],"name":"wide","ratio":1.5,"note":null}}"##
@@ -132,8 +127,7 @@ import Testing
     // AC-26.02: a value this build cannot read is never replaced without a copy being kept, and settings from a
     // newer schema are named as such.
     @Test func anUnreadableSavedValueIsKeptWhenItIsReplaced() throws {
-        let suite = "com.lunlet.test.preferences.\(UUID())"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let (defaults, suite) = try ScratchSettings.make("preferences")
         defer { defaults.removePersistentDomain(forName: suite) }
         let newer = Data(##"{"schemaVersion":2,"historyDays":"three days","layout":"new"}"##.utf8)
         defaults.set(newer, forKey: "preferences.current")

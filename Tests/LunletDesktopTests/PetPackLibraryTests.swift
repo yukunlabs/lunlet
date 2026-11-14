@@ -157,7 +157,7 @@ import LunletCore
         let (lunlet, codex) = try roots(); defer { try? FileManager.default.removeItem(at: lunlet.deletingLastPathComponent()) }
         try Self.pack(in: lunlet, folder: "mochi", version: nil)
         let library = PetPackLibrary(lunletDirectory: lunlet, codexDirectory: codex)
-        let defaults = try #require(UserDefaults(suiteName: "lunlet-pet-" + UUID().uuidString))
+        let defaults = try ScratchSettings.make("pet").defaults
         let preferences = PreferencesStore(defaults: defaults)
         let companion = CompanionPanelController(motionAllowed: { false }, observesSystemEvents: false)
         let sessions = SessionListModel(displayAvailable: { true }, elapsed: { 0 }, presenter: NoCues())

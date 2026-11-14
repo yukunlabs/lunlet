@@ -160,7 +160,7 @@ import LunletCore
     // explicit disconnect is remembered across launches until an explicit connect.
     @Test func plansLimitsConnectAutomaticallyUntilTheOwnerDisconnects() async throws {
         let fixture = try ClaudeLimitsFixture(); defer { fixture.remove() }
-        let suite = "com.lunlet.test.claude-auto.\(UUID())", choices = try #require(UserDefaults(suiteName: suite))
+        let (choices, suite) = try ScratchSettings.make("claude-auto")
         defer { choices.removePersistentDomain(forName: suite) }
         let model = ClaudePlanLimitsModel(service: fixture.connection, connectsAutomatically: true, choices: choices)
         model.setActive(true)

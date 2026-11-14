@@ -190,8 +190,7 @@ final class FilmWindow: NSWindow {
         let geometry = FilmScreen.geometry
         let desktop = FilmDesktop()
         self.desktop = desktop
-        let suite = "com.lunlet.test.film.\(UUID())"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let (defaults, suite) = try ScratchSettings.make("film")
         let skinDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("lunlet-film-\(UUID())")
         let preferences = PreferencesStore(defaults: defaults)
         preferences.update { $0.providers = [.codex, .claude] }

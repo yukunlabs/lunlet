@@ -132,12 +132,15 @@ jobs:
         with:
           persist-credentials: false
       # A clean checkout has no working-tree changes, so the committed tree is compared with the empty tree;
-      # upstream license texts keep their own whitespace. Test waits must leave room for a slow machine.
-      - name: Whitespace and test waits
+      # upstream license texts keep their own whitespace. Test waits must leave room for a slow machine, and test
+      # settings stay out of the user's Library.
+      - name: Whitespace, test waits and test settings
         run: |
           git diff --check "$(git hash-object -t tree /dev/null)" HEAD -- . ':(exclude)Resources/third-party'
           python3 -m unittest discover -s scripts -p test_test_waits.py
           python3 scripts/check_test_waits.py
+          python3 -m unittest discover -s scripts -p test_test_settings.py
+          python3 scripts/check_test_settings.py
 
   validate:
     # Passes only when every area passed; a failed, cancelled or skipped area fails it.

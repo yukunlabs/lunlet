@@ -103,8 +103,7 @@ import LunletHook
 @MainActor @Suite struct ClaudePlanLimitsModelTests {
     typealias Fixture = ClaudeSettingsOwnersFixture
     private func choices() throws -> (UserDefaults, String) {
-        let suite = "com.lunlet.test.claude-limits-owner.\(UUID())"
-        return (try #require(UserDefaults(suiteName: suite)), suite)
+        return try ScratchSettings.make("claude-limits-owner")
     }
 
     // Refs: US-33, AC-33.08. Turning Claude Code off restores the previous status line; when that could not be saved,

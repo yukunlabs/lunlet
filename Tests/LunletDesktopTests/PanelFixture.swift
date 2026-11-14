@@ -80,8 +80,7 @@ final class RenderPower: IdleSleepControlling { func setEnabled(_ enabled: Bool)
 
     /// `count` sessions per agent; `titles` replace the synthetic conversation titles in order.
     init(sessions count: Int, account: Account = .typical, titles: [String] = []) async throws {
-        suite = "com.lunlet.test.render.\(UUID())"
-        defaults = try #require(UserDefaults(suiteName: suite))
+        (defaults, suite) = try ScratchSettings.make("render")
         skinDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("lunlet-render-\(UUID())")
         preferences = PreferencesStore(defaults: defaults)
         preferences.update { $0.providers = [.codex, .claude] }

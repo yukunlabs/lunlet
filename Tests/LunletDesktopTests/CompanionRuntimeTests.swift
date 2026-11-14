@@ -24,8 +24,7 @@ private final class RuntimePower: IdleSleepControlling {
 @MainActor struct CompanionRuntimeTests {
     @Test func changingChannelsImmediatelyDisablesThePreviousSenderAndCanRestoreIt() async throws {
         _ = NSApplication.shared
-        let suite = "com.lunlet.test.runtime.\(UUID())"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let (defaults, suite) = try ScratchSettings.make("runtime")
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("lunlet-runtime-\(UUID())")
         defer { defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: directory) }
         let preferences = PreferencesStore(defaults: defaults)
@@ -48,8 +47,7 @@ private final class RuntimePower: IdleSleepControlling {
     // whether or not the panel's content exists yet.
     @Test func thePetAndTheApplicationMenuAskForTheSettingsPage() async throws {
         _ = NSApplication.shared
-        let suite = "com.lunlet.test.runtime.\(UUID())"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let (defaults, suite) = try ScratchSettings.make("runtime")
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("lunlet-runtime-\(UUID())")
         defer { defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: directory) }
         let runtime = CompanionRuntime(preferences: PreferencesStore(defaults: defaults), skins: SkinCatalog(directory: directory),
@@ -66,8 +64,7 @@ private final class RuntimePower: IdleSleepControlling {
     // Refs: US-19, AC-19.01; US-25, AC-25.01. Each agent's account and history are read only while it is selected.
     @Test func onlySelectedAgentsHaveTheirAccountAndHistoryRead() async throws {
         _ = NSApplication.shared
-        let suite = "com.lunlet.test.runtime.\(UUID())"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let (defaults, suite) = try ScratchSettings.make("runtime")
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("lunlet-runtime-\(UUID())")
         defer { defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: directory) }
         let preferences = PreferencesStore(defaults: defaults)
@@ -87,8 +84,7 @@ private final class RuntimePower: IdleSleepControlling {
     // Settings or a chosen pack first needs them.
     @Test func creatingTheRuntimeListsNoPetPacks() async throws {
         _ = NSApplication.shared
-        let suite = "com.lunlet.test.runtime.\(UUID())"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let (defaults, suite) = try ScratchSettings.make("runtime")
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("lunlet-runtime-\(UUID())")
         defer { defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: directory) }
         let runtime = CompanionRuntime(preferences: PreferencesStore(defaults: defaults), skins: SkinCatalog(directory: directory),
@@ -115,8 +111,7 @@ private final class RuntimePower: IdleSleepControlling {
 
     @Test func inactiveEnrollmentCannotResetTheSelectedProvidersDeliveryOrAuthorizationState() async throws {
         _ = NSApplication.shared
-        let suite = "com.lunlet.test.runtime.\(UUID())"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let (defaults, suite) = try ScratchSettings.make("runtime")
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("lunlet-runtime-\(UUID())")
         defer { defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: directory) }
         let preferences = PreferencesStore(defaults: defaults)
@@ -136,8 +131,7 @@ private final class RuntimePower: IdleSleepControlling {
     }
     @Test func panelCannotBeReopenedOnceShutdownBegins() async throws {
         _ = NSApplication.shared
-        let suite = "com.lunlet.test.runtime.\(UUID())"
-        let defaults = try #require(UserDefaults(suiteName: suite))
+        let (defaults, suite) = try ScratchSettings.make("runtime")
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("lunlet-runtime-\(UUID())")
         defer { defaults.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: directory) }
         let notifications = LockedCompletionNotifications(isLocked: { false }, power: RuntimePower())

@@ -56,7 +56,7 @@
   "Sources/LunletDesktop/AllowanceNotificationCenter.swift": "cafe5207b51e95206909ae0b405d1581e3786822950b894f178ee7d4d369f886",
   "Sources/LunletDesktop/AllowanceNotifications.swift": "ef0e14dcf9326b0bf682d46755a63e52ca81c14c140f02dc427ec84f81faa020",
   "Sources/LunletDesktop/AllowancePalette.swift": "e9cc46d6446a67cf39ef386a23f80fe26a4153c7f9ad5a392ad5cd42d2c8eada",
-  "Sources/LunletDesktop/AppUpdater.swift": "c3196e7b53fba969b7906888d86604a0efc2953ac2aa4b63b6d729f55fb535bc",
+  "Sources/LunletDesktop/AppUpdater.swift": "2764c352236c61e0ab22e43a6989a807f781a4ddb957e7c11114163cb9e69f81",
   "Sources/LunletDesktop/ApplicationMenu.swift": "b08968843210a596872e2da4e50df2a8671d72026c46d30a5ed266b7fbfa4c26",
   "Sources/LunletDesktop/AwayModeModel.swift": "311fe9d45ab4b7799f860b2bd58768a681f22d80f84b2c91351c895939e2dffd",
   "Sources/LunletDesktop/BotChannelSetupModel.swift": "fcf3796667bbb39d0f67862caa8ddf23bbeb539a1adfd805b002edaf7f89c006",
@@ -167,15 +167,15 @@
   "Sources/LunletSecureStorage/SecureItemStore.swift": "46af3eb94434991b293605dcc5b51c02f62d41bd0d90e53e7a56e2b15d501ef6",
   "Tests/LunletDesktopTests/PanelPageRenderTests.swift": "8fb6ebf68a31fe941739076b4a51c1b893a640fd949afbffc02ccff19de9a524",
   "Tests/LunletDesktopTests/ProductFilmCompositor.swift": "907e31d7ef574ffa3f04ff9209b8199046cc635fb3d6f9223a7bf65cf8361ad3",
-  "Tests/LunletDesktopTests/ProductFilmRenderTests.swift": "445ade08491df5d8ec1264600c846f170bb331dff764fbee8f9470d9bc872993",
+  "Tests/LunletDesktopTests/ProductFilmRenderTests.swift": "ea621bf9f010dd2a5b2ba9a8fb4ac7fb0bda876b3d6d9b209e3e3b25e82cee2c",
   "Tests/LunletDesktopTests/ProductFilmScenery.swift": "c0354e147543ef47a2e1bfc3e820b678fdd6d228f4fbd0aea7b29662b9893435",
   "docs/assets/branding/lunlet-app-icon.png": "3158cdad76aeee0ae0bb59508ccc422e1e05b85d0c5cf72feda6724e0abc965f",
   "scripts/render-film.sh": "c8a4f4d3a49954364c509c2f947fdb4c8fda7362914b6b7baacf0bbb8362ddf7"
  },
  "outputs": {
   "website/video/lunlet-captions.vtt": "4fe4303c8c845ad656f531b1ca3e6229e1c36f968495fccd291609f3dc35a1ed",
-  "website/video/lunlet-poster.jpg": "9f16adcf18323b4b077dc71eb284475020eac6b380ea46a2b7219ece295b53fd",
-  "website/video/lunlet-walkthrough.mp4": "bf1e4f4c274a2dfbe1c81fb93cf6d09569adf19c5884ba22eca71589b6ca7cc2"
+  "website/video/lunlet-poster.jpg": "c08875f5e0732628d5450189095608ba60c02ec71901774ad84925f2c75cee4e",
+  "website/video/lunlet-walkthrough.mp4": "9330ff5f1547d824f1258a086a506838adf3225488130a691fd7742e46760c6b"
  },
  "schemaVersion": 1
 }
