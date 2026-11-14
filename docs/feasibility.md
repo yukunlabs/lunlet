@@ -20,7 +20,7 @@ Validation order: (1) terminal-independent identification and continuation of ex
 | [Desktop interface](#desktop-interface) | Native notch/menu entry, panel, cues, Settings, skins and colors with native-window tests | Physical pointer, focus, appearance and multi-display acceptance |
 | [Diagnostics, signing and credential storage](#diagnostics-signing-and-credential-storage) | Minimal unified logging; credentials in a user-only file sealed for this Mac and account; the Keychain store kept for a later signed release | Credential continuity across Developer ID-signed updates |
 | [Performance and resources](#performance-and-resources) | Opt-in synthetic probe within engineering targets | Real-discovery, uncached, signed full-app energy and responsiveness |
-| [Release preparation and repository hygiene](#release-preparation-and-repository-hygiene) | Source published; `v0.2.0` published as the current unsigned preview with an update feed; CI, packaging, product page and provenance in place | A real update between two versions on a clean Mac; signing/notarization deferred by owner decision |
+| [Release preparation and repository hygiene](#release-preparation-and-repository-hygiene) | Source published; `v0.2.1` published as the current unsigned preview with an update feed; CI, packaging, product page and provenance in place | A real update between two versions on a clean Mac; signing/notarization deferred by owner decision |
 
 ## Codex session observation
 
@@ -255,6 +255,7 @@ Validation order: (1) terminal-independent identification and continuation of ex
 ### Open gates
 
 - Owner decisions: branding review; release and product-page destinations; Developer Program membership; the optional support destination and recipient. The 0BSD license, yukunlabs copyright identity and SPDX metadata are present, pending final publication review.
+- `v0.2.1` was published on 2026-11-14 (19:44 UTC): tag `v0.2.1` at 2f6309b, version 0.2.1, build 3, with the same seven files as `v0.2.0`; `scripts/check_appcast.py` passes. Before publication `scripts/rehearse_update.py` had an installed `v0.2.0` install the candidate from a local feed: the installed bundle equals the candidate's archive, its signature verifies, and the saved settings and the credential files are unchanged. After publication every file downloads without a login and matches `SHA256SUMS`, and the live feed is byte-identical to the signed one. The live reply check was not repeated: the application source differs from `v0.2.0` only in the updater.
 - A real update from `v0.1.0` to `v0.2.0` on a clean Mac (it installed on the maintainer's Mac, which is not one), with the first-open steps of an unsigned preview recorded and the saved bot connection confirmed intact afterwards. Developer ID signing and notarization deferred by owner decision; keyboard acceptance of the product page.
 
 ## Assisted acceptance checklist
