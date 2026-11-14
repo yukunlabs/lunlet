@@ -47,6 +47,7 @@ hygiene() {
 release() {
     unit test_release.py
     unit test_appcast.py
+    unit test_rehearse_update.py
 }
 
 [ "$#" -gt 0 ] || set -- requirements page hygiene release
