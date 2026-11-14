@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 yukunlabs
 # SPDX-License-Identifier: 0BSD
-# Refs: US-10, AC-10.04; US-11, AC-11.05; US-29, AC-29.02.
+# Refs: US-10, AC-10.04; US-11, AC-11.05; US-29, AC-29.02; US-28, AC-28.04.
 # Supporting check: keep continuation authorization and recovery code tied to
 # confirmed criteria. Reference validity does not prove behavioral compliance.
+# It also holds the repository language rule and keeps the README's translations
+# in step with README.md.
 from pathlib import Path
 import re
 import subprocess
@@ -14,6 +16,51 @@ CODE_SUFFIXES = {".swift", ".py", ".sh", ".yml", ".yaml", ".plist", ".proto", ".
 TEXT_SUFFIXES = CODE_SUFFIXES | {".md", ".json", ".toml", ".txt"}
 REFERENCE = re.compile(r"\b(?:US-\d+|AC-\d+\.\d+)\b")
 CHINESE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+# The README's translations are the one place another language is written. Each carries the sections, pictures,
+# links and commands of README.md, so a reader of any of them finds the same download, steps and walkthrough.
+README = "README.md"
+TRANSLATIONS = ("README.ja.md", "README.zh-CN.md")
+FENCE = re.compile(r"(?ms)^```[^\n]*\n.*?^```[^\n]*$")
+
+
+def outline(text):
+    """What a translation shares with README.md, whatever its words are."""
+    prose = FENCE.sub("", text)
+    targets = re.findall(r'href="([^"]+)"', prose) + re.findall(r"(?<!!)\[[^\]]*\]\(([^)\s]+)\)", prose)
+    return {
+        "sections": [len(hashes) if hashes else int(level)
+                     for hashes, level in re.findall(r"(?m)^(#{1,6}) |<h([1-6])[ >]", prose)],
+        "pictures": re.findall(r'<img[^>]*?\ssrc="([^"]+)"', prose) + re.findall(r"!\[[^\]]*\]\(([^)\s]+)\)", prose),
+        # An anchor follows its translated heading, and the links between the READMEs are checked on their own.
+        "links": sorted(target for target in targets
+                        if target not in (README,) + TRANSLATIONS and not target.startswith("#")),
+        "commands": FENCE.findall(text),
+    }
+
+
+def audit_translations(root, files):
+    present = {relative.as_posix() for relative in files}
+    if README not in present:
+        return []
+    issues, texts = [], {}
+    for name in (README,) + TRANSLATIONS:
+        if name not in present:
+            issues.append(name + ": translation is missing")
+            continue
+        try:
+            texts[name] = (root / name).read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            continue  # The file loop reports an unreadable file.
+    for name, text in texts.items():
+        for other in (README,) + TRANSLATIONS:
+            if other != name and not re.search(r'[("]' + re.escape(other) + r'[)"]', text):
+                issues.append(name + ": does not link " + other)
+        if name == README or README not in texts:
+            continue
+        expected, found = outline(texts[README]), outline(text)
+        issues += [name + ": translation does not mirror README.md (" + part + ")"
+                   for part in expected if found[part] != expected[part]]
+    return issues
 
 
 def audit(root, files):
@@ -62,7 +109,7 @@ def audit(root, files):
         except (OSError, UnicodeError):
             issues.append(str(relative) + ": cannot read UTF-8 source")
             continue
-        if CHINESE.search(content):
+        if CHINESE.search(content) and relative.as_posix() not in TRANSLATIONS:
             issues.append(str(relative) + ": repository language rule violated")
         if relative.suffix not in CODE_SUFFIXES:
             continue
@@ -85,7 +132,7 @@ def audit(root, files):
             parent = criteria.get(criterion)
             if parent not in story_refs or stories.get(parent) != "Confirmed":
                 issues.append(str(relative) + ": unknown, unconfirmed, or mismatched criterion " + criterion)
-    return issues
+    return issues + audit_translations(root, files)
 
 
 def main():

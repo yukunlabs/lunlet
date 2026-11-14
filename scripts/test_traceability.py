@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: 2026 yukunlabs
 # SPDX-License-Identifier: 0BSD
-# Refs: US-10, AC-10.04; US-11, AC-11.05; US-29, AC-29.02.
+# Refs: US-10, AC-10.04; US-11, AC-11.05; US-29, AC-29.02; US-28, AC-28.04.
 import tempfile
 import unittest
 from pathlib import Path
@@ -90,6 +90,63 @@ class TraceabilityTests(unittest.TestCase):
     def test_protocol_schemas_also_require_confirmed_references(self):
         self.assertNotEqual(self.check('syntax = "proto2";\n', filename="frame.proto"), [])
         self.assertEqual(self.check('// Refs: US-01, AC-01.01.\nsyntax = "proto2";\n', filename="frame.proto"), [])
+
+
+    def tree(self, files):
+        with tempfile.TemporaryDirectory(prefix="lunlet-trace-test-") as temporary:
+            root = Path(temporary)
+            (root / "docs").mkdir()
+            (root / "docs/requirements.md").write_text(REQUIREMENTS)
+            for name, text in files.items():
+                (root / name).parent.mkdir(parents=True, exist_ok=True)
+                (root / name).write_text(text)
+            return audit(root, [Path("docs/requirements.md")] + [Path(name) for name in files])
+
+    def readmes(self, **changed):
+        switcher = "[English](README.md) [Chinese](README.zh-CN.md) [Japanese](README.ja.md)\n"
+        body = ('<img src="docs/hero.jpg" alt="{word}">\n\n## {word}\n\n{word} [setup](docs/messaging.md).\n\n'
+                "```sh\nscripts/build-app.sh --preview\n```\n")
+        files = {"README.md": switcher + body.format(word="Install"),
+                 "README.zh-CN.md": switcher + body.format(word=chr(0x5B89) + chr(0x88C5)),
+                 "README.ja.md": switcher + body.format(word=chr(0x5C0E) + chr(0x5165))}
+        for name, edit in changed.items():
+            name = {"english": "README.md", "chinese": "README.zh-CN.md", "japanese": "README.ja.md"}[name]
+            if edit is None:
+                del files[name]
+            else:
+                files[name] = edit(files[name])
+        return files
+
+    # Refs: US-28, AC-28.04.
+    def test_a_readme_translation_may_use_its_own_language_when_it_mirrors_the_readme(self):
+        self.assertEqual(self.tree(self.readmes()), [])
+
+    def test_only_the_declared_translations_are_exempt_from_the_language_rule(self):
+        files = self.readmes()
+        files["docs/README.zh-CN.md"] = files["README.zh-CN.md"]
+        self.assertEqual(self.tree(files), ["docs/README.zh-CN.md: repository language rule violated"])
+
+    def test_a_translation_that_drops_or_changes_a_part_of_the_readme_is_rejected(self):
+        edits = {
+            "sections": lambda text: text + "\n## Extra\n",
+            "pictures": lambda text: text.replace("docs/hero.jpg", "docs/other.jpg"),
+            "links": lambda text: text.replace("docs/messaging.md", "docs/skins.md"),
+            "commands": lambda text: text.replace("--preview", "--release"),
+        }
+        for part, edit in edits.items():
+            with self.subTest(part=part):
+                self.assertEqual(self.tree(self.readmes(chinese=edit)),
+                                 ["README.zh-CN.md: translation does not mirror README.md (" + part + ")"])
+
+    def test_a_change_to_the_readme_alone_is_rejected_for_every_translation(self):
+        issues = self.tree(self.readmes(english=lambda text: text + "\n## Privacy\n"))
+        self.assertEqual(issues, ["README.ja.md: translation does not mirror README.md (sections)",
+                                  "README.zh-CN.md: translation does not mirror README.md (sections)"])
+
+    def test_a_declared_translation_must_exist_and_every_readme_links_the_others(self):
+        self.assertEqual(self.tree(self.readmes(japanese=None)), ["README.ja.md: translation is missing"])
+        unlinked = self.tree(self.readmes(english=lambda text: text.replace("[Japanese](README.ja.md)", "Japanese")))
+        self.assertEqual(unlinked, ["README.md: does not link README.ja.md"])
 
 
 if __name__ == "__main__":
