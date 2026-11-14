@@ -19,7 +19,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  validate:
+  # Areas that do not depend on one another run side by side, each as its own job, so a failure names its area
+  # and the whole takes as long as its longest part. The Swift modules share one build, so they stay in one job
+  # and run in turn through the same script a developer uses. `validate` is the single check a branch rule asks for.
+  swift:
+    name: Swift modules
     # Standard runners are free for public repositories. In a private repository only an
     # explicit manual run consumes the account's included macOS minutes; pushes and pull
     # requests stay local until the minute/storage budget is reviewed.
@@ -51,10 +55,6 @@ jobs:
         run: |
           swift package resolve --disable-keychain
           git diff --exit-code -- Package.resolved
-      # Each stage answers one question, so a failure names its area. The stages go from what everything
-      # needs to what depends on it: the build, the rules without a screen, the agents, the messengers, the
-      # app, then the requirements, the product page, the release tooling and the tree itself. Modules run one
-      # at a time through the same script a developer uses, so a run means the same here and on a Mac.
       - name: Build the package and its tests
         run: scripts/test-core.sh build
       - name: Core rules, storage and the hook helper
@@ -72,22 +72,81 @@ jobs:
           scripts/test-core.sh messaging
       - name: Desktop app (models, panel and drawings)
         run: scripts/test-core.sh desktop
-      - name: Requirements and traceability
+
+  release-tooling:
+    name: Release tooling
+    # The packaging checks sign, inspect and archive synthetic bundles with the system's own tools.
+    if: github.event.repository.private == false || github.event_name == 'workflow_dispatch'
+    runs-on: macos-26
+    timeout-minutes: 10
+    steps:
+      - name: Check out the selected revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Packaging and update safeguards
+        run: python3 -m unittest discover -s scripts -p test_release.py
+
+  requirements:
+    name: Requirements and traceability
+    if: github.event.repository.private == false || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out the selected revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Stories, criteria and their references
         run: |
           python3 scripts/test_traceability.py
           python3 scripts/check_traceability.py
-      - name: Product page and its pictures
+
+  page:
+    name: Product page and its pictures
+    if: github.event.repository.private == false || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out the selected revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Page build, its facts and the rendered media
         run: |
           python3 -m unittest discover -s scripts -p test_site.py
           node --check website/app.js
           python3 scripts/build_site.py
           python3 scripts/check_site_assets.py
-      - name: Release tooling
-        run: python3 -m unittest discover -s scripts -p test_release.py
+
+  hygiene:
+    name: Repository hygiene
+    if: github.event.repository.private == false || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out the selected revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       # A clean checkout has no working-tree changes, so the committed tree is compared with the empty tree;
       # upstream license texts keep their own whitespace. Test waits must leave room for a slow machine.
-      - name: Repository hygiene (whitespace and test waits)
+      - name: Whitespace and test waits
         run: |
           git diff --check "$(git hash-object -t tree /dev/null)" HEAD -- . ':(exclude)Resources/third-party'
           python3 -m unittest discover -s scripts -p test_test_waits.py
           python3 scripts/check_test_waits.py
+
+  validate:
+    # Passes only when every area passed; a failed, cancelled or skipped area fails it.
+    needs: [swift, release-tooling, requirements, page, hygiene]
+    if: always() && (github.event.repository.private == false || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Every area passed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "$RESULTS"
+          for result in $RESULTS; do [ "$result" = success ] || exit 1; done
