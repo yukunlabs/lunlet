@@ -16,7 +16,7 @@ import sys
 
 # What the release tooling's tests read besides the scripts and resources they package.
 RELEASE_READS = {"docs/releases.md", "NOTICE.md", "scripts/test_release.py", "scripts/check_appcast.py",
-                 "scripts/test_appcast.py"}
+                 "scripts/test_appcast.py", "scripts/rehearse_update.py", "scripts/test_rehearse_update.py"}
 
 
 def unaffecting(path):

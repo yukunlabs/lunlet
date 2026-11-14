@@ -23,6 +23,7 @@ class ChangedAreasTests(unittest.TestCase):
     def test_what_the_release_tooling_reads_needs_the_release_tooling(self):
         for path in ["docs/releases.md", "NOTICE.md", "LICENSE", "scripts/package-release.sh", "scripts/build-app.sh",
                      "scripts/test_release.py", "scripts/check_appcast.py", "scripts/test_appcast.py",
+                     "scripts/rehearse_update.py", "scripts/test_rehearse_update.py",
                      "Resources/Info.plist", "Package.resolved"]:
             self.assertTrue(areas([path])["release"], path)
         # Release notes are read when a feed is made, not by the tooling's tests.
