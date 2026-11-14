@@ -1,7 +1,7 @@
 {
  "inputs": {
   "Package.swift": "2fc90fbe5432368dbe58887a78ca14b1250a5d9a3b563d95df37c337b24418a8",
-  "Resources/Info.plist": "46875f5618d9dfc48eb9ed80e6e4939c8444230b02de5387b5158664b4b86e4c",
+  "Resources/Info.plist": "cbb39f019a15b7791bc39cd94dff0a5c425fda2155f4a3ae0fe7a72a473764d2",
   "Sources/LunletApp/LunletApp.swift": "277ebaadd800565fb5b5d62a3bd62c62076ed7dfcbb1e6c6ca9fdf84a8850bd2",
   "Sources/LunletClaude/ClaudeAccountProfile.swift": "6728f62e6f5c95c2107cbb11f646972002ee57ee39a668c69b5c969e41d206d8",
   "Sources/LunletClaude/ClaudeContinuation.swift": "168149d0b52916d49fdd7a55fef5ba6218e872845ce5f910ca4de54acb3726d5",
@@ -180,8 +180,8 @@
   "docs/assets/screenshots/hero-overview.jpg": "c7c83efbc2475ba0e528524814bb73a2f7e8b061d12de056a2d2f23522b1e490",
   "docs/assets/screenshots/notch-lantern.png": "7e7e1b14f3f22d7aca166805c9f0e0bf8fe754f357ba19677318bee4c4a0b980",
   "docs/assets/screenshots/notch-vine.png": "081abb970e98052ca725118c8cb20d1613fc87c1fdccffa7081a18e2847ab8ea",
-  "docs/assets/screenshots/panel-claude.jpg": "b1e38c5fd60bd861a021e7e3b7e653c1d4ff4ee49055a3fb9c03950161b0e729",
-  "docs/assets/screenshots/panel-codex.jpg": "63b9dfafd352a77bc1437d93d7dc273b37f6a3e1f846a6468276d15744ba12a9",
+  "docs/assets/screenshots/panel-claude.jpg": "7e485ba3d742b760c7da419826163648c3c70af8d6de3d5da142547ec5517970",
+  "docs/assets/screenshots/panel-codex.jpg": "319bacd0ae799fdf14a8e0070b83ce979ed985b23d1894414766258bd1f80813",
   "docs/assets/screenshots/panel-overview.jpg": "87d13c9bfb9a48729365ca3a5368ea25acbaee3bd636cfd1fa3157e00d96ac82",
   "docs/assets/screenshots/phone-feishu-delivered.png": "408ba1e4340d1ea2be745f44975c39426e8f51bed97ecbbc9379fe774686e9cb",
   "docs/assets/screenshots/phone-feishu-notice.png": "e39c3f566378536641a01fd249dba7b4d113f836a6e740489a5aafe89a9c7c49",
