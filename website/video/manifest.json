@@ -1,7 +1,7 @@
 {
  "inputs": {
   "Package.swift": "2fc90fbe5432368dbe58887a78ca14b1250a5d9a3b563d95df37c337b24418a8",
-  "Resources/Info.plist": "eee0c1ead2785557db2eba95287947e88eee91e213a609b4f30727a75fd27e08",
+  "Resources/Info.plist": "46875f5618d9dfc48eb9ed80e6e4939c8444230b02de5387b5158664b4b86e4c",
   "Sources/LunletApp/LunletApp.swift": "277ebaadd800565fb5b5d62a3bd62c62076ed7dfcbb1e6c6ca9fdf84a8850bd2",
   "Sources/LunletClaude/ClaudeAccountProfile.swift": "6728f62e6f5c95c2107cbb11f646972002ee57ee39a668c69b5c969e41d206d8",
   "Sources/LunletClaude/ClaudeContinuation.swift": "168149d0b52916d49fdd7a55fef5ba6218e872845ce5f910ca4de54acb3726d5",
@@ -174,8 +174,8 @@
  },
  "outputs": {
   "website/video/lunlet-captions.vtt": "4fe4303c8c845ad656f531b1ca3e6229e1c36f968495fccd291609f3dc35a1ed",
-  "website/video/lunlet-poster.jpg": "c08875f5e0732628d5450189095608ba60c02ec71901774ad84925f2c75cee4e",
-  "website/video/lunlet-walkthrough.mp4": "9330ff5f1547d824f1258a086a506838adf3225488130a691fd7742e46760c6b"
+  "website/video/lunlet-poster.jpg": "f0618428a8e4882b7108dd0e83b8d1b57169ba13b91c0aa3139ad585bf81522d",
+  "website/video/lunlet-walkthrough.mp4": "1e7f8ce0a2060b331304d7537be56cbde41fc1b301cd83cb8860bb4cbf31afe3"
  },
  "schemaVersion": 1
 }
