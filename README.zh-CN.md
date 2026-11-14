@@ -18,7 +18,7 @@
 
 Lunlet 常驻刘海两侧，编码 Agent 进展如何、套餐额度还剩多少，一目了然。锁屏离开后，每一轮任务的结果都会推送到手机；回复一句，原会话随即继续。
 
-Lunlet 完全在本机运行，没有自己的服务器，不做统计，也不采集遥测数据。[观看一分钟演示](https://yukunlabs.github.io/lunlet/#film)。
+Lunlet 在本机运行，没有自己的服务器，不做统计，也不采集遥测数据。[观看一分钟演示](https://yukunlabs.github.io/lunlet/#film)。
 
 <sub>文中图片与演示视频均由 Lunlet 的真实界面配合模拟数据渲染而成。</sub>
 
@@ -59,7 +59,7 @@ Mac 锁屏期间，每一轮任务的结果都会推送到你自己的飞书（L
 ## 安装
 
 1. 在[最新版本](https://github.com/yukunlabs/lunlet/releases/latest)中下载 `Lunlet-<version>-macos-arm64.dmg`，打开后将 Lunlet 拖入“应用程序”。
-2. 打开 Lunlet。当前为未签名的预览版，首次打开需要手动放行一次。macOS 15 及以上：在弹窗中点按“完成”，再前往“系统设置 › 隐私与安全性”，点按“仍要打开”。macOS 14：右键点按 Lunlet，选择“打开”。
+2. 打开 Lunlet。当前为未签名的预览版，首次打开需要手动放行一次。macOS 15 及以上：在弹窗中点按“完成”，再前往“系统设置 › 隐私与安全性”，点按“仍要打开”并确认。macOS 14：右键点按 Lunlet，选择“打开”。
 3. 将指针悬停在刘海两侧的“lun”与“let”上即可预览面板，点按则保持展开。
 
 需要搭载 Apple 芯片的 Mac 与 macOS 14 或更高版本，并已在本机登录 Codex 或 Claude Code。后续更新可在 Lunlet 内直接完成。
