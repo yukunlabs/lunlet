@@ -59,7 +59,7 @@ While the Mac is locked, each finished turn goes to your own Feishu (Lark), Slac
 ## Install
 
 1. Download `Lunlet-<version>-macos-arm64.dmg` from the [latest release](https://github.com/yukunlabs/lunlet/releases/latest), open it and drag Lunlet to Applications.
-2. Open Lunlet. It is an unsigned preview, so macOS asks you to allow it once. On macOS 15 or later, choose Done, then choose Open Anyway in System Settings › Privacy & Security. On macOS 14, right-click Lunlet and choose Open.
+2. Open Lunlet. It is an unsigned preview, so macOS asks you to allow it once. On macOS 15 or later, choose Done, then choose Open Anyway in System Settings › Privacy & Security and confirm. On macOS 14, right-click Lunlet and choose Open.
 3. Hover "lun" and "let" beside the notch to preview the panel, or click to keep it open.
 
 Lunlet needs macOS 14 or later on Apple silicon, and Codex or Claude Code signed in on this Mac. Updates install from inside Lunlet.
