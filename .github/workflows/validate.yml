@@ -85,7 +85,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Packaging and update safeguards
-        run: python3 -m unittest discover -s scripts -p test_release.py
+        run: |
+          python3 -m unittest discover -s scripts -p test_release.py
+          python3 -m unittest discover -s scripts -p test_appcast.py
 
   requirements:
     name: Requirements and traceability

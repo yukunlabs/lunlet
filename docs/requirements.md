@@ -84,12 +84,12 @@ Approval, release scope, delivery and acceptance are separate facts. A story's S
 | US-14 | Wired bounded macOS unified logging and the bounded local error file | On-device opt-in diagnostics checks |
 | US-24 | Wired chart keyboard access, panel Command-R/Command-comma, symbol-and-label states and chart descriptors | Physical VoiceOver and full connection-card focus order |
 | US-25 | Wired bounded readers and independent successful freshness | Real-discovery, uncached full-app CPU/memory/disk/wakeup/latency acceptance |
-| US-28 | Product page published on GitHub Pages with the repository and `v0.1.0` download links; the support link stays hidden until its destination exists | Browser, responsive and keyboard acceptance of the published page |
-| US-27 | Source published; `v0.1.0` released on 2026-11-01 as the unsigned preview with checksums, manifest and notes | Clean-machine validation; Developer ID signing and notarization deferred by owner decision |
+| US-28 | Product page published on GitHub Pages with the repository and latest-release download links; the support link stays hidden until its destination exists | Browser, responsive and keyboard acceptance of the published page |
+| US-27 | Source published; `v0.1.0` (2026-11-01) and `v0.2.0` (2026-11-14) released as unsigned previews with checksums, manifest and notes | Clean-machine validation; Developer ID signing and notarization deferred by owner decision |
 | US-29 | 0BSD license with SPDX headers, provenance inventory, packaged notices, trademark statement and About details | None for the first package: the owner confirmed the icon's provenance and the README privacy statements on 2026-11-01 |
 | US-30 | Optional link omitted until an approved URL exists | Owner support destination; optional and not a coding-workflow gate |
 | US-34 | Contribution guide, issue forms and PR template in place; branch protection and private vulnerability reporting are enabled at publication | First external PR acceptance |
-| US-35 | Sparkle 2.10.1 wired for configured release builds: footer notice, About controls, embedded framework; the owner's key and the `v0.1.0` appcast exist | A real update installed on a clean Mac when the second version ships; Developer ID signing deferred by owner decision |
+| US-35 | Sparkle 2.10.1 wired for configured release builds: footer notice, About controls, embedded framework; the `v0.2.0` feed offers the update to `v0.1.0`, and its signature verifies with the key inside `v0.1.0` | A real update from `v0.1.0` installed on a clean Mac; Developer ID signing deferred by owner decision |
 
 ## Story approval and traceability
 
@@ -117,7 +117,7 @@ Work that is not finished or not yet accepted. Confirmed behavior not listed her
 Pending on-device acceptance:
 
 - Live acceptance pending: the desktop pet across Spaces, over full-screen apps, while locked and its click-through on transparent space (US-39); Feishu cards in the phone app (US-06); the execution-approval challenge through the mobile path (US-09); original VS Code and Codex App acceptance of integrated-terminal discovery (US-02); physical lock, wake and display-transition recovery of the notch entry (US-03, US-21); the two-cord lantern skin on the device (US-17).
-- Release gates: a real update installed on a clean Mac when the second version ships (US-35; the key and the `v0.1.0` appcast exist), which also confirms that the saved bot connection survives the update without a prompt (US-26, AC-27.05); Developer ID signing and notarization are deferred by the owner's decision of 2026-11-01 to ship an unsigned preview first (AC-27.05); the remaining branding review before a binary release (US-29); an approved support destination (US-30).
+- Release gates: a real update from `v0.1.0` to `v0.2.0` installed on a clean Mac (US-35; the feed offers it and its signature verifies), which also confirms that the saved bot connection survives the update without a prompt (US-26, AC-27.05); Developer ID signing and notarization are deferred by the owner's decision of 2026-11-01 to ship an unsigned preview first (AC-27.05); the remaining branding review before a binary release (US-29); an approved support destination (US-30).
 
 Bugs:
 
@@ -908,7 +908,7 @@ Implementation: [Product page source](../website/index.html), [native-asset buil
 
 ### US-27: Download a versioned macOS release from GitHub
 
-Status: Confirmed. Owner decision 2026-11-01: the first downloadable release is an unsigned preview (an ad hoc-signed app in a disk image, with a ZIP for the update feed), because Developer ID signing and notarization require a paid Apple Developer Program membership, which the project does not have; a signed, notarized release remains the later path. `v0.1.0` shipped this way on 2026-11-01.
+Status: Confirmed. Owner decision 2026-11-01: the first downloadable release is an unsigned preview (an ad hoc-signed app in a disk image, with a ZIP for the update feed), because Developer ID signing and notarization require a paid Apple Developer Program membership, which the project does not have; a signed, notarized release remains the later path. `v0.1.0` shipped this way on 2026-11-01 and `v0.2.0` on 2026-11-14.
 
 Product page: #availability.
 
@@ -922,7 +922,7 @@ Acceptance criteria:
 - **AC-27.04**: **Given** a period without a downloadable package (as before `v0.1.0`, or after a withdrawn release), **When** the repository is public, **Then** the README, product page and release status label it as source-only, omit a binary download, identify unaccepted behavior, and retain a separate path to a later GitHub Release.
 - **AC-27.05**: **Given** an unsigned preview release, **When** I read its GitHub Release or the product page, **Then** both say that macOS asks to allow the app on first open and name the steps (System Settings › Privacy & Security › Open Anyway on macOS 15 and later; right-click › Open before that), and never call it notarized; an update asks for nothing, because credentials live in Lunlet's user-only file rather than the Keychain (AC-01.02); the packaged manifest records ad hoc signing and no notarization, and a signed, notarized release later replaces these notes.
 
-Implementation: [README status and install steps](../README.md), [release notes](release-notes/v0.1.0.md), [validation workflow](../.github/workflows/validate.yml), [candidate packager](../scripts/package-release.sh) with its unsigned preview mode, [application build](../scripts/build-app.sh), [release guide](releases.md), [product page availability copy](../website/index.html), [release boundary tests](../scripts/test_release.py).
+Implementation: [README status and install steps](../README.md), release notes for [v0.1.0](release-notes/v0.1.0.md) and [v0.2.0](release-notes/v0.2.0.md), [validation workflow](../.github/workflows/validate.yml), [candidate packager](../scripts/package-release.sh) with its unsigned preview mode, [application build](../scripts/build-app.sh), [release guide](releases.md), [product page availability copy](../website/index.html), [release boundary tests](../scripts/test_release.py).
 
 ### US-29: Understand the project's license and third-party provenance
 
@@ -982,11 +982,11 @@ Acceptance criteria:
 - **AC-35.03**: **Given** Settings › About, **When** I open it, **Then** it offers Check for Updates… and a switch for automatic checks, on by default; turning it off stops background checks, and a manual check still works.
 - **AC-35.04**: **Given** a development preview or a build without a configured feed and update key, **When** it runs, **Then** it performs no update checks and shows no update controls, so a preview never offers to replace itself.
 
-Implementation: [package manifest](../Package.swift), [license](../Resources/third-party/sparkle-license.txt), [provenance inventory](../NOTICE.md), [The updater](../Sources/LunletDesktop/AppUpdater.swift), [panel footer](../Sources/LunletDesktop/CompanionPanel.swift), [About](../Sources/LunletDesktop/PreferencesPane.swift), [Info.plist](../Resources/Info.plist), [Packaging](../scripts/build-app.sh), [Unit tests](../Tests/LunletDesktopTests/AppUpdaterTests.swift), [release tests](../scripts/test_release.py), [render harness](../Tests/LunletDesktopTests/PanelPageRenderTests.swift), [Release preparation](releases.md#updates-with-sparkle).
+Implementation: [package manifest](../Package.swift), [license](../Resources/third-party/sparkle-license.txt), [provenance inventory](../NOTICE.md), [The updater](../Sources/LunletDesktop/AppUpdater.swift), [panel footer](../Sources/LunletDesktop/CompanionPanel.swift), [About](../Sources/LunletDesktop/PreferencesPane.swift), [Info.plist](../Resources/Info.plist), [Packaging](../scripts/build-app.sh), [Unit tests](../Tests/LunletDesktopTests/AppUpdaterTests.swift), [release tests](../scripts/test_release.py), [update feed check](../scripts/check_appcast.py) with [its tests](../scripts/test_appcast.py), [render harness](../Tests/LunletDesktopTests/PanelPageRenderTests.swift), [Release preparation](releases.md#updates-with-sparkle).
 
 ## Release acceptance
 
-The source and the unsigned preview `v0.1.0` are published (AC-27.05); a signed, notarized package and full mobile continuation keep their own gates below. The product page and video may demonstrate shipped local behavior with synthetic data while naming any channel delivery or reply behavior that is not yet accepted.
+The source and the unsigned previews `v0.1.0` and `v0.2.0` are published (AC-27.05); a signed, notarized package and full mobile continuation keep their own gates below. The product page and video may demonstrate shipped local behavior with synthetic data while naming any channel delivery or reply behavior that is not yet accepted.
 
 The first release is ready when the stories applicable to the declared release scope pass in the recorded macOS, Codex and Claude Code versions. Confirmation alone is not acceptance; Cursor, Claude phone replies and optional support do not become first-release gates. Record the reference terminal environments used for verification without making terminal brands a capability allowlist. Verification must cover at least two concurrent sessions, two sessions in the same project, continued context over multiple turns, local task cues with and without full-continuation access, display sleep and lock behavior, lock-screen mobile interaction, approval isolation, duplicate and stale actions, enabling full-continuation access with already-pending work, disabling and re-enabling mobile access, unavailable channel setup or connectivity, disconnection, session exit and restore, and quitting Lunlet. The Settings switch in AC-05.08 and AC-05.09 governs phone replies; screen locking alone does not authorize input.
 
