@@ -22,12 +22,37 @@ jobs:
   # Areas that do not depend on one another run side by side, each as its own job, so a failure names its area
   # and the whole takes as long as its longest part. The Swift modules share one build, so they stay in one job
   # and run in turn through the same script a developer uses. `validate` is the single check a branch rule asks for.
+  #
+  # The two macOS areas take minutes, and prose, the product page or a Python check cannot change their result:
+  # `changes` asks scripts/changed_areas.py whether the change can affect them, and they are skipped when it
+  # cannot. A manual run, an unknown change and any path the rules do not name run everything.
+  changes:
+    name: Affected areas
+    if: github.event.repository.private == false || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      swift: ${{ steps.areas.outputs.swift }}
+      release: ${{ steps.areas.outputs.release }}
+    steps:
+      - name: Check out the selected revision with its history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Which slow areas the change can affect
+        id: areas
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: python3 scripts/changed_areas.py "$BASE" HEAD | tee -a "$GITHUB_OUTPUT"
+
   swift:
     name: Swift modules
+    needs: changes
     # Standard runners are free for public repositories. In a private repository only an
     # explicit manual run consumes the account's included macOS minutes; pushes and pull
     # requests stay local until the minute/storage budget is reviewed.
-    if: github.event.repository.private == false || github.event_name == 'workflow_dispatch'
+    if: needs.changes.outputs.swift == 'true'
     runs-on: macos-26
     timeout-minutes: 15
     steps:
@@ -75,8 +100,9 @@ jobs:
 
   release-tooling:
     name: Release tooling
+    needs: changes
     # The packaging checks sign, inspect and archive synthetic bundles with the system's own tools.
-    if: github.event.repository.private == false || github.event_name == 'workflow_dispatch'
+    if: needs.changes.outputs.release == 'true'
     runs-on: macos-26
     timeout-minutes: 10
     steps:
@@ -85,10 +111,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Packaging and update safeguards
-        run: |
-          python3 -m unittest discover -s scripts -p test_release.py
-          python3 -m unittest discover -s scripts -p test_appcast.py
+        run: scripts/check-repository.sh release
 
+  # The three areas below take seconds and run for every change, each through the entry a developer uses.
   requirements:
     name: Requirements and traceability
     if: github.event.repository.private == false || github.event_name == 'workflow_dispatch'
@@ -100,9 +125,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Stories, criteria and their references
-        run: |
-          python3 scripts/test_traceability.py
-          python3 scripts/check_traceability.py
+        run: scripts/check-repository.sh requirements
 
   page:
     name: Product page and its pictures
@@ -115,11 +138,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Page build, its facts and the rendered media
-        run: |
-          python3 -m unittest discover -s scripts -p test_site.py
-          node --check website/app.js
-          python3 scripts/build_site.py
-          python3 scripts/check_site_assets.py
+        run: scripts/check-repository.sh page
 
   hygiene:
     name: Repository hygiene
@@ -131,27 +150,27 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # A clean checkout has no working-tree changes, so the committed tree is compared with the empty tree;
-      # upstream license texts keep their own whitespace. Test waits must leave room for a slow machine, and test
-      # settings stay out of the user's Library.
-      - name: Whitespace, test waits and test settings
-        run: |
-          git diff --check "$(git hash-object -t tree /dev/null)" HEAD -- . ':(exclude)Resources/third-party'
-          python3 -m unittest discover -s scripts -p test_test_waits.py
-          python3 scripts/check_test_waits.py
-          python3 -m unittest discover -s scripts -p test_test_settings.py
-          python3 scripts/check_test_settings.py
+      - name: Whitespace, test waits, test settings and private data
+        run: scripts/check-repository.sh hygiene
 
   validate:
-    # Passes only when every area passed; a failed, cancelled or skipped area fails it.
-    needs: [swift, release-tooling, requirements, page, hygiene]
+    # Passes only when every area that had to run passed. A macOS area may be skipped only because `changes` found
+    # that the change cannot affect it; any other skipped, failed or cancelled area fails it.
+    needs: [changes, swift, release-tooling, requirements, page, hygiene]
     if: always() && (github.event.repository.private == false || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
-      - name: Every area passed
+      - name: Every area that had to run passed
         env:
-          RESULTS: ${{ join(needs.*.result, ' ') }}
+          ALWAYS: ${{ needs.changes.result }} ${{ needs.requirements.result }} ${{ needs.page.result }} ${{ needs.hygiene.result }}
+          SWIFT: ${{ needs.swift.result }}
+          SWIFT_NEEDED: ${{ needs.changes.outputs.swift }}
+          RELEASE: ${{ needs.release-tooling.result }}
+          RELEASE_NEEDED: ${{ needs.changes.outputs.release }}
         run: |
-          echo "$RESULTS"
-          for result in $RESULTS; do [ "$result" = success ] || exit 1; done
+          echo "always: $ALWAYS | swift: $SWIFT (needed: $SWIFT_NEEDED) | release: $RELEASE (needed: $RELEASE_NEEDED)"
+          for result in $ALWAYS; do [ "$result" = success ] || exit 1; done
+          passed() { [ "$1" = success ] || { [ "$1" = skipped ] && [ "$2" = false ]; }; }
+          passed "$SWIFT" "$SWIFT_NEEDED"
+          passed "$RELEASE" "$RELEASE_NEEDED"

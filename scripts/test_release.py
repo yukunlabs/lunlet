@@ -461,11 +461,34 @@ class ReleaseBoundaryTests(unittest.TestCase):
 
     def test_validate_checks_whitespace_in_the_committed_tree(self):
         # A clean checkout has no working-tree changes, so a bare whitespace check of the diff could never fail.
+        entry = (ROOT / "scripts/check-repository.sh").read_text()
+        checks = [line.strip() for line in entry.splitlines() if line.strip().startswith("git diff --check")]
+        self.assertTrue(any("hash-object -t tree /dev/null" in check and " HEAD " in check for check in checks), checks)
+        # The hosted workflow runs that entry, so a developer's Mac and the runner check the same things.
         workflow = (ROOT / ".github/workflows/validate.yml").read_text()
-        checks = [line.strip() for line in workflow.splitlines() if "diff --check" in line]
-        self.assertEqual(len(checks), 1, checks)
-        self.assertIn("hash-object -t tree /dev/null", checks[0])
-        self.assertIn(" HEAD ", checks[0])
+        for area in ["requirements", "page", "hygiene", "release"]:
+            self.assertIn("run: scripts/check-repository.sh " + area, workflow)
+
+    def test_a_skipped_macos_area_passes_only_when_the_change_cannot_affect_it(self):
+        workflow = (ROOT / ".github/workflows/validate.yml").read_text()
+        script = workflow.split("        run: |\n")[-1]
+        lines = "\n".join(line.strip() for line in script.splitlines() if line.strip() and not line.strip().startswith("echo"))
+        def verdict(always, swift, swift_needed, release, release_needed):
+            environment = dict(os.environ, ALWAYS=always, SWIFT=swift, SWIFT_NEEDED=swift_needed, RELEASE=release,
+                               RELEASE_NEEDED=release_needed)
+            return subprocess.run(["/bin/bash", "-e", "-c", lines], env=environment).returncode == 0
+        everything = "success success success success"
+        self.assertTrue(verdict(everything, "success", "true", "success", "true"))
+        self.assertTrue(verdict(everything, "skipped", "false", "skipped", "false"))
+        self.assertTrue(verdict(everything, "success", "true", "skipped", "false"))
+        # Skipped although it was needed, failed, cancelled, or the decision itself did not succeed.
+        self.assertFalse(verdict(everything, "skipped", "true", "success", "true"))
+        self.assertFalse(verdict(everything, "success", "true", "skipped", "true"))
+        self.assertFalse(verdict(everything, "failure", "true", "success", "true"))
+        self.assertFalse(verdict(everything, "cancelled", "true", "success", "true"))
+        self.assertFalse(verdict(everything, "skipped", "", "skipped", ""))
+        self.assertFalse(verdict("failure success success success", "skipped", "false", "skipped", "false"))
+        self.assertFalse(verdict("success success success skipped", "success", "true", "success", "true"))
 
     def test_an_unsigned_release_build_is_an_explicit_choice(self):
         # Without the flag an ad hoc identity is refused for a normal build; with it the build proceeds and says what
