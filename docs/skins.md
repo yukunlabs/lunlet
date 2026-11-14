@@ -39,3 +39,7 @@ The reference vine body spans x = 0…273 and y = 0…44. Its central x = 44…2
 Invalid imports preserve the current skin. Invalid saved files are skipped, missing selections fall back to Vine, and Settings remains accessible. Custom skins are stored in the application's local support directory. Only non-secret preferences are included in settings export; authorization remains separate.
 
 A custom `bodyPath` must be one continuous subpath with a single `M`. This keeps the 20/40/60/80% markers on the actual allowance stroke. Letter paths may contain multiple subpaths.
+
+## Desktop pet
+
+The widget beside the notch, a menu-bar item, or a small desktop dog that sits on every Space, shows what your agents are doing (asleep, idle, working, done, waiting for you) and opens the panel as its speech bubble. Bring your own pet instead: a pack in Codex's format (`pet.json` beside a sprite sheet) from `~/.codex/pets` or Lunlet's own pets folder plays its idle, running, waiting and review rows for the same states.

@@ -29,6 +29,12 @@ Use a bot dedicated to Lunlet. An existing webhook is preserved and pairing stop
 
 Reference: [Telegram Bot API](https://core.telegram.org/bots/api).
 
+## Replies to Claude Code
+
+Claude Code has no command that queues a message into a running session, so Lunlet uses Claude Code's Stop hook: while Claude Code is a selected agent, Lunlet adds one `Stop` entry to Claude Code's user settings (and removes exactly that entry when you turn Claude Code off or press Disconnect in Settings › Agents). Nothing else is needed: no flag, plugin or confirmation, in any terminal or editor. When a turn of a Claude Code session ends while your Mac is locked, the hook keeps that turn open for one phone reply, which continues the same conversation as your next message; when you unlock, it lets go at once. Settings › Agents says so beside the Claude Code switch and shows a note only if the hook could not be added.
+
+Claude Code allows at most eight such continuations in a row to one turn without a typed prompt, so a ninth phone reply to the same turn is not delivered.
+
 ## Saved access and recovery
 
 Tokens and paired recipients are stored on this Mac in `~/Library/Application Support/com.lunlet/credentials`, one file per service that only your user account can read, sealed with a key bound to this Mac and your account; exported settings contain only the selected channel. Updates and rebuilds never ask for authorization. A connection that an earlier build saved in the Keychain is moved into the file on first use; if that build may not read it silently, Authorize access moves it once and the Keychain item is removed. A file copied from another Mac or user account cannot be opened here: Lunlet says so, and you clear it and connect again.
