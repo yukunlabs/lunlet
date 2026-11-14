@@ -85,11 +85,11 @@ Approval, release scope, delivery and acceptance are separate facts. A story's S
 | US-24 | Wired chart keyboard access, panel Command-R/Command-comma, symbol-and-label states and chart descriptors | Physical VoiceOver and full connection-card focus order |
 | US-25 | Wired bounded readers and independent successful freshness | Real-discovery, uncached full-app CPU/memory/disk/wakeup/latency acceptance |
 | US-28 | Product page published on GitHub Pages with the repository and latest-release download links; the support link stays hidden until its destination exists | Browser, responsive and keyboard acceptance of the published page |
-| US-27 | Source published; `v0.1.0` (2026-11-01) and `v0.2.0` (2026-11-14) released as unsigned previews with checksums, manifest and notes | Clean-machine validation; Developer ID signing and notarization deferred by owner decision |
+| US-27 | Source published; `v0.1.0` (2026-11-01), `v0.2.0` and `v0.2.1` (2026-11-14) released as unsigned previews with checksums, manifest and notes | Clean-machine validation; Developer ID signing and notarization deferred by owner decision |
 | US-29 | 0BSD license with SPDX headers, provenance inventory, packaged notices, trademark statement and About details | None for the first package: the owner confirmed the icon's provenance and the README privacy statements on 2026-11-01 |
 | US-30 | Optional link omitted until an approved URL exists | Owner support destination; optional and not a coding-workflow gate |
 | US-34 | Contribution guide, issue forms and PR template in place; branch protection and private vulnerability reporting are enabled at publication | First external PR acceptance |
-| US-35 | Sparkle 2.10.1 wired for configured release builds: footer notice, About controls, embedded framework; an installed `v0.1.0` updated to `v0.2.0` through the feed on the maintainer's Mac | The same update on a clean Mac; the update window coming forward by itself in a packaged build; Developer ID signing deferred by owner decision |
+| US-35 | Sparkle 2.10.1 wired for configured release builds: footer notice, About controls, embedded framework; installed copies updated on the maintainer's Mac, `v0.1.0` to `v0.2.0` through the feed and `v0.2.0` to `v0.2.1` in the rehearsal | The same update on a clean Mac; the update window coming forward by itself in a packaged build; Developer ID signing deferred by owner decision |
 
 ## Story approval and traceability
 
@@ -909,7 +909,7 @@ Implementation: [Product page source](../website/index.html), [native-asset buil
 
 ### US-27: Download a versioned macOS release from GitHub
 
-Status: Confirmed. Owner decision 2026-11-01: the first downloadable release is an unsigned preview (an ad hoc-signed app in a disk image, with a ZIP for the update feed), because Developer ID signing and notarization require a paid Apple Developer Program membership, which the project does not have; a signed, notarized release remains the later path. `v0.1.0` shipped this way on 2026-11-01 and `v0.2.0` on 2026-11-14.
+Status: Confirmed. Owner decision 2026-11-01: the first downloadable release is an unsigned preview (an ad hoc-signed app in a disk image, with a ZIP for the update feed), because Developer ID signing and notarization require a paid Apple Developer Program membership, which the project does not have; a signed, notarized release remains the later path. `v0.1.0` shipped this way on 2026-11-01, `v0.2.0` and `v0.2.1` on 2026-11-14.
 
 Product page: #availability.
 
@@ -987,7 +987,7 @@ Implementation: [package manifest](../Package.swift), [license](../Resources/thi
 
 ## Release acceptance
 
-The source and the unsigned previews `v0.1.0` and `v0.2.0` are published (AC-27.05); a signed, notarized package and full mobile continuation keep their own gates below. The product page and video may demonstrate shipped local behavior with synthetic data while naming any channel delivery or reply behavior that is not yet accepted.
+The source and the unsigned previews `v0.1.0`, `v0.2.0` and `v0.2.1` are published (AC-27.05); a signed, notarized package and full mobile continuation keep their own gates below. The product page and video may demonstrate shipped local behavior with synthetic data while naming any channel delivery or reply behavior that is not yet accepted.
 
 The first release is ready when the stories applicable to the declared release scope pass in the recorded macOS, Codex and Claude Code versions. Confirmation alone is not acceptance; Cursor, Claude phone replies and optional support do not become first-release gates. Record the reference terminal environments used for verification without making terminal brands a capability allowlist. Verification must cover at least two concurrent sessions, two sessions in the same project, continued context over multiple turns, local task cues with and without full-continuation access, display sleep and lock behavior, lock-screen mobile interaction, approval isolation, duplicate and stale actions, enabling full-continuation access with already-pending work, disabling and re-enabling mobile access, unavailable channel setup or connectivity, disconnection, session exit and restore, and quitting Lunlet. The Settings switch in AC-05.08 and AC-05.09 governs phone replies; screen locking alone does not authorize input.
 
