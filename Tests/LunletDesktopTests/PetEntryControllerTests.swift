@@ -14,11 +14,13 @@ import LunletCore
         return PreferencesStore(defaults: defaults)
     }
     private func controller(_ preferences: PreferencesStore, screen: NSScreen?, available: Bool = true,
+                            quiet: @escaping @MainActor (NSScreen) -> Bool = { _ in false },
+                            companion: CompanionPanelController = .init(motionAllowed: { false }, observesSystemEvents: false),
                             uptime: @escaping @MainActor () -> TimeInterval = { 0 }) -> (PetEntryController, SessionListModel) {
-        let companion = CompanionPanelController(motionAllowed: { false }, observesSystemEvents: false)
         let sessions = SessionListModel(displayAvailable: { true }, elapsed: { 0 }, presenter: NoCues())
         let entry = PetEntryController(companion: companion, sessions: sessions, preferences: preferences,
-                                       display: { screen }, available: { available }, motionAllowed: { false }, uptime: uptime)
+                                       display: { screen }, available: { available }, quiet: quiet, motionAllowed: { false },
+                                       uptime: uptime)
         return (entry, sessions)
     }
     private final class NoCues: TaskCuePresenting {
@@ -105,6 +107,35 @@ import LunletCore
         entry.start()
         #expect(entry.window == nil || entry.window?.isVisible == false)
         entry.shutdown()
+    }
+
+    // Refs: US-39, AC-39.02.
+    @Test func aFullScreenApplicationInFrontTakesThePetAndItsPanelAway() throws {
+        let preferences = try store(), screen = try #require(NSScreen.main)
+        preferences.update { $0.presentation = .pet }
+        var quiet = false
+        let companion = CompanionPanelController(motionAllowed: { false }, observesSystemEvents: false)
+        companion.setContent { AnyView(EmptyView()) }
+        let (entry, _) = controller(preferences, screen: screen, quiet: { _ in quiet }, companion: companion)
+        defer { entry.shutdown(); companion.shutdown() }
+        entry.start()
+        #expect(entry.window?.isVisible == true)
+        companion.show(on: screen)
+        #expect(companion.isVisible)
+        // Another application goes full screen on the pet's display: the dog and its open panel leave.
+        quiet = true
+        entry.refresh()
+        #expect(entry.window?.isVisible == false && !companion.isVisible)
+        // The desktop is back, and the dog with it.
+        quiet = false
+        entry.refresh()
+        #expect(entry.window?.isVisible == true && entry.window?.alphaValue == 1)
+        // While another entry is chosen, full screen is none of the pet's business: an open panel stays.
+        preferences.update { $0.presentation = .notch }
+        companion.show(on: screen)
+        quiet = true
+        entry.refresh()
+        #expect(companion.isVisible)
     }
 
     private final class Counter { var count = 0 }

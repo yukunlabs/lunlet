@@ -34,9 +34,14 @@ import LunletCore
     private let mark = LettermarkView(frame: .zero)
     private let display: () -> NSScreen?
     private let available: () -> Bool
-    /// Whether the display is given over to another application's full-screen window (AC-42.01).
+    /// Whether another application covers the display's menu bar, as full screen does (AC-42.01).
     private let quiet: () -> Bool
     private let fades: () -> Bool
+    private let pointer: () -> CGPoint
+    /// The entry was in use when the menu bar left: it stays until the pointer has gone and its panel is closed
+    /// (AC-42.02).
+    private var held = false
+    private var refreshing = false
     /// Raised while the entry fades out, so a fade that was overtaken does not take the window away.
     private var leaving = false
     private var monitor: DisplayStateMonitor?
@@ -47,10 +52,11 @@ import LunletCore
          available: @escaping () -> Bool = { SystemDisplayState.isAvailable },
          quiet: @escaping () -> Bool = { FullScreenQuiet.shared.isQuiet(PanelScreen.notchDisplay) },
          fades: @escaping () -> Bool = { !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion },
+         pointer: @escaping () -> CGPoint = { NSEvent.mouseLocation },
          usage: AccountUsageModel? = nil, claudeLimits: ClaudePlanLimitsModel? = nil,
          preferences: PreferencesStore? = nil, skinCatalog: SkinCatalog? = nil, sessions: SessionListModel? = nil) {
         self.companion = companion; self.display = display; self.available = available; self.skinCatalog = skinCatalog
-        self.quiet = quiet; self.fades = fades
+        self.quiet = quiet; self.fades = fades; self.pointer = pointer
         if let sessions {
             sessionObservation = sessions.$compactStatus.removeDuplicates().sink { [weak self] in self?.mark.setSessionStatus($0) }
         }
@@ -136,7 +142,8 @@ import LunletCore
         monitor?.recheck()
     }
     func refresh() {
-        guard !closed else { return }
+        guard !closed, !refreshing else { return }
+        refreshing = true; defer { refreshing = false }
         // A display change or wake may follow a weekly reset that passed while asleep.
         updateAllowances()
         guard prefersNotch else {
@@ -144,11 +151,13 @@ import LunletCore
             companion.cancelHoverPreview(); return
         }
         guard available() else {
-            leaving = false
+            leaving = false; held = false
             mark.setActive(false); window?.orderOut(nil); companion.hide(animated: false); return
         }
-        // AC-42.01: under another application's full-screen video the entry and an open panel step aside, softly.
-        guard !quiet() else {
+        // AC-42.01, AC-42.02: where another application covers the menu bar the entry and an open panel leave with
+        // it, softly, unless they are in use at that moment.
+        held = quiet() && inUse()
+        guard !quiet() || held else {
             mark.setActive(false); companion.hide(animated: fades()); stepAside(); return
         }
         guard let geometry = display().map(PanelScreen.init), let notch = geometry.notch,
@@ -164,6 +173,7 @@ import LunletCore
                 guard let self else { return }
                 self.companion.entryHoverChanged(inside, on: self.window?.screen)
                 self.updatePose(hovering: inside)
+                if !inside { self.release() }
             }
             mark.clicked = { [weak self] in
                 guard let self else { return }
@@ -175,13 +185,25 @@ import LunletCore
         comeBack(); mark.setActive(true)
         notchAvailabilityChanged?(true)
     }
+    /// The pointer rests on the entry, or the panel opened from it is still open: an entry that stayed keeps
+    /// staying while its panel is open, and a panel left open elsewhere counts only under the pointer.
+    private func inUse() -> Bool {
+        let point = pointer()
+        if let window, window.isVisible, !leaving, window.frame.contains(point) { return true }
+        return companion.isVisible && (held || companion.window?.frame.contains(point) == true)
+    }
+    /// The pointer left the entry or its panel closed: an entry that had stayed leaves now.
+    private func release() {
+        if held { refresh() }
+    }
     /// Fades the entry out before it leaves, so nothing blinks over what is on screen; at once with Reduce Motion.
     private func stepAside() {
         guard let window, window.isVisible, !leaving else { return }
         guard fades() else { window.orderOut(nil); return }
         leaving = true
         NSAnimationContext.runAnimationGroup({ context in
-            context.duration = 0.2
+            // Short enough to end inside the move into full screen, during which the entry rides away with the desktop.
+            context.duration = 0.12
             window.animator().alphaValue = 0
         }, completionHandler: { [weak self] in
             MainActor.assumeIsolated {
@@ -217,6 +239,7 @@ import LunletCore
             companion.pointerChanged(companion.window?.frame.contains(NSEvent.mouseLocation) == true)
         }
         updatePose(hovering: visible)
+        if !visible { release() }
     }
     func cueChanged(_ pose: LettermarkView.Pose?) {
         cuePose = pose; updatePose(hovering: companion.isVisible, replay: pose != nil)

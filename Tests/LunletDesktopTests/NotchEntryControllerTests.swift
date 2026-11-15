@@ -38,24 +38,70 @@ import LunletCore
 
     // Refs: US-04, AC-04.13; US-16, AC-16.03.
     // Refs: US-42, AC-42.01.
-    @Test func theEntryStepsAsideForFullScreenVideoAndComesBack() throws {
+    @Test func theEntryLeavesWithTheMenuBarAndComesBack() throws {
         _ = NSApplication.shared
         let screen = try #require(PanelScreen.notchDisplay)
         var quiet = false
         let companion = CompanionPanelController()
         let entry = NotchEntryController(companion: companion, display: { screen }, available: { true }, quiet: { quiet },
-                                         fades: { false })
+                                         fades: { false }, pointer: { CGPoint(x: -10_000, y: -10_000) })
         defer { entry.shutdown(); companion.shutdown() }
         entry.start()
         #expect(entry.window?.isVisible == true)
-        // Another application begins to fill the display with video: the entry leaves.
+        // Another application covers the display, menu bar included: the entry leaves.
         quiet = true
         entry.refresh()
         #expect(entry.window?.isVisible == false)
-        // It ends: the entry is back, fully opaque.
+        // The menu bar is back: so is the entry, fully opaque.
         quiet = false
         entry.refresh()
         #expect(entry.window?.isVisible == true && entry.window?.alphaValue == 1)
+    }
+
+    // Refs: US-42, AC-42.02.
+    @Test func theEntryStaysWhileItIsInUseAsTheMenuBarLeaves() throws {
+        _ = NSApplication.shared
+        let screen = try #require(PanelScreen.notchDisplay)
+        var quiet = false, pointer = CGPoint(x: -10_000, y: -10_000)
+        let companion = CompanionPanelController(motionAllowed: { false }, observesSystemEvents: false)
+        companion.setContent { AnyView(EmptyView()) }
+        let entry = NotchEntryController(companion: companion, display: { screen }, available: { true }, quiet: { quiet },
+                                         fades: { false }, pointer: { pointer })
+        companion.visibilityChanged = { [weak entry] in entry?.panelVisibilityChanged($0) }
+        defer { entry.shutdown(); companion.shutdown() }
+        entry.start()
+        let frame = try #require(entry.window?.frame)
+        // The menu bar leaves while the pointer rests on the entry: it stays until the pointer goes.
+        pointer = CGPoint(x: frame.midX, y: frame.midY); quiet = true
+        entry.refresh()
+        #expect(entry.window?.isVisible == true)
+        pointer = CGPoint(x: -10_000, y: -10_000)
+        entry.refresh()
+        #expect(entry.window?.isVisible == false)
+        // The panel opened from the entry while the bar was down stays with the entry until it closes.
+        quiet = false
+        entry.refresh()
+        pointer = CGPoint(x: frame.midX, y: frame.midY)
+        companion.show(on: screen)
+        let panel = try #require(companion.window?.frame)
+        quiet = true
+        entry.refresh()
+        pointer = CGPoint(x: panel.midX, y: panel.midY)
+        entry.refresh()
+        #expect(entry.window?.isVisible == true && companion.isVisible)
+        // A pinned panel is kept while the pointer is elsewhere, and takes the entry with it when it closes.
+        pointer = CGPoint(x: -10_000, y: -10_000)
+        entry.refresh()
+        #expect(entry.window?.isVisible == true && companion.isVisible)
+        companion.hide(animated: false)
+        #expect(entry.window?.isVisible == false && !companion.isVisible)
+        // A panel left open on the desktop does not follow into another application's full screen.
+        quiet = false
+        entry.refresh()
+        companion.show(on: screen)
+        quiet = true
+        entry.refresh()
+        #expect(entry.window?.isVisible == false && !companion.isVisible)
     }
 
     @Test func entryFollowsClaudeLimitsAndTheSelectedAgentsAsTheyChange() async throws {

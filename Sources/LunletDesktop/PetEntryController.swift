@@ -45,6 +45,8 @@ import LunletCore
     private let packs: PetPackLibrary?
     private let display: @MainActor () -> NSScreen?
     private let available: @MainActor () -> Bool
+    /// Whether another application's full screen is in front on a display (AC-39.02).
+    private let quiet: @MainActor (NSScreen) -> Bool
     private let motionAllowed: @MainActor () -> Bool
     /// Whether any part of the pet's window shows: false on another Space, behind a full-screen app or fully covered.
     private let onScreen: @MainActor (NSWindow) -> Bool
@@ -72,6 +74,8 @@ import LunletCore
     /// Whether the display can show the pet, read when the display state changes (AC-39.02); a pose or gaze update
     /// many times a second never asks the OS again.
     private var displayAvailable = false
+    /// Raised while the dog fades out, so a fade that was overtaken does not take the window away.
+    private var leaving = false
     private var active = false
     private var repositioning = false
     private var closed = false
@@ -84,11 +88,13 @@ import LunletCore
          packs: PetPackLibrary? = nil,
          display: @escaping @MainActor () -> NSScreen? = { NSScreen.main ?? NSScreen.screens.first },
          available: @escaping @MainActor () -> Bool = { SystemDisplayState.isAvailable },
+         quiet: @escaping @MainActor (NSScreen) -> Bool = { FullScreenQuiet.shared.isQuiet($0) },
          motionAllowed: @escaping @MainActor () -> Bool = { !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion },
          onScreen: @escaping @MainActor (NSWindow) -> Bool = { $0.occlusionState.contains(.visible) },
          uptime: @escaping @MainActor () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
         self.companion = companion; self.sessions = sessions; self.preferences = preferences; self.skins = skins; self.packs = packs
-        self.display = display; self.available = available; self.motionAllowed = motionAllowed; self.onScreen = onScreen
+        self.display = display; self.available = available; self.quiet = quiet; self.motionAllowed = motionAllowed
+        self.onScreen = onScreen
         self.uptime = uptime
         palette = Self.palette(preferences?.value, skins: skins)
         appearance = .dog(palette)
@@ -191,11 +197,14 @@ import LunletCore
     func refresh() {
         guard !closed else { return }
         displayAvailable = available()
-        guard active, displayAvailable, let screen = chosenScreen() else { hideWindow(); return }
+        guard active, displayAvailable, let screen = chosenScreen() else { leaving = false; hideWindow(); return }
+        // AC-39.02: a full-screen application in front takes the display; the dog and its open panel leave, softly,
+        // and return with the desktop. The system lists a panel that joins every Space in a full-screen Space too.
+        guard !quiet(screen) else { companion.hide(animated: motionAllowed()); stepAside(); return }
         if window == nil {
             let panel = FloatingPanel(identifier: "Lunlet.pet", title: "Lunlet pet", frame: CGRect(origin: .zero, size: Self.windowSize),
                                       acceptsKey: false, level: .floating)
-            // On every Space, but not over a full-screen app (AC-39.02); the dog itself is the only click target.
+            // On every Space; the dog itself is the only click target. Full screen is read in `refresh` (AC-39.02).
             panel.collectionBehavior = [.canJoinAllSpaces, .stationary]
             panel.hasShadow = false; panel.isMovableByWindowBackground = false; panel.acceptsMouseMovedEvents = true
             panel.contentView = host
@@ -216,8 +225,42 @@ import LunletCore
         repositioning = true
         window?.setFrame(frame(on: screen), display: true)
         repositioning = false
-        window?.orderFrontRegardless()
+        comeBack()
         occlusionChanged()
+    }
+
+    /// The display the pet is on, or would be shown on.
+    var screen: NSScreen? { window?.screen ?? chosenScreen() }
+
+    /// Fades the dog out before it leaves; at once with Reduce Motion.
+    private func stepAside() {
+        guard let window, window.isVisible, !leaving else { return }
+        guard motionAllowed() else { hideWindow(); return }
+        leaving = true
+        stopPointerTracking()
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.12
+            window.animator().alphaValue = 0
+        }, completionHandler: { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.leaving else { return }
+                self.leaving = false
+                self.hideWindow(); self.window?.alphaValue = 1
+            }
+        })
+    }
+    /// Shows the dog, fading it in when it had left.
+    private func comeBack() {
+        guard let window else { return }
+        let returning = leaving || !window.isVisible
+        leaving = false
+        guard returning, motionAllowed(), monitor != nil else { window.alphaValue = 1; window.orderFrontRegardless(); return }
+        if !window.isVisible { window.alphaValue = 0 }
+        window.orderFrontRegardless()
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.2
+            window.animator().alphaValue = 1
+        }
     }
 
     /// The window came on screen or left it (another Space, a full-screen app in front, fully covered): the dog is

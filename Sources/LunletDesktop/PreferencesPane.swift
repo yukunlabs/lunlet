@@ -168,14 +168,14 @@ struct PreferencesPane: View {
         SettingsGroup(title: "Entry", note: SettingsModel.entryNote(value.presentation)) {
             SettingsEntryPicker(selection: binding(\.presentation), coat: value.petCoat).help(SettingsModel.entryHelp)
             if options.contains(.fullScreen) {
-                // AC-42.03: when the entry steps aside for another application's full-screen window.
+                // AC-42.03: whether the entry leaves with the menu bar in another application's full screen.
                 SettingsRow("Hide in full screen", controlNamed: true) {
                     PanelSegmentedControl(selection: binding(\.fullScreen),
                                           segments: FullScreenPolicy.allCases.map { .init(value: $0, title: $0.title) },
                                           size: .small, label: "Hide in full screen")
                 }
-                .help("When another app fills the display, the entry and its cues can step aside: only while that app "
-                    + "keeps the display awake, as video, a presentation or a call does; for every full-screen app; or never.")
+                .help("In another app's full screen the entry and its cues leave with the menu bar, and the entry "
+                    + "comes back with it when the pointer reaches the top of the screen; or they never leave.")
             }
             if options.contains(.showAllowance) {
                 // AC-21.04, AC-21.05: allowance text after the lettering, and the level below which it shows.

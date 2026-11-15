@@ -10,7 +10,7 @@ import Testing
     private let display = CGRect(x: 0, y: 0, width: 1512, height: 982)
     private func window(_ pid: pid_t, _ frame: CGRect, layer: Int = 0) -> ScreenWindow { .init(pid: pid, layer: layer, frame: frame) }
 
-    @Test func aWindowThatFillsTheDisplayMakesItsApplicationTheFullScreenOne() {
+    @Test func aWindowThatCoversTheMenuBarMakesItsApplicationTheFullScreenOne() {
         // In full screen a window covers the whole display, the menu bar's strip included; no ordinary window can.
         #expect(FullScreenScene.owner(of: display, windows: [window(7, display)]) == 7)
         // Lunlet's own entry and the menu bar sit above it on other layers and do not count.
@@ -33,107 +33,163 @@ import Testing
         #expect(FullScreenScene.owner(of: other, windows: [window(7, other), window(9, CGRect(x: 0, y: 33, width: 1512, height: 949))]) == 7)
     }
 
-    @Test func videoIsAFullScreenApplicationKeepingTheDisplayAwake() {
-        let app = "/Applications/Player.app"
-        // The application itself, as a video player or a browser's main process does.
-        #expect(FullScreenScene.showsVideo(owner: 7, bundlePath: app, bundleID: "com.example.player", awake: [.init(pid: 7, path: app + "/Contents/MacOS/Player")]))
-        // A helper process that lives inside its bundle.
-        #expect(FullScreenScene.showsVideo(owner: 7, bundlePath: app, bundleID: "com.example.player",
-                                           awake: [.init(pid: 8, path: app + "/Contents/Frameworks/Helper.app/Contents/MacOS/Helper")]))
-        // Safari plays through WebKit's own processes, which live in the system.
-        let webKit = AwakeProcess(pid: 8, path: "/System/Library/Frameworks/WebKit.framework/Versions/A/XPCServices/com.apple.WebKit.GPU.xpc/Contents/MacOS/com.apple.WebKit.GPU")
-        #expect(FullScreenScene.showsVideo(owner: 7, bundlePath: "/Applications/Safari.app", bundleID: "com.apple.Safari", awake: [webKit]))
-        // A terminal in full screen is not video because something else keeps the display awake.
-        #expect(!FullScreenScene.showsVideo(owner: 7, bundlePath: "/Applications/Terminal.app", bundleID: "com.example.terminal", awake: [webKit]))
-        #expect(!FullScreenScene.showsVideo(owner: 7, bundlePath: "/Applications/Terminal.app", bundleID: "com.example.terminal",
-                                            awake: [.init(pid: 9, path: "/usr/bin/caffeinate"), .init(pid: 10, path: "/Applications/TerminalHelper.app/Contents/MacOS/x")]))
-        #expect(!FullScreenScene.showsVideo(owner: 7, bundlePath: app, bundleID: "com.example.player", awake: []))
-    }
-
-    @Test func thePolicyDecidesWhenTheEntryStepsAside() {
-        // AC-42.01, AC-42.02: by default only for video; a full-screen editor keeps the entry.
-        #expect(FullScreenScene.isQuiet(policy: .video, fullScreen: true, video: true))
-        #expect(!FullScreenScene.isQuiet(policy: .video, fullScreen: true, video: false))
-        // AC-42.03: or for every full-screen application, or never.
-        #expect(FullScreenScene.isQuiet(policy: .always, fullScreen: true, video: false))
-        #expect(!FullScreenScene.isQuiet(policy: .never, fullScreen: true, video: true))
-        for policy in FullScreenPolicy.allCases { #expect(!FullScreenScene.isQuiet(policy: policy, fullScreen: false, video: true)) }
-    }
-
-    @Test func theChoiceIsSavedAndStartsAsDuringVideo() throws {
-        #expect(LunletPreferences().fullScreen == .video)
+    @Test func theChoiceIsSavedAndStartsAsWithTheMenuBar() throws {
+        // AC-42.03.
+        #expect(LunletPreferences().fullScreen == .menuBar)
         let saved = try JSONDecoder().decode(LunletPreferences.self, from: Data(#"{"schemaVersion":1}"#.utf8))
-        #expect(saved.fullScreen == .video)
-        var changed = LunletPreferences(); changed.fullScreen = .always
+        #expect(saved.fullScreen == .menuBar)
+        // A value this version does not know starts as the default.
+        let unknown = try JSONDecoder().decode(LunletPreferences.self, from: Data(#"{"schemaVersion":1,"fullScreen":"video"}"#.utf8))
+        #expect(unknown.fullScreen == .menuBar)
+        var changed = LunletPreferences(); changed.fullScreen = .never
         let again = try JSONDecoder().decode(LunletPreferences.self, from: JSONEncoder().encode(changed))
-        #expect(again.fullScreen == .always)
-        #expect(FullScreenPolicy.allCases.map(\.title) == ["During video", "Always", "Never"])
+        #expect(again.fullScreen == .never)
+        #expect(FullScreenPolicy.allCases.map(\.title) == ["With the menu bar", "Never"])
     }
 
-    @Test func theWatcherReportsADisplayOnlyWhileItsSceneIsQuiet() {
-        // AC-42.04: one reading of the windows and of what keeps the display awake serves every part of Lunlet.
-        var windows: [ScreenWindow] = [], awake: [AwakeProcess] = [], changes = 0
-        let quiet = FullScreenQuiet(windows: { windows }, awake: { awake }, application: { _ in ("/Applications/Player.app", "com.example.player") },
-                                    displays: { [1: self.display] })
+    private let away = CGPoint(x: 700, y: 500)
+
+    @Test func theWatcherReportsADisplayWhileItIsInFullScreen() {
+        // AC-42.01: one reading of the system serves every part of Lunlet.
+        var windows: [ScreenWindow] = [], spaces: Set<CGDirectDisplayID> = [], changes = 0
+        let quiet = FullScreenQuiet(windows: { windows }, spaces: { spaces }, pointer: { self.away }, displays: { [1: self.display] })
         quiet.changed = { changes += 1 }
         quiet.refresh()
         #expect(!quiet.isQuiet(display: 1) && changes == 0)
-        windows = [window(7, display)]
+        // A browser's full-screen window stays below the strip beside the notch, as a zoomed window does; it is the
+        // system that says the Space in front is a full-screen one.
+        windows = [window(7, CGRect(x: 0, y: 33, width: 1512, height: 949))]
         quiet.refresh()
-        #expect(!quiet.isQuiet(display: 1) && quiet.watching && changes == 0)
-        awake = [.init(pid: 7, path: "/Applications/Player.app/Contents/MacOS/Player")]
+        #expect(!quiet.isQuiet(display: 1) && changes == 0)
+        spaces = [1]
         quiet.refresh()
-        #expect(quiet.isQuiet(display: 1) && changes == 1)
+        #expect(quiet.isQuiet(display: 1) && !quiet.isQuiet(display: 2) && changes == 1)
         quiet.refresh()
         #expect(changes == 1)
-        quiet.policy = .never
-        #expect(!quiet.isQuiet(display: 1) && changes == 2 && !quiet.watching)
-        quiet.policy = .always
-        awake = []
+        // A window that covers the whole display counts by itself: the Space is announced only when the move into
+        // it has ended, and a window can cover the display without a Space of its own.
+        spaces = []; windows = [window(7, display)]
         quiet.refresh()
-        #expect(quiet.isQuiet(display: 1) && !quiet.isQuiet(display: 2))
+        #expect(quiet.isQuiet(display: 1) && changes == 1)
+        // AC-42.03: Never keeps the entry.
+        quiet.leave = .never
+        #expect(!quiet.isQuiet(display: 1) && changes == 2)
+        quiet.leave = .withMenuBar
+        #expect(quiet.isQuiet(display: 1) && changes == 3)
         windows = []
         quiet.refresh()
-        #expect(!quiet.isQuiet(display: 1) && !quiet.watching)
+        #expect(!quiet.isQuiet(display: 1) && changes == 4)
     }
 
-    @Test func aPauseDoesNotBringTheEntryBackOverTheVideo() {
-        // A paused or buffering video lets the display sleep again for a moment; the entry popping in and out over
-        // the picture would be worse than staying away. It returns when the full-screen window is left (AC-42.01).
-        var windows = [window(7, display)], awake = [AwakeProcess(pid: 7, path: "/Applications/Player.app/Contents/MacOS/Player")]
-        let quiet = FullScreenQuiet(windows: { windows }, awake: { awake }, application: { _ in ("/Applications/Player.app", "com.example.player") },
-                                    displays: { [1: self.display] })
+    @Test func theEntryReturnsWhileThePointerIsWhereTheMenuBarComesDown() {
+        // AC-42.02: the menu bar comes down when the pointer reaches the top edge and stays while the pointer is in it.
+        var point = away
+        let quiet = FullScreenQuiet(windows: { [] }, spaces: { [1] }, pointer: { point }, displays: { [1: self.display] })
         quiet.refresh()
         #expect(quiet.isQuiet(display: 1))
-        awake = []
-        quiet.refresh()
-        #expect(quiet.isQuiet(display: 1))
-        // Another application in full screen on that display starts afresh.
-        windows = [window(9, display)]
+        point = CGPoint(x: 300, y: 0)
         quiet.refresh()
         #expect(!quiet.isQuiet(display: 1))
-        // And so does the first one when it comes back without playing.
-        windows = [window(7, display)]
+        // The pointer moves along the strip to the entry, which reaches a little below the bar.
+        point = CGPoint(x: 800, y: 45)
         quiet.refresh()
         #expect(!quiet.isQuiet(display: 1))
-        // Leaving full screen ends it.
-        awake = [AwakeProcess(pid: 7, path: "/Applications/Player.app/Contents/MacOS/Player")]
+        point = CGPoint(x: 800, y: 200)
         quiet.refresh()
         #expect(quiet.isQuiet(display: 1))
-        windows = [window(7, CGRect(x: 0, y: 33, width: 1512, height: 949))]
-        awake = []
+        // Passing near the top without reaching the edge calls nothing down.
+        point = CGPoint(x: 800, y: 20)
+        quiet.refresh()
+        #expect(quiet.isQuiet(display: 1))
+        // The top edge of another display says nothing about this one.
+        point = CGPoint(x: 2_000, y: 0)
+        quiet.refresh()
+        #expect(quiet.isQuiet(display: 1))
+    }
+
+    @Test func thePetLeavesEveryFullScreenAndDoesNotReturnWithThePointer() {
+        // AC-39.02: the pet is not part of the menu bar; a full-screen application in front takes the display,
+        // wherever the pointer is and whatever the menu bar does.
+        var point = away, spaces: Set<CGDirectDisplayID> = [1]
+        let quiet = FullScreenQuiet(windows: { [] }, spaces: { spaces }, pointer: { point }, barStays: { true }, displays: { [1: self.display] })
+        quiet.leave = .always
+        #expect(quiet.isQuiet(display: 1))
+        point = CGPoint(x: 300, y: 0)
+        quiet.refresh()
+        #expect(quiet.isQuiet(display: 1))
+        spaces = []
         quiet.refresh()
         #expect(!quiet.isQuiet(display: 1))
     }
 
-    @Test func aChangeIsReadAgainWhileItSettles() {
-        // A Space or application change is announced before the window has grown to fill the display.
-        var reads = 0, scheduled: [TimeInterval] = []
-        let quiet = FullScreenQuiet(windows: { reads += 1; return [] }, awake: { [] }, application: { _ in (nil, nil) },
+    @Test func theEntryInUseDecidesHowFullScreenIsTreated() {
+        // AC-42.03: the choice belongs to the notch entry; the menu-bar entry follows the bar and the pet always leaves.
+        #expect(FullScreenQuiet.leave(for: .notch, choice: .menuBar) == .withMenuBar)
+        #expect(FullScreenQuiet.leave(for: .notch, choice: .never) == .never)
+        #expect(FullScreenQuiet.leave(for: .menuBar, choice: .never) == .withMenuBar)
+        #expect(FullScreenQuiet.leave(for: .pet, choice: .never) == .always)
+        #expect(FullScreenQuiet.leave(for: .pet, choice: .menuBar) == .always)
+    }
+
+    @Test func aMenuBarThatStaysInFullScreenKeepsTheEntry() {
+        // The system can keep the menu bar in full screen; the entry stays with it and nothing more is read.
+        var reads = 0
+        let quiet = FullScreenQuiet(windows: { reads += 1; return [] }, spaces: { [1] }, pointer: { self.away }, barStays: { true },
                                     displays: { [1: self.display] })
-        quiet.later = { delay, work in scheduled.append(delay); work() }
-        quiet.systemChanged()
-        #expect(scheduled == FullScreenQuiet.settling && reads == 1 + FullScreenQuiet.settling.count)
-        #expect(FullScreenQuiet.settling.allSatisfy { $0 > 0 && $0 <= 2 } && FullScreenQuiet.interval <= 1)
+        quiet.refresh()
+        #expect(!quiet.isQuiet(display: 1) && reads == 0)
+    }
+
+    @Test func theMacLeftAloneIsReadOnlyNowAndThen() {
+        // AC-42.04: full screen begins and ends, and the pointer calls the menu bar, by the keyboard or the pointer.
+        // While neither has been touched for a few seconds, a reading now and then is enough for what an
+        // application does by itself, such as leaving full screen when a film ends.
+        var reads = 0, idle: TimeInterval = 0.2, uptime: TimeInterval = 100
+        let quiet = FullScreenQuiet(windows: { reads += 1; return [] }, spaces: { [] }, pointer: { self.away }, displays: { [1: self.display] },
+                                    idle: { idle }, uptime: { uptime })
+        // In use: every step of the pace reads.
+        for _ in 0..<4 { uptime += FullScreenQuiet.pace; quiet.tick() }
+        #expect(reads == 4)
+        // Left alone: the steps go by without a reading until the slower interval has passed.
+        idle = FullScreenQuiet.rest + 1
+        for _ in 0..<4 { uptime += FullScreenQuiet.pace; quiet.tick() }
+        #expect(reads == 4)
+        uptime += FullScreenQuiet.leftAlonePace
+        quiet.tick()
+        #expect(reads == 5)
+        quiet.tick()
+        #expect(reads == 5)
+        // Touched again: the next step reads at once.
+        idle = 0
+        uptime += FullScreenQuiet.pace
+        quiet.tick()
+        #expect(reads == 6)
+        // A move out of full screen can end a moment after the key that began it.
+        #expect(FullScreenQuiet.rest >= 2 && FullScreenQuiet.leftAlonePace >= 2 && FullScreenQuiet.leftAlonePace <= 5)
+    }
+
+    @Test func aDisplayKnownToBeInFullScreenNeedsNoWindowList() {
+        // AC-42.04: the windows are listed only to learn of full screen early; the kind of Space settles it.
+        var lists = 0, spaces: Set<CGDirectDisplayID> = [1]
+        let quiet = FullScreenQuiet(windows: { lists += 1; return [] }, spaces: { spaces }, pointer: { self.away }, displays: { [1: self.display] })
+        quiet.refresh()
+        #expect(quiet.isQuiet(display: 1) && lists == 0)
+        spaces = []
+        quiet.refresh()
+        #expect(!quiet.isQuiet(display: 1) && lists == 1)
+    }
+
+    @Test func theSystemIsReadOnlyWhileTheEntryCanLeave() {
+        // AC-42.04: the system announces neither an application entering full screen nor its menu bar coming down,
+        // so it is read on a pace, and not at all when the entry never leaves.
+        var reads = 0
+        let quiet = FullScreenQuiet(windows: { reads += 1; return [] }, spaces: { [] }, pointer: { self.away }, displays: { [1: self.display] })
+        quiet.refresh()
+        #expect(reads == 1)
+        quiet.leave = .never
+        quiet.refresh()
+        #expect(reads == 1)
+        // A reading must fall inside the half second an application takes to move into full screen.
+        #expect(FullScreenQuiet.pace <= 0.25)
     }
 }

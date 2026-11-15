@@ -176,9 +176,13 @@ import SwiftUI
             self?.cueRouter.mode = presentation
             self?.updateMenuVisibility(presentation: presentation)
         }.store(in: &preferenceObservations)
-        // AC-42.03: the saved choice decides when the entry steps aside in full screen.
-        preferences.$value.map(\.fullScreen).removeDuplicates().sink { FullScreenQuiet.shared.policy = $0 }
-            .store(in: &preferenceObservations)
+        // AC-42.03, AC-39.02: the entry in use and its saved choice decide how full screen is treated, and the
+        // display the entry is on is the one where cues show.
+        preferences.$value.map { FullScreenQuiet.leave(for: $0.presentation, choice: $0.fullScreen) }.removeDuplicates()
+            .sink { FullScreenQuiet.shared.leave = $0 }.store(in: &preferenceObservations)
+        SystemDisplayState.cueScreen = { [weak pet, weak preferences] in
+            preferences?.value.presentation == .pet ? pet?.screen : PanelScreen.notchDisplay ?? NSScreen.main
+        }
         preferences.$value.map(\.needsYouSound).removeDuplicates().sink { [weak self] enabled in
             self?.cueRouter.soundEnabled = enabled
         }.store(in: &preferenceObservations)

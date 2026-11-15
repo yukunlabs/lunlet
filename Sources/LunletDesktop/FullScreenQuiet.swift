@@ -2,14 +2,12 @@
 // SPDX-License-Identifier: 0BSD
 // Refs: US-42, AC-42.01, AC-42.02, AC-42.03, AC-42.04.
 import AppKit
-import Darwin
-import IOKit.pwr_mgt
 
-/// When the notch entry steps aside for another application's full-screen window (AC-42.03).
+/// Whether the notch entry leaves with the menu bar in another application's full screen (AC-42.03).
 enum FullScreenPolicy: String, Codable, CaseIterable, Sendable {
-    case video, always, never
+    case menuBar, never
     var title: String {
-        switch self { case .video: "During video"; case .always: "Always"; case .never: "Never" }
+        switch self { case .menuBar: "With the menu bar"; case .never: "Never" }
     }
 }
 
@@ -20,21 +18,16 @@ struct ScreenWindow: Equatable {
     let frame: CGRect
 }
 
-/// A process that keeps the display from sleeping.
-struct AwakeProcess: Equatable {
-    let pid: pid_t
-    let path: String
-}
-
-/// What the windows on a display and the processes keeping it awake say about full screen. Only public facts are
-/// read: frames and owners of windows, never their titles or contents, and which processes hold a display assertion.
+/// What the windows on a display say about full screen. Only public facts are read: frames and owners of windows,
+/// never their titles or contents.
 enum FullScreenScene {
-    /// The application whose window fills `display`, or nil. In full screen a window covers the whole display, the
-    /// menu bar's strip included, which no ordinary window can; `windows` are front to back.
+    /// The application whose window covers `display`, the menu bar's strip included, or nil; `windows` are front
+    /// to back. No ordinary window reaches over that strip. Not every full-screen window does either: a browser
+    /// keeps its own below it, so the kind of Space in front is asked as well (`FullScreenQuiet.fullScreenSpaces`).
     static func owner(of display: CGRect, windows: [ScreenWindow]) -> pid_t? {
         var front: pid_t?
         for window in windows where window.layer == 0 && window.frame.intersects(display) {
-            // Another application's window in front means the filling window is not what is being looked at; the
+            // Another application's window in front means the covering window is not what is being looked at; the
             // application's own sheet or controls in front of it change nothing.
             if let front, front != window.pid { return nil }
             if window.frame.insetBy(dx: -1, dy: -1).contains(display) { return window.pid }
@@ -42,64 +35,69 @@ enum FullScreenScene {
         }
         return nil
     }
-
-    /// Whether the full-screen application keeps the display awake, as a video, a presentation or a call does:
-    /// itself, a helper inside its bundle, or WebKit's own processes when it is Safari.
-    static func showsVideo(owner: pid_t, bundlePath: String?, bundleID: String?, awake: [AwakeProcess]) -> Bool {
-        awake.contains { process in
-            if process.pid == owner { return true }
-            if let bundlePath, process.path.hasPrefix(bundlePath + "/") { return true }
-            return bundleID?.hasPrefix("com.apple.Safari") == true && process.path.contains("/WebKit.framework/")
-        }
-    }
-
-    static func isQuiet(policy: FullScreenPolicy, fullScreen: Bool, video: Bool) -> Bool {
-        switch policy {
-        case .never: false
-        case .always: fullScreen
-        case .video: fullScreen && video
-        }
-    }
 }
 
-/// Tells every part of Lunlet whether a display is given over to another application's full-screen window, from one
-/// reading of the system. It reads on a change of Space, application or displays, a few more times as that change
-/// settles, and once a second only while some display is in full screen, where video can start without any
-/// notification (AC-42.04).
+/// Tells every part of Lunlet whether its entry is away from a display that is in another application's full
+/// screen, from one reading of the system. A display is in full screen when the Space in front on it is a
+/// full-screen one or a window covers it whole; its menu bar is down from the moment the pointer reaches the top
+/// edge until the pointer leaves the strip. The system announces none of this, so it is read on a pace while the
+/// display is awake and the Mac is in use, and only now and then while it is left alone (AC-42.04).
 @MainActor final class FullScreenQuiet {
     static let shared = FullScreenQuiet()
     static let didChange = Notification.Name("com.lunlet.fullScreenQuietChanged")
+    /// The move into full screen lasts about half a second and shows the window that will cover the display from
+    /// its start; a reading inside it lets the entry leave with the desktop instead of arriving in full screen.
+    static let pace: TimeInterval = 0.25
+    /// Full screen begins and ends, and the pointer calls the menu bar, by the keyboard or the pointer. The pace
+    /// keeps reading for `rest` seconds after either was last touched, since a move out of full screen can end a
+    /// moment after the key that began it; after that one reading every `leftAlonePace` seconds is enough for what
+    /// an application does by itself, such as leaving full screen when a film ends.
+    static let rest: TimeInterval = 3
+    static let leftAlonePace: TimeInterval = 3
+    /// The pointer calls the menu bar down within `edge` points of the top of the display, and keeps it down within
+    /// `strip` points: the bar's own height and the little by which the entry reaches below it.
+    static let edge: CGFloat = 2
+    static let strip: CGFloat = 60
 
-    var policy = FullScreenPolicy.video {
-        didSet { if policy != oldValue { refresh() } }
+    /// How the entry in use treats another application's full screen: the notch and menu-bar entries leave and
+    /// return with the menu bar, the notch entry stays when that is its saved choice (AC-42.03), and the pet, which
+    /// is no part of the menu bar, leaves until the desktop is back (AC-39.02).
+    enum Leave: Equatable { case never, withMenuBar, always }
+    var leave = Leave.withMenuBar {
+        didSet { if leave != oldValue { refresh(); schedule() } }
+    }
+    static func leave(for entry: EntryPresentation, choice: FullScreenPolicy) -> Leave {
+        switch entry {
+        case .pet: .always
+        case .notch: choice == .never ? .never : .withMenuBar
+        case .menuBar: .withMenuBar
+        }
     }
     var changed: (() -> Void)?
-    /// A display is in full screen, so the answer may change without a notification.
-    private(set) var watching = false
-    /// How often to read while watching, and when to read again after a change: the system announces a new Space
-    /// or application before the window has grown to fill the display.
-    static let interval: TimeInterval = 1
-    static let settling: [TimeInterval] = [0.2, 0.5, 0.9, 1.5]
-    /// Runs work after a delay; tests run it at once.
-    var later: (TimeInterval, @escaping @MainActor () -> Void) -> Void = { delay, work in
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { MainActor.assumeIsolated(work) }
-    }
     private var quiet: Set<CGDirectDisplayID> = []
-    /// The application seen playing video in full screen on each display. While it stays the full-screen one there,
-    /// a pause or a moment of buffering does not bring the entry back over the picture (AC-42.01).
-    private var playing: [CGDirectDisplayID: pid_t] = [:]
+    /// The full-screen displays whose menu bar the pointer has called down.
+    private var peeking: Set<CGDirectDisplayID> = []
     private let windows: () -> [ScreenWindow]
-    private let awake: () -> [AwakeProcess]
-    private let application: (pid_t) -> (path: String?, id: String?)
+    private let spaces: () -> Set<CGDirectDisplayID>
+    private let pointer: () -> CGPoint
+    private let barStays: () -> Bool
     private let displays: () -> [CGDirectDisplayID: CGRect]
+    private let idle: () -> TimeInterval
+    private let uptime: () -> TimeInterval
+    private var lastRead: TimeInterval?
     private var observations: [NotificationObservation] = []
-    private var timer: Task<Void, Never>?
+    private var timer: Timer?
+    private var asleep = false
 
     init(windows: @escaping () -> [ScreenWindow] = FullScreenQuiet.onScreenWindows,
-         awake: @escaping () -> [AwakeProcess] = FullScreenQuiet.displayAssertions,
-         application: @escaping (pid_t) -> (path: String?, id: String?) = FullScreenQuiet.bundle,
-         displays: @escaping () -> [CGDirectDisplayID: CGRect] = FullScreenQuiet.activeDisplays) {
-        self.windows = windows; self.awake = awake; self.application = application; self.displays = displays
+         spaces: @escaping () -> Set<CGDirectDisplayID> = FullScreenQuiet.fullScreenSpaces,
+         pointer: @escaping () -> CGPoint = FullScreenQuiet.pointerLocation,
+         barStays: @escaping () -> Bool = FullScreenQuiet.menuBarStaysInFullScreen,
+         displays: @escaping () -> [CGDirectDisplayID: CGRect] = FullScreenQuiet.activeDisplays,
+         idle: @escaping () -> TimeInterval = FullScreenQuiet.sinceLastInput,
+         uptime: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
+        self.windows = windows; self.spaces = spaces; self.pointer = pointer; self.barStays = barStays
+        self.displays = displays; self.idle = idle; self.uptime = uptime
     }
 
     func isQuiet(display: CGDirectDisplayID) -> Bool { quiet.contains(display) }
@@ -108,70 +106,68 @@ enum FullScreenScene {
         return isQuiet(display: number.uint32Value)
     }
 
-    /// Begins reading on the system's own signals; nothing runs between them unless a display is in full screen.
+    /// Begins reading: on the pace, and at once when the system does announce a change.
     func start() {
         guard observations.isEmpty else { return }
-        let read: @MainActor @Sendable () -> Void = { [weak self] in self?.systemChanged() }
+        let read: @MainActor @Sendable () -> Void = { [weak self] in self?.refresh() }
         let workspace = NSWorkspace.shared.notificationCenter
         observations = [NSWorkspace.activeSpaceDidChangeNotification, NSWorkspace.didActivateApplicationNotification]
             .map { NotificationObservation(center: workspace, name: $0, changed: read) }
         observations.append(NotificationObservation(center: .default, name: NSApplication.didChangeScreenParametersNotification,
                                                     changed: read))
-        refresh()
+        // Nothing is read while the display sleeps.
+        observations.append(NotificationObservation(center: workspace, name: NSWorkspace.screensDidSleepNotification) { [weak self] in
+            self?.asleep = true; self?.schedule()
+        })
+        observations.append(NotificationObservation(center: workspace, name: NSWorkspace.screensDidWakeNotification) { [weak self] in
+            self?.asleep = false; self?.refresh(); self?.schedule()
+        })
+        refresh(); schedule()
     }
 
     func stop() {
-        observations = []; timer?.cancel(); timer = nil
+        observations = []; timer?.invalidate(); timer = nil
     }
 
-    /// The system announced a change that can begin or end full screen: read now, and again as it settles.
-    func systemChanged() {
+    /// One step of the pace: a reading while the Mac is in use, and now and then while it is left alone.
+    func tick() {
+        if idle() > Self.rest, let lastRead, uptime() - lastRead < Self.leftAlonePace { return }
         refresh()
-        for delay in Self.settling { later(delay) { [weak self] in self?.refresh() } }
     }
 
     func refresh() {
-        var next: Set<CGDirectDisplayID> = [], fullScreen = false, stillPlaying: [CGDirectDisplayID: pid_t] = [:]
-        if policy != .never {
-            let list = windows()
-            var holders: [AwakeProcess]?
-            for (display, frame) in displays() {
-                guard let owner = FullScreenScene.owner(of: frame, windows: list) else { continue }
-                fullScreen = true
-                var video = false
-                if policy == .video {
-                    video = playing[display] == owner
-                    if !video {
-                        let awakeNow = holders ?? awake()
-                        holders = awakeNow
-                        let bundle = application(owner)
-                        video = FullScreenScene.showsVideo(owner: owner, bundlePath: bundle.path, bundleID: bundle.id, awake: awakeNow)
-                    }
-                    if video { stillPlaying[display] = owner }
-                }
-                if FullScreenScene.isQuiet(policy: policy, fullScreen: true, video: video) { next.insert(display) }
+        var next: Set<CGDirectDisplayID> = [], fullScreen: Set<CGDirectDisplayID> = []
+        lastRead = uptime()
+        if leave == .always || (leave == .withMenuBar && !barStays()) {
+            // The kind of Space settles full screen; the windows are listed only to learn of it early, while an
+            // application is still moving into it.
+            let kinds = spaces(), all = displays(), point = pointer()
+            let list = all.keys.allSatisfy(kinds.contains) ? [] : windows()
+            for (display, frame) in all where kinds.contains(display) || FullScreenScene.owner(of: frame, windows: list) != nil {
+                fullScreen.insert(display)
+                guard leave == .withMenuBar else { next.insert(display); continue }
+                // AC-42.02: the pointer at the top edge calls the menu bar down, and the bar stays while the
+                // pointer is in its strip.
+                let depth = point.y - frame.minY, within = point.x >= frame.minX && point.x < frame.maxX && depth >= 0
+                if within, depth <= Self.edge { peeking.insert(display) } else if !within || depth > Self.strip { peeking.remove(display) }
+                if !peeking.contains(display) { next.insert(display) }
             }
         }
-        playing = stillPlaying
-        watching = fullScreen
-        if next != quiet {
-            quiet = next
-            changed?()
-            NotificationCenter.default.post(name: Self.didChange, object: nil)
-        }
-        if watching, !observations.isEmpty {
-            if timer == nil {
-                timer = Task { [weak self] in
-                    while !Task.isCancelled {
-                        do { try await Task.sleep(for: .seconds(Self.interval)) } catch { return }
-                        guard let self, self.watching else { return }
-                        self.refresh()
-                    }
-                }
-            }
-        } else {
-            timer?.cancel(); timer = nil
-        }
+        peeking.formIntersection(fullScreen)
+        guard next != quiet else { return }
+        quiet = next
+        changed?()
+        NotificationCenter.default.post(name: Self.didChange, object: nil)
+    }
+
+    /// Runs the pace while there is something to read for.
+    private func schedule() {
+        guard !observations.isEmpty, leave != .never, !asleep else { timer?.invalidate(); timer = nil; return }
+        if let timer, timer.isValid { return }
+        let next = Timer(timeInterval: Self.pace, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.tick() } }
+        next.tolerance = Self.pace / 5
+        RunLoop.main.add(next, forMode: .common)
+        timer = next
     }
 
     nonisolated static func onScreenWindows() -> [ScreenWindow] {
@@ -184,25 +180,46 @@ enum FullScreenScene {
         }
     }
 
-    /// The processes holding an assertion that keeps the display awake.
-    nonisolated static func displayAssertions() -> [AwakeProcess] {
-        var copied: Unmanaged<CFDictionary>?
-        guard IOPMCopyAssertionsByProcess(&copied) == kIOReturnSuccess,
-              let byProcess = copied?.takeRetainedValue() as? [NSNumber: [[String: Any]]] else { return [] }
-        let display: Set<String> = ["PreventUserIdleDisplaySleep", "NoDisplaySleepAssertion"]
-        return byProcess.compactMap { pid, assertions in
-            guard assertions.contains(where: {
-                display.contains($0[kIOPMAssertionTypeKey] as? String ?? "") && ($0[kIOPMAssertionLevelKey] as? Int ?? 0) != 0
-            }) else { return nil }
-            var buffer = [CChar](repeating: 0, count: 4096)
-            let length = proc_pidpath(pid.int32Value, &buffer, UInt32(buffer.count))
-            return AwakeProcess(pid: pid.int32Value, path: length > 0 ? String(cString: buffer) : "")
+    /// The displays whose Space in front is a full-screen one. The system has no public way to ask, so its own
+    /// listing of Spaces is looked up when Lunlet runs; where that listing is missing or reads differently, no
+    /// display is named and a window that covers the display is the only sign left.
+    nonisolated static func fullScreenSpaces() -> Set<CGDirectDisplayID> {
+        typealias Connection = @convention(c) () -> Int32
+        typealias Listing = @convention(c) (Int32) -> Unmanaged<CFArray>?
+        let anywhere = UnsafeMutableRawPointer(bitPattern: -2)
+        guard let connection = dlsym(anywhere, "CGSMainConnectionID"), let listing = dlsym(anywhere, "CGSCopyManagedDisplaySpaces"),
+              let entries = unsafeBitCast(listing, to: Listing.self)(unsafeBitCast(connection, to: Connection.self)())?
+                .takeRetainedValue() as? [[String: Any]] else { return [] }
+        let displays = activeDisplays().keys
+        var found: Set<CGDirectDisplayID> = []
+        for entry in entries {
+            guard let current = entry["Current Space"] as? [String: Any], current["type"] as? Int == fullScreenSpace,
+                  let identifier = entry["Display Identifier"] as? String else { continue }
+            // Displays that share their Spaces are listed once, under the main display.
+            if identifier == "Main" { found.formUnion(displays); continue }
+            for display in displays {
+                guard let uuid = CGDisplayCreateUUIDFromDisplayID(display)?.takeRetainedValue() else { continue }
+                if CFUUIDCreateString(nil, uuid) as String == identifier { found.insert(display) }
+            }
         }
+        return found
+    }
+    private nonisolated static let fullScreenSpace = 4
+
+    /// The pointer in the window server's top-left coordinates.
+    nonisolated static func pointerLocation() -> CGPoint {
+        CGEvent(source: nil)?.location ?? CGPoint(x: -1, y: -1)
     }
 
-    nonisolated static func bundle(_ pid: pid_t) -> (path: String?, id: String?) {
-        let application = NSRunningApplication(processIdentifier: pid)
-        return (application?.bundleURL?.path, application?.bundleIdentifier)
+    /// Seconds since the keyboard, pointer or trackpad was last touched; no permission is needed to ask.
+    nonisolated static func sinceLastInput() -> TimeInterval {
+        guard let any = CGEventType(rawValue: ~0) else { return 0 }
+        return CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: any)
+    }
+
+    /// The system setting that keeps the menu bar in full screen.
+    nonisolated static func menuBarStaysInFullScreen() -> Bool {
+        UserDefaults.standard.bool(forKey: "AppleMenuBarVisibleInFullscreen")
     }
 
     nonisolated static func activeDisplays() -> [CGDirectDisplayID: CGRect] {
