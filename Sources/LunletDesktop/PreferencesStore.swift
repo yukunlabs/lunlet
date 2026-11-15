@@ -123,8 +123,8 @@ struct LunletPreferences: Codable, Equatable {
     var allowanceWarnBelow = 20
     var allowanceResetNotices = false
     static let allowanceWarnLevels = [30, 20, 10, 5]
-    /// When the notch entry steps aside for another application's full-screen window (AC-42.03).
-    var fullScreen = FullScreenPolicy.video
+    /// Whether the notch entry leaves with the menu bar in another application's full screen (AC-42.03).
+    var fullScreen = FullScreenPolicy.menuBar
     /// Fields a newer build of this schema saved and this build does not know. They travel with the value and are
     /// written back unchanged, so opening newer settings here never strips them (AC-26.01).
     private(set) var unknownFields: [String: UnknownPreferenceValue] = [:]
@@ -168,7 +168,7 @@ struct LunletPreferences: Codable, Equatable {
         allowanceWarnBelow = try data.decodeIfPresent(Int.self, forKey: .allowanceWarnBelow) ?? 20
         allowanceResetNotices = try data.decodeIfPresent(Bool.self, forKey: .allowanceResetNotices) ?? false
         // A choice a later build adds reads as the default here, and the settings stay readable.
-        fullScreen = (try data.decodeIfPresent(String.self, forKey: .fullScreen)).flatMap(FullScreenPolicy.init(rawValue:)) ?? .video
+        fullScreen = (try data.decodeIfPresent(String.self, forKey: .fullScreen)).flatMap(FullScreenPolicy.init(rawValue:)) ?? .menuBar
         let savedChannel = try data.decodeIfPresent(String.self, forKey: .channel) ?? "feishu"
         if savedChannel == "whatsapp" { channel = .feishu }
         else if let supported = CommunicationChannel(rawValue: savedChannel) { channel = supported }

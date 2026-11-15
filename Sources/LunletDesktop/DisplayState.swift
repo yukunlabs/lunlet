@@ -38,9 +38,11 @@ import IOKit
         return displays.prefix(Int(count)).contains { CGDisplayIsAsleep($0) == 0 }
     }
 
-    /// Whether a cue may appear: the session is in front, awake and unlocked, and the display where the cue would
-    /// show is not given over to another application's full-screen window (AC-42.01).
-    static var showsCues: Bool { isAvailable && !FullScreenQuiet.shared.isQuiet(PanelScreen.notchDisplay ?? NSScreen.main) }
+    /// The display where a cue would show: the notch display, or the pet's while the pet is the entry.
+    static var cueScreen: @MainActor () -> NSScreen? = { PanelScreen.notchDisplay ?? NSScreen.main }
+    /// Whether a cue may appear: the session is in front, awake and unlocked, and the entry is not away from its
+    /// display for another application's full screen (AC-42.01, AC-39.02).
+    static var showsCues: Bool { isAvailable && !FullScreenQuiet.shared.isQuiet(cueScreen()) }
 }
 
 final class NotificationObservation {
